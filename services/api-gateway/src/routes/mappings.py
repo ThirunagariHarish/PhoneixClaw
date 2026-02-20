@@ -1,8 +1,10 @@
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.models.database import get_session
 from shared.models.trade import AccountSourceMapping
 
@@ -47,4 +49,8 @@ async def delete_mapping(mapping_id: str, request: Request, session: AsyncSessio
     await session.commit()
 
 def _mapping_response(m: AccountSourceMapping) -> MappingResponse:
-    return MappingResponse(id=str(m.id), trading_account_id=str(m.trading_account_id), channel_id=str(m.channel_id), config_overrides=m.config_overrides or {}, enabled=m.enabled)
+    return MappingResponse(
+        id=str(m.id), trading_account_id=str(m.trading_account_id),
+        channel_id=str(m.channel_id),
+        config_overrides=m.config_overrides or {}, enabled=m.enabled,
+    )

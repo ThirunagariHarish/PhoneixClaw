@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock
+
 import pytest
+
 from shared.dedup import RedisDedup
 
 

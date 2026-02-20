@@ -1,5 +1,7 @@
 import pytest
+
 from shared.agents.protocol import AgentPlugin, SignalScoringAgent
+
 
 class MockAgent:
     @property

@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock
+
 import pytest
+
 from shared.kafka_utils.dlq import DeadLetterQueue
 
 

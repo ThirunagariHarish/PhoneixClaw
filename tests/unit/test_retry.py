@@ -1,6 +1,6 @@
-import asyncio
 import pytest
-from shared.retry import retry_async, RetryExhausted
+
+from shared.retry import RetryExhaustedError, retry_async
 
 
 class TestRetryAsync:
@@ -31,7 +31,7 @@ class TestRetryAsync:
         async def always_fail():
             raise RuntimeError("always")
 
-        with pytest.raises(RetryExhausted):
+        with pytest.raises(RetryExhaustedError):
             await retry_async(always_fail, max_retries=2, base_delay=0.01)
 
     @pytest.mark.asyncio

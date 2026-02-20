@@ -1,6 +1,8 @@
-import time
 import logging
+import time
+
 import redis.asyncio as redis
+
 from shared.config.base_config import config
 
 logger = logging.getLogger(__name__)

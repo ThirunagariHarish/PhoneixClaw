@@ -1,5 +1,4 @@
 import msgpack
-import pytest
 
 
 class TestMsgpackSerialization:

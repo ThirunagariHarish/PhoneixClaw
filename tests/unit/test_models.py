@@ -1,7 +1,4 @@
-import uuid
-from datetime import datetime, timezone
 
-import pytest
 
 from shared.models.trade import (
     AccountSourceMapping,

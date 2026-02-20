@@ -1,6 +1,8 @@
 import asyncio
 import logging
+
 from sqlalchemy import select
+
 from shared.models.database import AsyncSessionLocal
 from shared.models.trade import DataSource
 
@@ -24,7 +26,7 @@ class SourceOrchestrator:
 
     async def reconcile(self):
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(DataSource).where(DataSource.enabled == True))
+            result = await session.execute(select(DataSource).where(DataSource.enabled.is_(True)))
             sources = result.scalars().all()
 
         desired = {str(s.id) for s in sources}

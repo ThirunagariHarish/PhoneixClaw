@@ -1,13 +1,16 @@
+
 import pytest
-from unittest.mock import patch, MagicMock
 from cryptography.fernet import Fernet
+
 from shared.broker.factory import create_broker_adapter
+
 
 @pytest.fixture(autouse=True)
 def setup_key(monkeypatch):
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", key)
     import importlib
+
     import shared.config.base_config
     import shared.crypto.credentials
     importlib.reload(shared.config.base_config)

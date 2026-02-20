@@ -1,4 +1,3 @@
-import os
 
 import pytest
 from cryptography.fernet import Fernet
@@ -9,6 +8,7 @@ def setup_encryption_key(monkeypatch):
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", key)
     import importlib
+
     import shared.config.base_config
     importlib.reload(shared.config.base_config)
     import shared.crypto.credentials
@@ -53,6 +53,7 @@ class TestCredentialEncryption:
     def test_invalid_key_raises(self, monkeypatch):
         monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", "")
         import importlib
+
         import shared.config.base_config
         importlib.reload(shared.config.base_config)
         import shared.crypto.credentials

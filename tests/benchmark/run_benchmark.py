@@ -61,6 +61,6 @@ if __name__ == "__main__":
     buffer_lat = benchmark_buffer(args.count)
     report("Trade Parser", parse_lat)
     report("Buffer Pricing", buffer_lat)
-    print(
-        f"\nTotal parse+buffer p95: {sorted(parse_lat)[int(len(parse_lat)*0.95)] + sorted(buffer_lat)[int(len(buffer_lat)*0.95)]:.3f}ms"
-    )
+    p95_parse = sorted(parse_lat)[int(len(parse_lat) * 0.95)]
+    p95_buffer = sorted(buffer_lat)[int(len(buffer_lat) * 0.95)]
+    print(f"\nTotal parse+buffer p95: {p95_parse + p95_buffer:.3f}ms")

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class RetryExhausted(Exception):
+class RetryExhaustedError(Exception):
     pass
 
 
@@ -38,7 +38,7 @@ async def retry_async(
                 delay,
             )
             await asyncio.sleep(delay)
-    raise RetryExhausted(f"All {max_retries + 1} attempts failed") from last_exc
+    raise RetryExhaustedError(f"All {max_retries + 1} attempts failed") from last_exc
 
 
 def with_retry(max_retries: int = 3, base_delay: float = 1.0, retryable_exceptions: tuple = (Exception,)):

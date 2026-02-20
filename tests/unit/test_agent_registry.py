@@ -1,5 +1,7 @@
 import pytest
+
 from shared.agents.registry import AgentRegistry
+
 
 class FakeAgent:
     @property

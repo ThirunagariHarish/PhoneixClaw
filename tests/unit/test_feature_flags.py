@@ -1,5 +1,5 @@
-import pytest
 from shared.feature_flags import FeatureFlags
+
 
 class TestFeatureFlags:
     def test_default_flags(self):

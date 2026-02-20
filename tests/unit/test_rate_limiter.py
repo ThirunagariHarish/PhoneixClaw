@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from shared.rate_limiter import SlidingWindowRateLimiter
+
 
 class TestSlidingWindowRateLimiter:
     @pytest.mark.asyncio

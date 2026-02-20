@@ -1,12 +1,13 @@
 import uuid
-from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.models.database import get_session
-from shared.models.trade import DataSource, Channel
+
 from shared.crypto.credentials import encrypt_credentials
+from shared.models.database import get_session
+from shared.models.trade import Channel, DataSource
 
 router = APIRouter(prefix="/api/v1/sources", tags=["sources"])
 
@@ -57,7 +58,12 @@ async def create_source(req: SourceCreate, request: Request, session: AsyncSessi
 @router.delete("/{source_id}", status_code=204)
 async def delete_source(source_id: str, request: Request, session: AsyncSession = Depends(get_session)):
     user_id = request.state.user_id
-    result = await session.execute(select(DataSource).where(DataSource.id == uuid.UUID(source_id), DataSource.user_id == uuid.UUID(user_id)))
+    result = await session.execute(
+        select(DataSource).where(
+            DataSource.id == uuid.UUID(source_id),
+            DataSource.user_id == uuid.UUID(user_id),
+        )
+    )
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -67,15 +73,36 @@ async def delete_source(source_id: str, request: Request, session: AsyncSession 
 @router.get("/{source_id}/channels", response_model=list[ChannelResponse])
 async def list_channels(source_id: str, request: Request, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Channel).where(Channel.data_source_id == uuid.UUID(source_id)))
-    return [ChannelResponse(id=str(c.id), channel_identifier=c.channel_identifier, display_name=c.display_name, enabled=c.enabled) for c in result.scalars().all()]
+    return [
+        ChannelResponse(
+            id=str(c.id), channel_identifier=c.channel_identifier,
+            display_name=c.display_name, enabled=c.enabled,
+        )
+        for c in result.scalars().all()
+    ]
 
 @router.post("/{source_id}/channels", response_model=ChannelResponse, status_code=201)
-async def add_channel(source_id: str, req: ChannelCreate, request: Request, session: AsyncSession = Depends(get_session)):
-    ch = Channel(data_source_id=uuid.UUID(source_id), channel_identifier=req.channel_identifier, display_name=req.display_name)
+async def add_channel(
+    source_id: str, req: ChannelCreate, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    ch = Channel(
+        data_source_id=uuid.UUID(source_id),
+        channel_identifier=req.channel_identifier,
+        display_name=req.display_name,
+    )
     session.add(ch)
     await session.commit()
     await session.refresh(ch)
-    return ChannelResponse(id=str(ch.id), channel_identifier=ch.channel_identifier, display_name=ch.display_name, enabled=ch.enabled)
+    return ChannelResponse(
+        id=str(ch.id), channel_identifier=ch.channel_identifier,
+        display_name=ch.display_name, enabled=ch.enabled,
+    )
 
 def _source_response(s: DataSource) -> SourceResponse:
-    return SourceResponse(id=str(s.id), source_type=s.source_type, display_name=s.display_name, auth_type=s.auth_type, enabled=s.enabled, connection_status=s.connection_status, created_at=s.created_at.isoformat())
+    return SourceResponse(
+        id=str(s.id), source_type=s.source_type,
+        display_name=s.display_name, auth_type=s.auth_type,
+        enabled=s.enabled, connection_status=s.connection_status,
+        created_at=s.created_at.isoformat(),
+    )

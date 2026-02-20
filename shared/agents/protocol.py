@@ -1,5 +1,6 @@
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class AgentPlugin(Protocol):
     @property

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -10,17 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from shared.graceful_shutdown import shutdown
 from services.api_gateway.src.middleware import JWTMiddleware
-from services.auth_service.src.auth import router as auth_router
 from services.api_gateway.src.routes.accounts import router as accounts_router
-from services.api_gateway.src.routes.sources import router as sources_router
+from services.api_gateway.src.routes.chat import router as chat_router
+from services.api_gateway.src.routes.chat import set_kafka_producer
 from services.api_gateway.src.routes.mappings import router as mappings_router
-from services.api_gateway.src.routes.trades import router as trades_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
+from services.api_gateway.src.routes.sources import router as sources_router
 from services.api_gateway.src.routes.system import router as system_router
-from services.api_gateway.src.routes.chat import router as chat_router, set_kafka_producer
+from services.api_gateway.src.routes.trades import router as trades_router
+from services.auth_service.src.auth import router as auth_router
+from shared.graceful_shutdown import shutdown
 
 SERVICE_NAME = "api-gateway"
 logger = logging.getLogger(SERVICE_NAME)

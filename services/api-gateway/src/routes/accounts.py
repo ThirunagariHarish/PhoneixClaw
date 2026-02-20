@@ -1,12 +1,14 @@
 import uuid
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.crypto.credentials import encrypt_credentials
 from shared.models.database import get_session
 from shared.models.trade import TradingAccount
-from shared.crypto.credentials import encrypt_credentials
 
 router = APIRouter(prefix="/api/v1/accounts", tags=["accounts"])
 
@@ -49,7 +51,10 @@ async def create_account(req: AccountCreate, request: Request, session: AsyncSes
         display_name=req.display_name,
         credentials_encrypted=encrypt_credentials(req.credentials),
         paper_mode=req.paper_mode,
-        risk_config=req.risk_config or {"max_position_size": 10, "max_daily_loss": 1000, "max_total_contracts": 100, "max_notional_value": 50000},
+        risk_config=req.risk_config or {
+            "max_position_size": 10, "max_daily_loss": 1000,
+            "max_total_contracts": 100, "max_notional_value": 50000,
+        },
     )
     session.add(account)
     await session.commit()
@@ -57,9 +62,17 @@ async def create_account(req: AccountCreate, request: Request, session: AsyncSes
     return _to_response(account)
 
 @router.put("/{account_id}", response_model=AccountResponse)
-async def update_account(account_id: str, req: AccountUpdate, request: Request, session: AsyncSession = Depends(get_session)):
+async def update_account(
+    account_id: str, req: AccountUpdate, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
     user_id = request.state.user_id
-    result = await session.execute(select(TradingAccount).where(TradingAccount.id == uuid.UUID(account_id), TradingAccount.user_id == uuid.UUID(user_id)))
+    result = await session.execute(
+        select(TradingAccount).where(
+            TradingAccount.id == uuid.UUID(account_id),
+            TradingAccount.user_id == uuid.UUID(user_id),
+        )
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -77,9 +90,17 @@ async def update_account(account_id: str, req: AccountUpdate, request: Request, 
     return _to_response(account)
 
 @router.delete("/{account_id}", status_code=204)
-async def delete_account(account_id: str, request: Request, session: AsyncSession = Depends(get_session)):
+async def delete_account(
+    account_id: str, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
     user_id = request.state.user_id
-    result = await session.execute(select(TradingAccount).where(TradingAccount.id == uuid.UUID(account_id), TradingAccount.user_id == uuid.UUID(user_id)))
+    result = await session.execute(
+        select(TradingAccount).where(
+            TradingAccount.id == uuid.UUID(account_id),
+            TradingAccount.user_id == uuid.UUID(user_id),
+        )
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -87,9 +108,17 @@ async def delete_account(account_id: str, request: Request, session: AsyncSessio
     await session.commit()
 
 @router.post("/{account_id}/toggle-mode", response_model=AccountResponse)
-async def toggle_mode(account_id: str, request: Request, session: AsyncSession = Depends(get_session)):
+async def toggle_mode(
+    account_id: str, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
     user_id = request.state.user_id
-    result = await session.execute(select(TradingAccount).where(TradingAccount.id == uuid.UUID(account_id), TradingAccount.user_id == uuid.UUID(user_id)))
+    result = await session.execute(
+        select(TradingAccount).where(
+            TradingAccount.id == uuid.UUID(account_id),
+            TradingAccount.user_id == uuid.UUID(user_id),
+        )
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")

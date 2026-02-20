@@ -1,4 +1,3 @@
-import pytest
 from services.position_monitor.src.daily_aggregator import DailyAggregator
 
 

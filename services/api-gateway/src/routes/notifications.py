@@ -44,7 +44,7 @@ async def unread_count(request: Request, session: AsyncSession = Depends(get_ses
     result = await session.execute(
         select(func.count(NotificationLog.id)).where(
             NotificationLog.user_id == uuid.UUID(user_id),
-            NotificationLog.read == False,
+            NotificationLog.read.is_(False),
         )
     )
     return {"unread_count": result.scalar() or 0}

@@ -1,4 +1,3 @@
-import pytest
 
 from services.trade_parser.src.parser import parse_trade_message
 

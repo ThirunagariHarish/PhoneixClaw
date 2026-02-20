@@ -1,5 +1,5 @@
 import logging
-import discord
+
 from discord import Intents
 from discord.ext import commands
 

@@ -1,7 +1,7 @@
-import asyncio
 import logging
-from shared.kafka_utils.producer import KafkaProducerWrapper
+
 from services.position_monitor.src.exit_engine import ExitEngine
+from shared.kafka_utils.producer import KafkaProducerWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -56,4 +56,7 @@ class PositionMonitorService:
         if uid:
             headers.append(("user_id", uid.encode("utf-8")))
         await self.producer.send("exit-signals", value=exit_msg, headers=headers or None)
-        logger.info("Exit signal: %s for position %s (price=%.2f)", signal.reason, signal.position_id, signal.trigger_price)
+        logger.info(
+            "Exit signal: %s for position %s (price=%.2f)",
+            signal.reason, signal.position_id, signal.trigger_price,
+        )

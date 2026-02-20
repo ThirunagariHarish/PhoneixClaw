@@ -1,14 +1,19 @@
 import logging
 from datetime import date
-from sqlalchemy import select, func
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from shared.models.trade import Trade, Position, DailyMetrics
+
+from shared.models.trade import DailyMetrics, Position, Trade
 
 logger = logging.getLogger(__name__)
 
 
 class DailyAggregator:
-    async def aggregate(self, session: AsyncSession, user_id: str, trading_account_id: str, target_date: date | None = None):
+    async def aggregate(
+        self, session: AsyncSession, user_id: str,
+        trading_account_id: str, target_date: date | None = None,
+    ):
         d = target_date or date.today()
 
         result = await session.execute(

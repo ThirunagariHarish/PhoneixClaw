@@ -1,5 +1,7 @@
 import asyncio
+
 import pytest
+
 from shared.broker.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
 
 

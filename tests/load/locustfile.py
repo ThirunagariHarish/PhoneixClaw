@@ -1,7 +1,8 @@
 """Load test suite for the Phoenix Trade Bot.
 Run: locust -f tests/load/locustfile.py --host http://localhost:8011
 """
-from locust import HttpUser, task, between
+from locust import HttpUser, between, task
+
 
 class TradingPlatformUser(HttpUser):
     wait_time = between(0.5, 2.0)

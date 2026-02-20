@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+
 from shared.kafka_utils.producer import KafkaProducerWrapper
 
 logger = logging.getLogger(__name__)

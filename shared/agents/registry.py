@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+
 from shared.agents.protocol import AgentPlugin
 
 logger = logging.getLogger(__name__)

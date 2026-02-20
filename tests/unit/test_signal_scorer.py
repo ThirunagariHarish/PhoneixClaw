@@ -1,5 +1,7 @@
 import pytest
+
 from services.signal_scorer.src.scorer import SimpleSignalScorer
+
 
 @pytest.fixture
 def scorer():

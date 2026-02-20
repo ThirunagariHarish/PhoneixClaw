@@ -28,8 +28,14 @@ class TradeParserService:
 
     async def _handle_message(self, message: dict, headers: dict) -> None:
         raw_text = message.get("content", "")
-        user_id = headers.get(b"user_id", b"").decode("utf-8") if b"user_id" in headers else message.get("user_id", "")
-        channel_id = headers.get(b"channel_id", b"").decode("utf-8") if b"channel_id" in headers else message.get("channel_id", "")
+        user_id = (
+            headers.get(b"user_id", b"").decode("utf-8")
+            if b"user_id" in headers else message.get("user_id", "")
+        )
+        channel_id = (
+            headers.get(b"channel_id", b"").decode("utf-8")
+            if b"channel_id" in headers else message.get("channel_id", "")
+        )
         source = message.get("source", "discord")
         source_message_id = message.get("message_id", "")
         source_author = message.get("author", "")
