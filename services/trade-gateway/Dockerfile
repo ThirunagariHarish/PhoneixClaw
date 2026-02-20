@@ -10,4 +10,5 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY shared/ /app/shared/
 COPY services/trade-gateway/ /app/services/trade-gateway/
 ENV PYTHONPATH=/app
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8007/health')" || exit 1
 CMD ["python", "services/trade-gateway/main.py"]

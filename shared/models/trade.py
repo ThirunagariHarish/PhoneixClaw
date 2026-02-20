@@ -82,6 +82,7 @@ class DataSource(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     source_type = Column(String(20), nullable=False)
     display_name = Column(String(100), nullable=False)
+    auth_type = Column(String(20), nullable=False, default="user_token")
     credentials_encrypted = Column(LargeBinary, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     connection_status = Column(String(20), nullable=False, default="DISCONNECTED")
@@ -298,6 +299,19 @@ class Configuration(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "key", name="uq_user_config"),)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    role = Column(String(10), nullable=False, default="user")
+    trade_id = Column(UUID(as_uuid=True), ForeignKey("trades.trade_id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (Index("idx_chat_user_created", "user_id", "created_at"),)
 
 
 class NotificationLog(Base):

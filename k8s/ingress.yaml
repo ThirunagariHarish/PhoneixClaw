@@ -1,14 +1,14 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: copytrader-ingress
-  namespace: copytrader
+  name: phoenixtrader-ingress
+  namespace: phoenixtrader
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   rules:
-    - host: app.copytrader.local
+    - host: app.phoenixtrader.local
       http:
         paths:
           - path: /api

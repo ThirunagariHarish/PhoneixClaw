@@ -1,4 +1,4 @@
-# Architecture Document: Copy Trading Platform
+# Architecture Document: Phoenix Trade Bot
 
 **Version:** 1.0
 **Date:** 2026-02-20
@@ -50,7 +50,7 @@ flowchart TB
         Webhooks[Webhook Endpoints]
     end
 
-    subgraph platform [Copy Trading Platform]
+    subgraph platform [Phoenix Trade Bot]
         subgraph ingestion [Ingestion Layer]
             SourceOrchestrator[Source Orchestrator]
             DiscordIngestor[Discord Ingestor Workers]
@@ -1692,18 +1692,18 @@ Trace: abc123
 
 | Metric | Type | Labels | Purpose |
 |--------|------|--------|---------|
-| `copytrader_trades_total` | Counter | `status`, `action`, `ticker`, `source` | Total trades by outcome |
-| `copytrader_trade_latency_seconds` | Histogram | `stage` (parse, approve, execute) | Per-stage latency |
-| `copytrader_positions_open` | Gauge | `ticker` | Currently open positions |
-| `copytrader_pnl_realized_total` | Counter | `close_reason` | Cumulative realized P&L |
-| `copytrader_pnl_unrealized` | Gauge | `ticker` | Current unrealized P&L |
-| `copytrader_buffer_slippage_pct` | Histogram | `ticker` | Buffer vs fill price diff |
-| `copytrader_kafka_consumer_lag` | Gauge | `topic`, `group` | Consumer lag per topic |
-| `copytrader_broker_api_latency` | Histogram | `operation` (place_order, get_quote) | Broker API response time |
-| `copytrader_broker_api_errors` | Counter | `operation`, `error_type` | Broker API failures |
-| `copytrader_daily_loss` | Gauge | - | Current day loss |
-| `copytrader_buying_power` | Gauge | - | Available buying power |
-| `copytrader_risk_utilization` | Gauge | `metric` (position_size, contracts, notional) | Risk limit utilization % |
+| `phoenixtrader_trades_total` | Counter | `status`, `action`, `ticker`, `source` | Total trades by outcome |
+| `phoenixtrader_trade_latency_seconds` | Histogram | `stage` (parse, approve, execute) | Per-stage latency |
+| `phoenixtrader_positions_open` | Gauge | `ticker` | Currently open positions |
+| `phoenixtrader_pnl_realized_total` | Counter | `close_reason` | Cumulative realized P&L |
+| `phoenixtrader_pnl_unrealized` | Gauge | `ticker` | Current unrealized P&L |
+| `phoenixtrader_buffer_slippage_pct` | Histogram | `ticker` | Buffer vs fill price diff |
+| `phoenixtrader_kafka_consumer_lag` | Gauge | `topic`, `group` | Consumer lag per topic |
+| `phoenixtrader_broker_api_latency` | Histogram | `operation` (place_order, get_quote) | Broker API response time |
+| `phoenixtrader_broker_api_errors` | Counter | `operation`, `error_type` | Broker API failures |
+| `phoenixtrader_daily_loss` | Gauge | - | Current day loss |
+| `phoenixtrader_buying_power` | Gauge | - | Available buying power |
+| `phoenixtrader_risk_utilization` | Gauge | `metric` (position_size, contracts, notional) | Risk limit utilization % |
 
 ### 10.4 Alerting Rules
 

@@ -1,6 +1,8 @@
 .PHONY: help install dev-install lint test test-cov infra-up infra-down infra-logs \
        db-init db-migrate run-gateway run-auth run-dashboard \
-       docker-build docker-up docker-down docker-logs clean benchmark
+       docker-build docker-up docker-down docker-logs clean benchmark \
+       up down status logs setup local-up local-down \
+       prod-build prod-up prod-down prod-logs prod-status
 
 PYTHON := python3
 PIP := pip3
@@ -9,8 +11,19 @@ PIP := pip3
 # Help
 # ─────────────────────────────────────────────
 help: ## Show this help
+	@echo ""
+	@echo "  \033[1m── Quick Start ──────────────────────────\033[0m"
+	@echo "  \033[36mmake setup\033[0m          First-time setup (install deps + create .env)"
+	@echo "  \033[36mmake up\033[0m             Build & start ENTIRE platform (Docker)"
+	@echo "  \033[36mmake down\033[0m           Stop everything"
+	@echo "  \033[36mmake logs\033[0m           Tail all logs"
+	@echo "  \033[36mmake status\033[0m         Show running containers"
+	@echo "  \033[36mmake local-up\033[0m       Start infra + init DB (run services yourself)"
+	@echo ""
+	@echo "  \033[1m── All Commands ─────────────────────────\033[0m"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
 
 # ─────────────────────────────────────────────
 # Setup
@@ -24,7 +37,8 @@ dev-install: ## Install all dependencies (prod + dev)
 env-file: ## Create .env from .env.example
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
-		$(PYTHON) -c "from cryptography.fernet import Fernet; print('CREDENTIAL_ENCRYPTION_KEY=' + Fernet.generate_key().decode())" >> .env; \
+		KEY=$$($(PYTHON) -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"); \
+		sed -i '' "s|^CREDENTIAL_ENCRYPTION_KEY=.*|CREDENTIAL_ENCRYPTION_KEY=$$KEY|" .env; \
 		echo ".env created -- edit it with your keys"; \
 	else \
 		echo ".env already exists"; \
@@ -106,7 +120,50 @@ run-dashboard: ## Run React dashboard dev server on :3000
 	cd services/dashboard-ui && npm run dev
 
 # ─────────────────────────────────────────────
-# Full Docker Stack
+# Quick Start (one-command workflows)
+# ─────────────────────────────────────────────
+setup: dev-install env-file dashboard-install ## First-time: install everything + create .env
+	@echo ""
+	@echo "  ✅  Setup complete. Edit .env with your API keys, then run:"
+	@echo "      make up          (full Docker stack)"
+	@echo "      make local-up    (infra only, run services manually)"
+
+up: ## Build & run ENTIRE platform in Docker
+	docker compose up -d --build
+	@echo ""
+	@echo "  ✅  Platform starting..."
+	@echo "      Dashboard:   http://localhost:3000"
+	@echo "      API Gateway: http://localhost:8011"
+	@echo "      Auth API:    http://localhost:8001"
+	@echo ""
+	@echo "  Run 'make logs' to watch output"
+	@echo "  Run 'make status' to check health"
+
+down: ## Stop everything (infra + services)
+	docker compose down 2>/dev/null || true
+	docker compose -f docker-compose.dev.yml down 2>/dev/null || true
+	@echo "  All stopped."
+
+logs: ## Tail all logs (Docker)
+	docker compose logs -f
+
+status: ## Show running containers & health
+	@docker compose ps 2>/dev/null; docker compose -f docker-compose.dev.yml ps 2>/dev/null || true
+
+local-up: infra-up db-init ## Start infra (Kafka/PG/Redis) + init DB for local dev
+	@echo ""
+	@echo "  ✅  Infra running & DB initialized. Now start services in separate terminals:"
+	@echo "      make run-auth       (port 8001)"
+	@echo "      make run-gateway    (port 8011)"
+	@echo "      make run-parser"
+	@echo "      make run-executor"
+	@echo "      make run-monitor"
+	@echo "      make run-dashboard  (port 3000)"
+
+local-down: infra-down ## Stop local infra (Kafka/PG/Redis)
+
+# ─────────────────────────────────────────────
+# Full Docker Stack (granular)
 # ─────────────────────────────────────────────
 docker-build: ## Build all Docker images
 	docker compose build
@@ -119,6 +176,27 @@ docker-down: ## Stop entire platform
 
 docker-logs: ## Tail all service logs
 	docker compose logs -f
+
+# ─────────────────────────────────────────────
+# Production / Coolify (docker-compose.coolify.yml)
+# ─────────────────────────────────────────────
+prod-build: ## Build production images (Coolify compose)
+	docker compose -f docker-compose.coolify.yml build
+
+prod-up: ## Start production stack locally (test before deploying)
+	docker compose -f docker-compose.coolify.yml up -d --build
+	@echo ""
+	@echo "  Production stack starting on http://localhost"
+	@echo "  Run 'make prod-logs' to watch output"
+
+prod-down: ## Stop production stack
+	docker compose -f docker-compose.coolify.yml down
+
+prod-logs: ## Tail production logs
+	docker compose -f docker-compose.coolify.yml logs -f
+
+prod-status: ## Show production container health
+	docker compose -f docker-compose.coolify.yml ps
 
 # ─────────────────────────────────────────────
 # Housekeeping

@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: copytrader-config
-  namespace: copytrader
+  name: phoenixtrader-config
+  namespace: phoenixtrader
 data:
-  KAFKA_BOOTSTRAP_SERVERS: "kafka.copytrader.svc.cluster.local:9092"
-  DATABASE_URL: "postgresql+asyncpg://copytrader:localdev@postgres.copytrader.svc.cluster.local:5432/copytrader"
-  REDIS_URL: "redis://redis.copytrader.svc.cluster.local:6379"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.phoenixtrader.svc.cluster.local:9092"
+  DATABASE_URL: "postgresql+asyncpg://phoenixtrader:localdev@postgres.phoenixtrader.svc.cluster.local:5432/phoenixtrader"
+  REDIS_URL: "redis://redis.phoenixtrader.svc.cluster.local:6379"
   LOG_LEVEL: "INFO"
   APPROVAL_MODE: "auto"

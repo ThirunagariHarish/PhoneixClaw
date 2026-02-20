@@ -1,4 +1,4 @@
-# Product Requirements Document: Copy Trading Platform
+# Product Requirements Document: Phoenix Trade Bot
 
 **Version:** 1.0
 **Date:** 2026-02-20
@@ -28,11 +28,11 @@
 
 ### Vision
 
-Build an agentic copy-trading platform that ingests trade signals from Discord analysts (and future sources such as WhatsApp, Reddit, Telegram), parses and filters those signals, optionally gates them through human approval, executes them on a brokerage with configurable price buffers, and continuously monitors open positions for profit targets and stop losses.
+Build an agentic phoenix trading platform that ingests trade signals from Discord analysts (and future sources such as WhatsApp, Reddit, Telegram), parses and filters those signals, optionally gates them through human approval, executes them on a brokerage with configurable price buffers, and continuously monitors open positions for profit targets and stop losses.
 
 ### Problem Statement
 
-Manual copy-trading from Discord analyst channels is slow, error-prone, and cannot scale. Price slippage during manual execution erodes profitability. There is no systematic way to enforce risk controls, take profit at targets, or cut losses automatically.
+Manual phoenix trading from Discord analyst channels is slow, error-prone, and cannot scale. Price slippage during manual execution erodes profitability. There is no systematic way to enforce risk controls, take profit at targets, or cut losses automatically.
 
 ### Key Differentiators
 
@@ -188,7 +188,7 @@ flowchart TB
 ### 3.2 Service Directory Structure
 
 ```
-copy-trading-platform/
+phoenix-trade-bot/
 ├── docker-compose.yml
 ├── docker-compose.dev.yml
 ├── k8s/
@@ -407,7 +407,7 @@ sequenceDiagram
 {
   "type": "record",
   "name": "RawMessage",
-  "namespace": "com.copytrader.messages",
+  "namespace": "com.phoenixtrader.messages",
   "fields": [
     {"name": "message_id", "type": "string"},
     {"name": "source", "type": {"type": "enum", "name": "Source", "symbols": ["DISCORD", "WHATSAPP", "REDDIT", "TELEGRAM"]}},
@@ -453,11 +453,11 @@ sequenceDiagram
 {
   "type": "record",
   "name": "ParsedTrade",
-  "namespace": "com.copytrader.trades",
+  "namespace": "com.phoenixtrader.trades",
   "fields": [
     {"name": "trade_id", "type": "string"},
     {"name": "source_message_id", "type": "string"},
-    {"name": "source", "type": "com.copytrader.messages.Source"},
+    {"name": "source", "type": "com.phoenixtrader.messages.Source"},
     {"name": "action", "type": {"type": "enum", "name": "Action", "symbols": ["BUY", "SELL"]}},
     {"name": "ticker", "type": "string"},
     {"name": "strike", "type": "double"},
@@ -574,15 +574,15 @@ stateDiagram-v2
 {
   "type": "record",
   "name": "ExecutionResult",
-  "namespace": "com.copytrader.execution",
+  "namespace": "com.phoenixtrader.execution",
   "fields": [
     {"name": "trade_id", "type": "string"},
     {"name": "order_id", "type": ["null", "string"], "default": null},
     {"name": "status", "type": {"type": "enum", "name": "ExecStatus", "symbols": ["EXECUTED", "REJECTED", "ERROR"]}},
-    {"name": "action", "type": "com.copytrader.trades.Action"},
+    {"name": "action", "type": "com.phoenixtrader.trades.Action"},
     {"name": "ticker", "type": "string"},
     {"name": "strike", "type": "double"},
-    {"name": "option_type", "type": "com.copytrader.trades.OptionType"},
+    {"name": "option_type", "type": "com.phoenixtrader.trades.OptionType"},
     {"name": "expiration", "type": ["null", "string"], "default": null},
     {"name": "quantity", "type": "int"},
     {"name": "requested_price", "type": "double"},
@@ -639,13 +639,13 @@ stateDiagram-v2
 {
   "type": "record",
   "name": "ExitSignal",
-  "namespace": "com.copytrader.monitor",
+  "namespace": "com.phoenixtrader.monitor",
   "fields": [
     {"name": "position_id", "type": "int"},
     {"name": "trade_id", "type": "string"},
     {"name": "ticker", "type": "string"},
     {"name": "strike", "type": "double"},
-    {"name": "option_type", "type": "com.copytrader.trades.OptionType"},
+    {"name": "option_type", "type": "com.phoenixtrader.trades.OptionType"},
     {"name": "expiration", "type": ["null", "string"], "default": null},
     {"name": "action", "type": {"type": "enum", "name": "ExitAction", "symbols": ["TAKE_PROFIT", "STOP_LOSS", "TRAILING_STOP", "MANUAL_EXIT", "EXPIRATION"]}},
     {"name": "quantity", "type": "int"},
@@ -710,7 +710,7 @@ for each open position:
 {
   "type": "record",
   "name": "Notification",
-  "namespace": "com.copytrader.notifications",
+  "namespace": "com.phoenixtrader.notifications",
   "fields": [
     {"name": "notification_id", "type": "string"},
     {"name": "type", "type": {"type": "enum", "name": "NotificationType", "symbols": [
@@ -1402,8 +1402,8 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: copytrader
-      POSTGRES_USER: copytrader
+      POSTGRES_DB: phoenixtrader
+      POSTGRES_USER: phoenixtrader
       POSTGRES_PASSWORD: localdev
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -1535,7 +1535,7 @@ flowchart LR
 
 ### Vision
 
-The platform is designed to evolve from rule-based copy-trading into a multi-agent system where ML models participate in signal scoring, risk assessment, and execution optimization.
+The platform is designed to evolve from rule-based phoenix trading into a multi-agent system where ML models participate in signal scoring, risk assessment, and execution optimization.
 
 ### Extension Points
 

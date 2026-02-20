@@ -16,7 +16,7 @@ class KafkaConfig:
 
 @dataclass
 class DatabaseConfig:
-    url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://copytrader:localdev@localhost:5432/copytrader")
+    url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoenixtrader")
 
 
 @dataclass

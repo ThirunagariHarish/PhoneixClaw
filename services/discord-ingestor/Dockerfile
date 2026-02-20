@@ -10,4 +10,5 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY shared/ /app/shared/
 COPY services/discord-ingestor/ /app/services/discord-ingestor/
 ENV PYTHONPATH=/app
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')" || exit 1
 CMD ["python", "services/discord-ingestor/main.py"]

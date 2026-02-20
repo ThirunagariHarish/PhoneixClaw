@@ -15,13 +15,22 @@ logger = logging.getLogger(SERVICE_NAME)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 
+async def _run_writer(service):
+    try:
+        await service.start()
+        await service.run()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Audit writer error")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from services.audit_writer.src.writer import AuditWriterService
 
     service = AuditWriterService()
-    await service.start()
-    task = asyncio.create_task(service.run())
+    task = asyncio.create_task(_run_writer(service))
     shutdown.register(lambda: service.stop())
     logger.info("%s ready", SERVICE_NAME)
     yield

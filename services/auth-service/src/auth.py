@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
@@ -24,6 +24,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class TokenResponse(BaseModel):
@@ -114,8 +118,8 @@ async def login(req: LoginRequest, session: AsyncSession = Depends(get_session))
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(token: str):
-    payload = decode_token(token)
+async def refresh(req: RefreshRequest):
+    payload = decode_token(req.refresh_token)
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not a refresh token")
     user_id = payload["sub"]
@@ -126,11 +130,10 @@ async def refresh(token: str):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(token: str, session: AsyncSession = Depends(get_session)):
-    payload = decode_token(token)
-    if payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not an access token")
-    user_id = payload["sub"]
+async def get_me(request: Request, session: AsyncSession = Depends(get_session)):
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     result = await session.execute(select(User).where(User.id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if not user:

@@ -20,20 +20,36 @@ from services.api_gateway.src.routes.trades import router as trades_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
 from services.api_gateway.src.routes.system import router as system_router
+from services.api_gateway.src.routes.chat import router as chat_router, set_kafka_producer
 
 SERVICE_NAME = "api-gateway"
 logger = logging.getLogger(SERVICE_NAME)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 
+_kafka_producer = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _kafka_producer
+    try:
+        from shared.kafka_utils.producer import KafkaProducerWrapper
+
+        _kafka_producer = KafkaProducerWrapper()
+        await _kafka_producer.start()
+        set_kafka_producer(_kafka_producer)
+        logger.info("Kafka producer initialized for chat")
+    except Exception:
+        logger.warning("Kafka producer unavailable — chat messages will not be routed to trade pipeline")
     logger.info("%s ready", SERVICE_NAME)
     yield
+    if _kafka_producer:
+        await _kafka_producer.stop()
     await shutdown.run_cleanup()
 
 
-app = FastAPI(title="Copy Trading Platform API", lifespan=lifespan)
+app = FastAPI(title="Phoenix Trade Bot API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,6 +67,7 @@ app.include_router(trades_router)
 app.include_router(metrics_router)
 app.include_router(notifications_router)
 app.include_router(system_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")

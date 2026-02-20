@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   kafka:
-    image: apache/kafka-native:3.8
+    image: apache/kafka:latest
     container_name: kafka
     ports:
       - "9092:9092"
@@ -29,13 +29,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: copytrader
+      POSTGRES_USER: phoenixtrader
       POSTGRES_PASSWORD: localdev
-      POSTGRES_DB: copytrader
+      POSTGRES_DB: phoenixtrader
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: pg_isready -U copytrader
+      test: pg_isready -U phoenixtrader
       interval: 5s
       timeout: 3s
       retries: 10

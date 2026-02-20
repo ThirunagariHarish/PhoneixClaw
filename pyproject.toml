@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "copy-trading-platform"
+name = "phoenix-trade-bot"
 version = "0.1.0"
-description = "Enterprise copy trading platform"
+description = "Enterprise phoenix trade bot platform"
 requires-python = ">=3.11"
 dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",

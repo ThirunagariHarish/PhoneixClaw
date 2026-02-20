@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 import discord
-from discord import Intents, Message
+from discord import Message
 
 from shared.kafka_utils.producer import KafkaProducerWrapper
 
@@ -10,35 +10,47 @@ logger = logging.getLogger(__name__)
 
 
 class DiscordIngestor:
-    """Per-user Discord ingestor that publishes messages to Kafka."""
+    """Per-user Discord ingestor that publishes messages to Kafka.
+
+    Supports two auth modes:
+      - "bot"        → standard bot token (requires server admin to invite the bot)
+      - "user_token" → user account token via discord.py-self (works as a regular member)
+    """
 
     def __init__(
         self,
-        bot_token: str,
+        token: str,
         target_channels: list[int],
         user_id: str,
+        auth_type: str = "user_token",
         producer: KafkaProducerWrapper | None = None,
     ) -> None:
-        self._token = bot_token
+        self._token = token
         self._target_channels = set(target_channels)
         self._user_id = user_id
+        self._auth_type = auth_type
         self._producer = producer or KafkaProducerWrapper()
         self._dedup_cache: set[str] = set()
 
-        intents = Intents.default()
-        intents.message_content = True
-        self._client = discord.Client(intents=intents)
-
+        self._client = discord.Client()
         self._client.event(self._on_ready)
         self._client.event(self._on_message)
 
     async def _on_ready(self) -> None:
-        logger.info("Discord ingestor ready (user=%s, channels=%s)", self._user_id, self._target_channels)
+        logger.info(
+            "Discord ingestor ready (user=%s, mode=%s, channels=%s)",
+            self._user_id, self._auth_type, self._target_channels,
+        )
+        if not self._target_channels:
+            logger.info("No target channels configured — listing available channels:")
+            for guild in self._client.guilds:
+                for channel in guild.text_channels:
+                    logger.info("  #%s (id: %d) in %s", channel.name, channel.id, guild.name)
 
     async def _on_message(self, message: Message) -> None:
         if message.author == self._client.user:
             return
-        if message.channel.id not in self._target_channels:
+        if self._target_channels and message.channel.id not in self._target_channels:
             return
 
         content = message.content.strip()
@@ -58,6 +70,7 @@ class DiscordIngestor:
             "author": str(message.author),
             "channel_name": str(message.channel),
             "channel_id": str(message.channel.id),
+            "guild_id": str(message.guild.id) if message.guild else "",
             "user_id": self._user_id,
             "source": "discord",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -77,7 +90,10 @@ class DiscordIngestor:
     async def start(self) -> None:
         if not self._producer.is_started:
             await self._producer.start()
-        await self._client.start(self._token)
+
+        is_bot = self._auth_type == "bot"
+        logger.info("Connecting to Discord (mode=%s)…", self._auth_type)
+        await self._client.start(self._token, bot=is_bot)
 
     async def stop(self) -> None:
         await self._client.close()

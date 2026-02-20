@@ -9,5 +9,7 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY shared/ /app/shared/
 COPY services/audit-writer/ /app/services/audit-writer/
+RUN ln -s /app/services/audit-writer /app/services/audit_writer && touch /app/services/__init__.py
 ENV PYTHONPATH=/app
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8012/health')" || exit 1
 CMD ["python", "services/audit-writer/main.py"]

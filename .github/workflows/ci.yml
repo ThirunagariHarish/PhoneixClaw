@@ -56,4 +56,4 @@ jobs:
           context: ${{ matrix.service == 'dashboard-ui' && 'services/dashboard-ui' || '.' }}
           file: services/${{ matrix.service }}/Dockerfile
           push: false
-          tags: copytrader/${{ matrix.service }}:${{ github.sha }}
+          tags: phoenixtrader/${{ matrix.service }}:${{ github.sha }}

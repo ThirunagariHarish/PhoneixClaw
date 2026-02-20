@@ -1,4 +1,4 @@
-# Implementation Guide: Copy Trading Platform
+# Implementation Guide: Phoenix Trade Bot
 
 **Version:** 1.0
 **Date:** 2026-02-20
@@ -80,7 +80,7 @@ gantt
 Starting from the current monolith, restructure into:
 
 ```
-copy-trading-platform/
+phoenix-trade-bot/
 ├── shared/
 │   ├── __init__.py
 │   ├── schemas/
@@ -195,7 +195,7 @@ class KafkaConfig:
 
 @dataclass
 class DatabaseConfig:
-    url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://copytrader:localdev@localhost:5432/copytrader")
+    url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoenixtrader")
 
 
 @dataclass
@@ -892,13 +892,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: copytrader
-      POSTGRES_USER: copytrader
+      POSTGRES_DB: phoenixtrader
+      POSTGRES_USER: phoenixtrader
       POSTGRES_PASSWORD: localdev
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U copytrader"]
+      test: ["CMD-SHELL", "pg_isready -U phoenixtrader"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -962,7 +962,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 SCHEMA_REGISTRY_URL=http://localhost:8081
 
 # Database
-DATABASE_URL=postgresql+asyncpg://copytrader:localdev@localhost:5432/copytrader
+DATABASE_URL=postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoenixtrader
 
 # Redis
 REDIS_URL=redis://localhost:6379
@@ -2970,28 +2970,28 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 from fastapi import Response
 
 trades_total = Counter(
-    "copytrader_trades_total", "Total trades", ["status", "action", "ticker", "source"]
+    "phoenixtrader_trades_total", "Total trades", ["status", "action", "ticker", "source"]
 )
 trade_latency = Histogram(
-    "copytrader_trade_latency_seconds", "Trade latency", ["stage"],
+    "phoenixtrader_trade_latency_seconds", "Trade latency", ["stage"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
 )
-positions_open = Gauge("copytrader_positions_open", "Open positions", ["ticker"])
-pnl_realized = Counter("copytrader_pnl_realized_total", "Realized PnL", ["close_reason"])
-pnl_unrealized = Gauge("copytrader_pnl_unrealized", "Unrealized PnL", ["ticker"])
+positions_open = Gauge("phoenixtrader_positions_open", "Open positions", ["ticker"])
+pnl_realized = Counter("phoenixtrader_pnl_realized_total", "Realized PnL", ["close_reason"])
+pnl_unrealized = Gauge("phoenixtrader_pnl_unrealized", "Unrealized PnL", ["ticker"])
 buffer_slippage = Histogram(
-    "copytrader_buffer_slippage_pct", "Buffer vs fill slippage", ["ticker"],
+    "phoenixtrader_buffer_slippage_pct", "Buffer vs fill slippage", ["ticker"],
     buckets=[0.01, 0.02, 0.05, 0.10, 0.15, 0.20, 0.30],
 )
-kafka_lag = Gauge("copytrader_kafka_consumer_lag", "Consumer lag", ["topic", "group"])
+kafka_lag = Gauge("phoenixtrader_kafka_consumer_lag", "Consumer lag", ["topic", "group"])
 broker_latency = Histogram(
-    "copytrader_broker_api_latency_seconds", "Broker API latency", ["operation"],
+    "phoenixtrader_broker_api_latency_seconds", "Broker API latency", ["operation"],
     buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5],
 )
-broker_errors = Counter("copytrader_broker_api_errors_total", "Broker errors", ["operation", "error_type"])
-daily_loss = Gauge("copytrader_daily_loss", "Current daily loss")
-buying_power = Gauge("copytrader_buying_power", "Available buying power")
-risk_utilization = Gauge("copytrader_risk_utilization", "Risk limit utilization", ["metric"])
+broker_errors = Counter("phoenixtrader_broker_api_errors_total", "Broker errors", ["operation", "error_type"])
+daily_loss = Gauge("phoenixtrader_daily_loss", "Current daily loss")
+buying_power = Gauge("phoenixtrader_buying_power", "Available buying power")
+risk_utilization = Gauge("phoenixtrader_risk_utilization", "Risk limit utilization", ["metric"])
 
 
 async def metrics_endpoint():
@@ -3133,10 +3133,10 @@ services:
   postgres:
     image: postgres:16-alpine
     ports: ["5432:5432"]
-    environment: { POSTGRES_DB: copytrader, POSTGRES_USER: copytrader, POSTGRES_PASSWORD: localdev }
+    environment: { POSTGRES_DB: phoenixtrader, POSTGRES_USER: phoenixtrader, POSTGRES_PASSWORD: localdev }
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U copytrader"]
+      test: ["CMD-SHELL", "pg_isready -U phoenixtrader"]
       interval: 5s
       retries: 5
 
@@ -3158,7 +3158,7 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
 
   trade-gateway:
     build: { context: ., dockerfile: services/trade-gateway/Dockerfile }
@@ -3166,7 +3166,7 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
 
   trade-executor:
     build: { context: ., dockerfile: services/trade-executor/Dockerfile }
@@ -3174,7 +3174,7 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
       REDIS_URL: redis://redis:6379
 
   position-monitor:
@@ -3183,7 +3183,7 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
 
   notification-service:
     build: { context: ., dockerfile: services/notification-service/Dockerfile }
@@ -3191,7 +3191,7 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
 
   api-gateway:
     build: { context: ., dockerfile: services/api-gateway/Dockerfile }
@@ -3199,7 +3199,7 @@ services:
     ports: ["8000:8000"]
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
       REDIS_URL: redis://redis:6379
 
   dashboard-ui:
@@ -3494,7 +3494,7 @@ async def test_full_trade_flow(kafka, postgres):
 ```bash
 # 1. Clone and setup
 git clone <repo>
-cd copy-trading-platform
+cd phoenix-trade-bot
 cp .env.example .env
 # Edit .env with your Discord bot token and Alpaca API keys
 
@@ -3531,7 +3531,7 @@ open http://localhost:3000
 | View Kafka topics | `docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list` |
 | Consume topic (debug) | `docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic raw-messages --from-beginning` |
 | Check consumer lag | `docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group trade-parser-group` |
-| Connect to DB | `docker exec -it postgres psql -U copytrader -d copytrader` |
+| Connect to DB | `docker exec -it postgres psql -U phoenixtrader -d phoenixtrader` |
 | List trades | `SELECT id, trade_id, ticker, action, status, created_at FROM trades ORDER BY created_at DESC LIMIT 20;` |
 | List open positions | `SELECT * FROM positions WHERE status = 'OPEN';` |
 | Emergency kill switch | `curl -X POST http://localhost:8000/api/v1/config/kill-switch?enable=false` |

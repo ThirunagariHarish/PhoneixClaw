@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Initializing Copy Trading Platform ==="
+echo "=== Initializing Phoenix Trade Bot ==="
 
 echo "Waiting for Kafka..."
 until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1; do

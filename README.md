@@ -1,6 +1,6 @@
-# Copy Trading Platform
+# Phoenix Trade Bot
 
-Enterprise-grade, multi-tenant copy trading platform. Parses trading signals from Discord (and other sources), routes them through a Kafka pipeline, and executes trades on broker APIs with configurable buffer pricing, risk management, and real-time position monitoring.
+Enterprise-grade, multi-tenant phoenix trade bot. Parses trading signals from Discord (and other sources), routes them through a Kafka pipeline, and executes trades on broker APIs with configurable buffer pricing, risk management, and real-time position monitoring.
 
 ## Architecture Overview
 
@@ -326,7 +326,7 @@ kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/ingress.yaml
 
 # Check status
-kubectl -n copytrader get pods
+kubectl -n phoenixtrader get pods
 ```
 
 ---

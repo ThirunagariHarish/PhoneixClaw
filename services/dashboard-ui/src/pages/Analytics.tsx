@@ -1,6 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
+import {
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function Analytics() {
   const { data: metrics } = useQuery({
@@ -18,40 +29,108 @@ export default function Analytics() {
       })
       return acc
     },
-    []
+    [],
   )
+
+  const winRateData = (metrics || []).map(
+    (m: { date: string; winning_trades?: number; total_trades?: number }) => ({
+      date: m.date,
+      winRate: m.winning_trades && m.total_trades ? Math.round((m.winning_trades / m.total_trades) * 100) : 0,
+    }),
+  )
+
+  const tooltipStyle = {
+    backgroundColor: 'hsl(var(--card))',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '8px',
+    color: 'hsl(var(--card-foreground))',
+  }
+  const tickFill = 'hsl(var(--muted-foreground))'
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Analytics</h1>
-      <div className="bg-white p-6 rounded-xl shadow-sm border">
-        <h2 className="text-lg font-semibold mb-4">Cumulative P&L</h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={cumulativePnl}>
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip />
-            <Area type="monotone" dataKey="cumulative" stroke="#3b82f6" fill="#dbeafe" />
-          </AreaChart>
-        </ResponsiveContainer>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cumulative P&L (30 days)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={cumulativePnl}>
+                <defs>
+                  <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tick={{ fill: tickFill, fontSize: 12 }} />
+                <YAxis tick={{ fill: tickFill, fontSize: 12 }} />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Area
+                  type="monotone"
+                  dataKey="cumulative"
+                  stroke="hsl(var(--chart-1))"
+                  fill="url(#pnlGrad)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Win Rate Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={winRateData}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tick={{ fill: tickFill, fontSize: 12 }} />
+                <YAxis tick={{ fill: tickFill, fontSize: 12 }} domain={[0, 100]} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v}%`, 'Win Rate']} />
+                <Line
+                  type="monotone"
+                  dataKey="winRate"
+                  stroke="hsl(var(--chart-2))"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: 'hsl(var(--chart-2))' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
       </div>
-      <div className="bg-white p-6 rounded-xl shadow-sm border">
-        <h2 className="text-lg font-semibold mb-4">Win Rate Trend</h2>
-        <ResponsiveContainer width="100%" height={250}>
-          <LineChart
-            data={(metrics || []).map((m: { date: string; winning_trades?: number; total_trades?: number }) => ({
-              date: m.date,
-              winRate:
-                m.winning_trades && m.total_trades ? Math.round((m.winning_trades / m.total_trades) * 100) : 0,
-            }))}
-          >
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip />
-            <Line type="monotone" dataKey="winRate" stroke="#10b981" />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Daily P&L Breakdown</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={250}>
+            <AreaChart data={cumulativePnl}>
+              <defs>
+                <linearGradient id="dailyGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="hsl(var(--chart-3))" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="hsl(var(--chart-3))" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="date" tick={{ fill: tickFill, fontSize: 12 }} />
+              <YAxis tick={{ fill: tickFill, fontSize: 12 }} />
+              <Tooltip contentStyle={tooltipStyle} />
+              <Area
+                type="monotone"
+                dataKey="daily"
+                stroke="hsl(var(--chart-3))"
+                fill="url(#dailyGrad)"
+                strokeWidth={2}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
     </div>
   )
 }

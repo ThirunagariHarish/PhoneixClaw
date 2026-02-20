@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
-import { useAuth } from '../hooks/useAuth'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Activity, Bell, CheckCircle2, XCircle } from 'lucide-react'
 
 export default function System() {
   const { data: health } = useQuery({
@@ -11,45 +14,79 @@ export default function System() {
     queryKey: ['notifications'],
     queryFn: () => axios.get('/api/v1/notifications?limit=10').then((r) => r.data),
   })
-  const { logout } = useAuth()
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">System</h1>
-      <div className="bg-white p-6 rounded-xl shadow-sm border">
-        <h2 className="text-lg font-semibold mb-4">Service Health</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {health?.services &&
-            Object.entries(health.services).map(([name, status]) => (
-              <div key={name} className="flex items-center gap-2 p-2 rounded-lg bg-gray-50">
-                <div
-                  className={`w-2 h-2 rounded-full ${(status as string) === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`}
-                />
-                <span className="text-sm">{name}</span>
-              </div>
-            ))}
-        </div>
-      </div>
-      <div className="bg-white p-6 rounded-xl shadow-sm border">
-        <h2 className="text-lg font-semibold mb-4">Recent Notifications</h2>
-        {(notifications || []).length === 0 ? (
-          <p className="text-gray-500 text-sm">No notifications</p>
-        ) : (
-          <div className="space-y-2">
-            {(notifications || []).map(
-              (n: { id: number; title: string; body: string }) => (
-                <div key={n.id} className="p-3 rounded-lg bg-gray-50 border">
-                  <p className="text-sm font-medium">{n.title}</p>
-                  <p className="text-xs text-gray-500">{n.body}</p>
-                </div>
-              )
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <Activity className="h-5 w-5 text-primary" />
+          <CardTitle className="text-base">Service Health</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {health?.services &&
+              Object.entries(health.services).map(([name, status]) => {
+                const healthy = (status as string) === 'healthy'
+                return (
+                  <div
+                    key={name}
+                    className="flex items-center gap-3 rounded-lg border border-border p-3"
+                  >
+                    {healthy ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-500 shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{name}</p>
+                      <Badge variant={healthy ? 'success' : 'destructive'} className="mt-1 text-[10px]">
+                        {status as string}
+                      </Badge>
+                    </div>
+                  </div>
+                )
+              })}
+            {!health?.services && (
+              <p className="text-sm text-muted-foreground col-span-full">Loading service health...</p>
             )}
           </div>
-        )}
-      </div>
-      <button onClick={logout} className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700">
-        Sign Out
-      </button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <Bell className="h-5 w-5 text-primary" />
+          <CardTitle className="text-base">Recent Notifications</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(!notifications || notifications.length === 0) ? (
+            <div className="flex flex-col items-center py-8 text-center">
+              <Bell className="h-10 w-10 text-muted-foreground/30 mb-3" />
+              <p className="text-sm text-muted-foreground">No notifications yet</p>
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[400px]">
+              <div className="space-y-2">
+                {(notifications || []).map(
+                  (n: { id: number; title: string; body: string; created_at?: string }) => (
+                    <div key={n.id} className="rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">{n.title}</p>
+                        {n.created_at && (
+                          <span className="text-[11px] text-muted-foreground">
+                            {new Date(n.created_at).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{n.body}</p>
+                    </div>
+                  ),
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

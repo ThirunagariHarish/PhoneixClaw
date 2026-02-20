@@ -1,0 +1,302 @@
+###############################################################################
+# PhoenixTrade Platform — Coolify Production Compose
+#
+# Deploy this file via Coolify's Docker Compose build pack.
+# All ${VAR} references are auto-detected by Coolify and exposed in the UI.
+# Set them in Coolify's Environment Variables panel before deploying.
+###############################################################################
+
+services:
+  # ─── Infrastructure ───────────────────────────────────────────────────
+  kafka:
+    image: apache/kafka:latest
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+    healthcheck:
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-phoenixtrader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-phoenixtrader}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U ${POSTGRES_USER:-phoenixtrader}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+        reservations:
+          memory: 64M
+    restart: unless-stopped
+
+  # ─── DB Init (runs once then exits) ──────────────────────────────────
+  init:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    command: >
+      sh -c "
+        echo 'Waiting for Postgres…' &&
+        sleep 5 &&
+        python -c 'import asyncio; from shared.models.database import init_db; asyncio.run(init_db())' &&
+        echo 'Database tables created'
+      "
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-phoenixtrader}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-phoenixtrader}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    labels:
+      - "coolify.exclude_from_hc=true"
+    restart: "no"
+
+  # ─── Core Services ───────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    environment: &app-env
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-phoenixtrader}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-phoenixtrader}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      <<: *app-env
+      APPROVAL_MODE: ${APPROVAL_MODE:-auto}
+      APPROVAL_TIMEOUT_SECONDS: ${APPROVAL_TIMEOUT_SECONDS:-300}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 192M
+    restart: unless-stopped
+
+  trade-parser:
+    build:
+      context: .
+      dockerfile: services/trade-parser/Dockerfile
+    environment: *app-env
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  trade-gateway:
+    build:
+      context: .
+      dockerfile: services/trade-gateway/Dockerfile
+    environment:
+      <<: *app-env
+      APPROVAL_MODE: ${APPROVAL_MODE:-auto}
+      APPROVAL_TIMEOUT_SECONDS: ${APPROVAL_TIMEOUT_SECONDS:-300}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  trade-executor:
+    build:
+      context: .
+      dockerfile: services/trade-executor/Dockerfile
+    environment:
+      <<: *app-env
+      BUFFER_PERCENTAGE: ${BUFFER_PERCENTAGE:-0.15}
+      BUFFER_MAX_PERCENTAGE: ${BUFFER_MAX_PERCENTAGE:-0.30}
+      BUFFER_MIN_PRICE: ${BUFFER_MIN_PRICE:-0.01}
+      MAX_POSITION_SIZE: ${MAX_POSITION_SIZE:-10}
+      MAX_DAILY_LOSS: ${MAX_DAILY_LOSS:-1000.0}
+      ENABLE_TRADING: ${ENABLE_TRADING:-true}
+      DRY_RUN_MODE: ${DRY_RUN_MODE:-false}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  position-monitor:
+    build:
+      context: .
+      dockerfile: services/position-monitor/Dockerfile
+    environment:
+      <<: *app-env
+      MONITOR_POLL_INTERVAL_SECONDS: ${MONITOR_POLL_INTERVAL_SECONDS:-5}
+      DEFAULT_PROFIT_TARGET: ${DEFAULT_PROFIT_TARGET:-0.30}
+      DEFAULT_STOP_LOSS: ${DEFAULT_STOP_LOSS:-0.20}
+      TRAILING_STOP_ENABLED: ${TRAILING_STOP_ENABLED:-false}
+      TRAILING_STOP_OFFSET: ${TRAILING_STOP_OFFSET:-0.10}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    environment:
+      <<: *app-env
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  source-orchestrator:
+    build:
+      context: .
+      dockerfile: services/source-orchestrator/Dockerfile
+    environment:
+      <<: *app-env
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_TARGET_CHANNELS: ${DISCORD_TARGET_CHANNELS:-}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  audit-writer:
+    build:
+      context: .
+      dockerfile: services/audit-writer/Dockerfile
+    environment: *app-env
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+        reservations:
+          memory: 96M
+    restart: unless-stopped
+
+  # ─── Dashboard (public-facing, gets Coolify domain) ──────────────────
+  dashboard-ui:
+    build:
+      context: services/dashboard-ui
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  redis-data:

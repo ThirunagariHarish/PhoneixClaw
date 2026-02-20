@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: position-monitor
-  namespace: copytrader
+  namespace: phoenixtrader
   labels:
     app: position-monitor
 spec:
@@ -17,14 +17,14 @@ spec:
     spec:
       containers:
         - name: position-monitor
-          image: copytrader/position-monitor:latest
+          image: phoenixtrader/position-monitor:latest
           ports:
             - containerPort: 8009
           envFrom:
             - configMapRef:
-                name: copytrader-config
+                name: phoenixtrader-config
             - secretRef:
-                name: copytrader-secrets
+                name: phoenixtrader-secrets
           readinessProbe:
             httpGet:
               path: /health
@@ -49,7 +49,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: position-monitor
-  namespace: copytrader
+  namespace: phoenixtrader
 spec:
   selector:
     app: position-monitor

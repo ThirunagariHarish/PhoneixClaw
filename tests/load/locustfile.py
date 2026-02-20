@@ -1,4 +1,4 @@
-"""Load test suite for the Copy Trading Platform.
+"""Load test suite for the Phoenix Trade Bot.
 Run: locust -f tests/load/locustfile.py --host http://localhost:8011
 """
 from locust import HttpUser, task, between

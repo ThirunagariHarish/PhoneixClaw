@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   kafka:
-    image: apache/kafka-native:3.8
+    image: apache/kafka:latest
     container_name: kafka
     ports:
       - "9092:9092"
@@ -29,13 +29,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: copytrader
+      POSTGRES_USER: phoenixtrader
       POSTGRES_PASSWORD: localdev
-      POSTGRES_DB: copytrader
+      POSTGRES_DB: phoenixtrader
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: pg_isready -U copytrader
+      test: pg_isready -U phoenixtrader
       interval: 5s
       timeout: 3s
       retries: 10
@@ -63,7 +63,7 @@ services:
         echo 'Database initialized'
       "
     environment:
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
     depends_on:
@@ -79,7 +79,7 @@ services:
     ports:
       - "8001:8001"
     environment: &common-env
-      DATABASE_URL: postgresql+asyncpg://copytrader:localdev@postgres:5432/copytrader
+      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
       JWT_SECRET_KEY: dev-secret-key

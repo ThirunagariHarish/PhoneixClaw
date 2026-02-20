@@ -1,4 +1,4 @@
-# Milestones: Copy Trading Platform
+# Milestones: Phoenix Trade Bot
 
 **Version:** 1.0
 **Date:** 2026-02-20
@@ -307,7 +307,7 @@ gantt
 | Off-path audit writes | Parser and Gateway produce audit events to `trade-events-raw` Kafka topic. Separate `audit-writer` service (lightweight) batches inserts to `trade_events` table every 500ms | **L5** |
 | Batch offset commits | Commit offsets every 200 messages or 1 second | **L6** |
 | Connection warmup | All services pre-connect to Kafka, DB, Redis, and broker at startup. Health probe returns `not_ready` until warm | -- |
-| Latency instrumentation | `copytrader_trade_latency_seconds` histogram per stage: `ingest`, `parse`, `approve`, `execute`, `total` | -- |
+| Latency instrumentation | `phoenixtrader_trade_latency_seconds` histogram per stage: `ingest`, `parse`, `approve`, `execute`, `total` | -- |
 | Benchmark harness | Script that sends N synthetic messages and measures p50/p95/p99 end-to-end latency | -- |
 
 **Exit criteria:** Benchmark shows p95 end-to-end < 200ms (with paper broker), non-broker overhead p95 < 30ms.

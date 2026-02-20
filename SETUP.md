@@ -1,6 +1,6 @@
 # How to Run and Test -- Step-by-Step Guide
 
-This guide walks you through setting up, running, and testing the Copy Trading Platform from a fresh clone. Follow every step in order.
+This guide walks you through setting up, running, and testing the Phoenix Trade Bot from a fresh clone. Follow every step in order.
 
 ---
 
@@ -145,7 +145,7 @@ redis      Up 10s (healthy)         0.0.0.0:6379->6379/tcp
 
 ```bash
 # Test PostgreSQL
-docker exec postgres pg_isready -U copytrader
+docker exec postgres pg_isready -U phoenixtrader
 # /var/run/postgresql:5432 - accepting connections
 
 # Test Redis
@@ -176,7 +176,7 @@ make db-init
 **Verify tables were created:**
 
 ```bash
-docker exec postgres psql -U copytrader -c "\dt"
+docker exec postgres psql -U phoenixtrader -c "\dt"
 ```
 
 You should see tables like: `users`, `trading_accounts`, `data_sources`, `channels`, `account_source_mappings`, `trades`, `positions`, `trade_events`, `daily_metrics`, `configurations`, `notification_log`, etc.

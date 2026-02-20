@@ -13,12 +13,14 @@ router = APIRouter(prefix="/api/v1/sources", tags=["sources"])
 class SourceCreate(BaseModel):
     source_type: str
     display_name: str
+    auth_type: str = "user_token"
     credentials: dict
 
 class SourceResponse(BaseModel):
     id: str
     source_type: str
     display_name: str
+    auth_type: str
     enabled: bool
     connection_status: str
     created_at: str
@@ -44,7 +46,8 @@ async def create_source(req: SourceCreate, request: Request, session: AsyncSessi
     user_id = request.state.user_id
     source = DataSource(
         user_id=uuid.UUID(user_id), source_type=req.source_type,
-        display_name=req.display_name, credentials_encrypted=encrypt_credentials(req.credentials),
+        display_name=req.display_name, auth_type=req.auth_type,
+        credentials_encrypted=encrypt_credentials(req.credentials),
     )
     session.add(source)
     await session.commit()
@@ -75,4 +78,4 @@ async def add_channel(source_id: str, req: ChannelCreate, request: Request, sess
     return ChannelResponse(id=str(ch.id), channel_identifier=ch.channel_identifier, display_name=ch.display_name, enabled=ch.enabled)
 
 def _source_response(s: DataSource) -> SourceResponse:
-    return SourceResponse(id=str(s.id), source_type=s.source_type, display_name=s.display_name, enabled=s.enabled, connection_status=s.connection_status, created_at=s.created_at.isoformat())
+    return SourceResponse(id=str(s.id), source_type=s.source_type, display_name=s.display_name, auth_type=s.auth_type, enabled=s.enabled, connection_status=s.connection_status, created_at=s.created_at.isoformat())
