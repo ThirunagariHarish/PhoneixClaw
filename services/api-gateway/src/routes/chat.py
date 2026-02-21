@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.config.base_config import config
 from shared.models.database import get_session
-from shared.models.trade import ChatMessage, RawMessage
+from shared.models.trade import ChatMessage, RawMessage, Trade, TradingAccount
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,115 @@ async def send_chat_message(
     await session.commit()
     await session.refresh(msg)
 
-    if _kafka_producer and _kafka_producer.is_started:
+    parsed_trade_ids: list[str] = []
+    system_reply_text = f"Signal received: \"{body.message}\". "
+
+    try:
+        from services.trade_parser.src.parser import parse_trade_message
+
+        result = parse_trade_message(body.message)
+        actions = result.get("actions", [])
+
+        if actions:
+            approval_mode = config.gateway.approval_mode
+            is_auto = approval_mode == "auto"
+            status = "APPROVED" if is_auto else "PENDING"
+            approved_by = "auto-chat" if is_auto else None
+            approved_at = datetime.now(timezone.utc) if is_auto else None
+
+            result_acc = await session.execute(
+                select(TradingAccount)
+                .where(
+                    TradingAccount.user_id == uuid.UUID(user_id),
+                    TradingAccount.enabled.is_(True),
+                )
+                .limit(1)
+            )
+            ta = result_acc.scalar_one_or_none()
+            ta_id = ta.id if ta else None
+
+            for action in actions:
+                trade_id = uuid.uuid4()
+                exp_val = action.get("expiration")
+                expiration_dt = None
+                if exp_val:
+                    try:
+                        expiration_dt = datetime.strptime(
+                            str(exp_val), "%Y-%m-%d"
+                        )
+                    except (ValueError, TypeError):
+                        pass
+
+                trade = Trade(
+                    trade_id=trade_id,
+                    user_id=uuid.UUID(user_id),
+                    trading_account_id=ta_id,
+                    ticker=action.get("ticker", ""),
+                    strike=action.get("strike", 0),
+                    option_type=action.get("option_type", "CALL"),
+                    expiration=expiration_dt,
+                    action=action.get("action", "BUY"),
+                    quantity=str(action.get("quantity", 1)),
+                    price=action.get("price", 0),
+                    source="chat",
+                    source_message_id=str(msg.id),
+                    source_author="You",
+                    raw_message=body.message,
+                    status=status,
+                    approved_by=approved_by,
+                    approved_at=approved_at,
+                )
+                session.add(trade)
+                parsed_trade_ids.append(str(trade_id))
+
+            await session.commit()
+
+            if is_auto:
+                system_reply_text += (
+                    f"Parsed {len(actions)} trade(s). Auto-approved. "
+                    "Execution will attempt when market is open."
+                )
+            else:
+                system_reply_text += (
+                    f"Parsed {len(actions)} trade(s). Pending your approval "
+                    "in the Trade Gateway."
+                )
+
+            if _kafka_producer and _kafka_producer.is_started and is_auto:
+                for i, trade_id_str in enumerate(parsed_trade_ids):
+                    act = actions[i] if i < len(actions) else {}
+                    try:
+                        await _kafka_producer.send(
+                            topic="approved-trades",
+                            value={
+                                "trade_id": trade_id_str,
+                                "user_id": user_id,
+                                "trading_account_id": str(ta_id) if ta_id else None,
+                                "channel_id": "chat-widget",
+                                "ticker": act.get("ticker", ""),
+                                "strike": act.get("strike", 0),
+                                "option_type": act.get("option_type", "CALL"),
+                                "expiration": act.get("expiration"),
+                                "action": act.get("action", "BUY"),
+                                "quantity": act.get("quantity", 1),
+                                "price": act.get("price", 0),
+                                "source": "chat",
+                                "raw_message": body.message,
+                            },
+                            key=trade_id_str,
+                            headers=[("user_id", user_id.encode())],
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to publish trade %s to Kafka", trade_id_str
+                        )
+        else:
+            system_reply_text += "No trade signal detected. Try format: BTO AAPL 190C 3/21 @ 2.50"
+    except Exception:
+        logger.exception("Chat sync parse failed for: %s", body.message[:80])
+        system_reply_text += "Parse error — check format (e.g. BTO AAPL 190C 3/21 @ 2.50)"
+
+    if not parsed_trade_ids and (_kafka_producer and _kafka_producer.is_started):
         try:
             await _kafka_producer.send(
                 topic="raw-messages",
@@ -89,7 +198,7 @@ async def send_chat_message(
 
     system_reply = ChatMessage(
         user_id=uuid.UUID(user_id),
-        content=f"Signal received: \"{body.message}\". Routing to trade parser...",
+        content=system_reply_text,
         role="system",
     )
     session.add(system_reply)

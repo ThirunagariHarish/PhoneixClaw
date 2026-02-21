@@ -65,18 +65,23 @@ class TradeExecutorService:
             channel_id = trade.get("channel_id")
             user_id = trade.get("user_id")
             if channel_id and user_id:
-                async with AsyncSessionLocal() as session:
-                    from sqlalchemy import select
-                    result = await session.execute(
-                        select(AccountSourceMapping).where(
-                            AccountSourceMapping.channel_id == uuid.UUID(channel_id),
-                            AccountSourceMapping.enabled.is_(True),
+                try:
+                    ch_uuid = uuid.UUID(channel_id)
+                except (ValueError, TypeError):
+                    ch_uuid = None
+                if ch_uuid:
+                    async with AsyncSessionLocal() as session:
+                        from sqlalchemy import select
+                        result = await session.execute(
+                            select(AccountSourceMapping).where(
+                                AccountSourceMapping.channel_id == ch_uuid,
+                                AccountSourceMapping.enabled.is_(True),
+                            )
                         )
-                    )
-                    mapping = result.scalar_one_or_none()
-                    if mapping:
-                        ta_id = str(mapping.trading_account_id)
-                        trade["trading_account_id"] = ta_id
+                        mapping = result.scalar_one_or_none()
+                        if mapping:
+                            ta_id = str(mapping.trading_account_id)
+                            trade["trading_account_id"] = ta_id
 
         if not ta_id:
             async with AsyncSessionLocal() as session:
