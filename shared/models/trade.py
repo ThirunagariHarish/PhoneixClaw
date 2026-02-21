@@ -314,6 +314,28 @@ class ChatMessage(Base):
     __table_args__ = (Index("idx_chat_user_created", "user_id", "created_at"),)
 
 
+class RawMessage(Base):
+    __tablename__ = "raw_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    data_source_id = Column(
+        UUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_type = Column(String(20), nullable=False, default="discord")
+    channel_name = Column(String(200), nullable=True)
+    author = Column(String(200), nullable=True)
+    content = Column(Text, nullable=False)
+    source_message_id = Column(String(100), nullable=True)
+    raw_metadata = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_raw_msg_user_source", "user_id", "data_source_id"),
+        Index("idx_raw_msg_created", "user_id", "created_at"),
+    )
+
+
 class NotificationLog(Base):
     __tablename__ = "notification_log"
 

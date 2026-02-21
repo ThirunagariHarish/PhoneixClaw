@@ -13,6 +13,7 @@ import {
   Database,
   Wallet,
   BarChart3,
+  MessageSquare,
   Settings,
   LogOut,
   Menu,
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/sources', icon: Database, label: 'Data Sources' },
   { to: '/accounts', icon: Wallet, label: 'Trading Accounts' },
+  { to: '/messages', icon: MessageSquare, label: 'Raw Messages' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/system', icon: Settings, label: 'System' },
 ]
@@ -152,6 +154,7 @@ const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/sources': 'Data Sources',
   '/accounts': 'Trading Accounts',
+  '/messages': 'Raw Messages',
   '/analytics': 'Analytics',
   '/system': 'System',
 }

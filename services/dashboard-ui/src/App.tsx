@@ -7,6 +7,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import DataSources from './pages/DataSources'
 import TradingAccounts from './pages/TradingAccounts'
+import RawMessages from './pages/RawMessages'
 import Analytics from './pages/Analytics'
 import System from './pages/System'
 
@@ -35,6 +36,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="sources" element={<DataSources />} />
           <Route path="accounts" element={<TradingAccounts />} />
+          <Route path="messages" element={<RawMessages />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="system" element={<System />} />
         </Route>

@@ -14,6 +14,7 @@ from services.api_gateway.src.routes.accounts import router as accounts_router
 from services.api_gateway.src.routes.chat import router as chat_router
 from services.api_gateway.src.routes.chat import set_kafka_producer
 from services.api_gateway.src.routes.mappings import router as mappings_router
+from services.api_gateway.src.routes.messages import router as messages_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
 from services.api_gateway.src.routes.sources import router as sources_router
@@ -68,6 +69,7 @@ app.include_router(metrics_router)
 app.include_router(notifications_router)
 app.include_router(system_router)
 app.include_router(chat_router)
+app.include_router(messages_router)
 
 
 @app.get("/health")

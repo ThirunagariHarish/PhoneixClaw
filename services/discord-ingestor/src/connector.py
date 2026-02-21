@@ -24,12 +24,14 @@ class DiscordIngestor:
         user_id: str,
         auth_type: str = "user_token",
         producer: KafkaProducerWrapper | None = None,
+        data_source_id: str | None = None,
     ) -> None:
         self._token = token
         self._target_channels = set(target_channels)
         self._user_id = user_id
         self._auth_type = auth_type
         self._producer = producer or KafkaProducerWrapper()
+        self._data_source_id = data_source_id
         self._dedup_cache: set[str] = set()
 
         self._client = discord.Client()
@@ -67,12 +69,15 @@ class DiscordIngestor:
         raw_msg = {
             "content": content,
             "message_id": str(message.id),
+            "source_message_id": str(message.id),
             "author": str(message.author),
             "channel_name": str(message.channel),
             "channel_id": str(message.channel.id),
             "guild_id": str(message.guild.id) if message.guild else "",
             "user_id": self._user_id,
+            "data_source_id": self._data_source_id,
             "source": "discord",
+            "source_type": "discord",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Plus, MoreVertical, Trash2, Database, Loader2 } from 'lucide-react'
+import { Plus, MoreVertical, Trash2, Database, Loader2, Plug, Play, Square } from 'lucide-react'
 
 interface Source {
   id: string
@@ -69,6 +69,28 @@ export default function DataSources() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => axios.delete(`/api/v1/sources/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sources'] }),
+  })
+
+  const [testResult, setTestResult] = useState<{ id: string; status: string; detail: string } | null>(null)
+  const [testingId, setTestingId] = useState<string | null>(null)
+
+  const testMutation = useMutation({
+    mutationFn: async (id: string) => {
+      setTestingId(id)
+      const res = await axios.post(`/api/v1/sources/${id}/test`)
+      return { id, ...res.data }
+    },
+    onSuccess: (data) => {
+      setTestResult(data)
+      qc.invalidateQueries({ queryKey: ['sources'] })
+      setTestingId(null)
+    },
+    onError: () => setTestingId(null),
+  })
+
+  const toggleMutation = useMutation({
+    mutationFn: (id: string) => axios.post(`/api/v1/sources/${id}/toggle`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sources'] }),
   })
 
@@ -222,14 +244,44 @@ export default function DataSources() {
         </Card>
       )}
 
+      {testResult && (
+        <div
+          className={`rounded-lg border p-3 text-sm flex items-center justify-between ${
+            testResult.status === 'CONNECTED'
+              ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400'
+              : 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400'
+          }`}
+        >
+          <span>
+            {testResult.status === 'CONNECTED'
+              ? `Connected successfully${testResult.detail ? ` (${testResult.detail})` : ''}`
+              : `Connection failed: ${testResult.detail}`}
+          </span>
+          <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => setTestResult(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {(sources || []).map((s) => (
           <Card key={s.id} className="group relative">
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${platformIcon(s.source_type)}`}>
-                    <Database className="h-5 w-5" />
+                  <div className="relative">
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${platformIcon(s.source_type)}`}>
+                      <Database className="h-5 w-5" />
+                    </div>
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${
+                        s.enabled && s.connection_status === 'CONNECTED'
+                          ? 'bg-green-500'
+                          : s.enabled
+                            ? 'bg-yellow-500'
+                            : 'bg-gray-400'
+                      }`}
+                    />
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm">{s.display_name}</h3>
@@ -244,6 +296,26 @@ export default function DataSources() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
+                      onClick={() => testMutation.mutate(s.id)}
+                      disabled={testingId === s.id}
+                    >
+                      {testingId === s.id ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Plug className="mr-2 h-4 w-4" />
+                      )}
+                      Test Connection
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => toggleMutation.mutate(s.id)}
+                    >
+                      {s.enabled ? (
+                        <><Square className="mr-2 h-4 w-4" /> Stop Ingestion</>
+                      ) : (
+                        <><Play className="mr-2 h-4 w-4" /> Start Ingestion</>
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onClick={() => deleteMutation.mutate(s.id)}
                     >
@@ -255,6 +327,9 @@ export default function DataSources() {
               <div className="mt-4 flex items-center gap-2">
                 <Badge variant={s.connection_status === 'CONNECTED' ? 'success' : 'secondary'}>
                   {s.connection_status}
+                </Badge>
+                <Badge variant={s.enabled ? 'default' : 'outline'} className="text-xs">
+                  {s.enabled ? 'Active' : 'Stopped'}
                 </Badge>
                 <Badge variant="outline" className="text-xs">
                   {s.auth_type === 'bot' ? 'Bot' : 'User Token'}
