@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils'
 
 const baseNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/positions', icon: TrendingUp, label: 'Positions' },
   { to: '/sources', icon: Database, label: 'Data Sources' },
   { to: '/accounts', icon: Wallet, label: 'Trading Accounts' },
   { to: '/messages', icon: MessageSquare, label: 'Raw Messages' },
@@ -157,6 +158,7 @@ function SidebarContent({
 
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
+  '/positions': 'Positions',
   '/sources': 'Data Sources',
   '/accounts': 'Trading Accounts',
   '/messages': 'Raw Messages',

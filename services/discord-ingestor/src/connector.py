@@ -8,6 +8,23 @@ from shared.kafka_utils.producer import KafkaProducerWrapper
 
 logger = logging.getLogger(__name__)
 
+_redis_client = None
+
+
+async def _get_redis():
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis.asyncio as aioredis
+
+            from shared.config.base_config import config
+            _redis_client = aioredis.from_url(config.redis.url, decode_responses=True)
+            await _redis_client.ping()
+        except Exception:
+            logger.warning("Redis unavailable for dedup, using in-memory fallback")
+            _redis_client = False
+    return _redis_client if _redis_client is not False else None
+
 
 class DiscordIngestor:
     """Per-user Discord ingestor that publishes messages to Kafka.
@@ -60,11 +77,19 @@ class DiscordIngestor:
             return
 
         msg_key = f"{message.id}"
-        if msg_key in self._dedup_cache:
-            return
-        self._dedup_cache.add(msg_key)
-        if len(self._dedup_cache) > 10000:
-            self._dedup_cache.clear()
+
+        redis_cl = await _get_redis()
+        if redis_cl:
+            dedup_key = f"dedup:discord:{msg_key}"
+            if await redis_cl.exists(dedup_key):
+                return
+            await redis_cl.set(dedup_key, "1", ex=3600)
+        else:
+            if msg_key in self._dedup_cache:
+                return
+            self._dedup_cache.add(msg_key)
+            if len(self._dedup_cache) > 10000:
+                self._dedup_cache.clear()
 
         raw_msg = {
             "content": content,

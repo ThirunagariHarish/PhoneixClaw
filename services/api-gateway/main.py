@@ -18,6 +18,7 @@ from services.api_gateway.src.routes.mappings import router as mappings_router
 from services.api_gateway.src.routes.messages import router as messages_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
+from services.api_gateway.src.routes.positions import router as positions_router
 from services.api_gateway.src.routes.sources import router as sources_router
 from services.api_gateway.src.routes.system import router as system_router
 from services.api_gateway.src.routes.trades import router as trades_router
@@ -91,6 +92,7 @@ app.include_router(accounts_router)
 app.include_router(sources_router)
 app.include_router(mappings_router)
 app.include_router(trades_router)
+app.include_router(positions_router)
 app.include_router(metrics_router)
 app.include_router(notifications_router)
 app.include_router(system_router)

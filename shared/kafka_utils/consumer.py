@@ -15,6 +15,7 @@ class KafkaConsumerWrapper:
         self._group_id = group_id
         self._consumer: AIOKafkaConsumer | None = None
         self._running = False
+        self._dlq = None
 
     async def start(self) -> None:
         self._consumer = AIOKafkaConsumer(
@@ -28,6 +29,9 @@ class KafkaConsumerWrapper:
         await self._consumer.start()
         self._running = True
         logger.info("Kafka consumer started (topic=%s, group=%s)", self._topic, self._group_id)
+
+    def set_dlq(self, dlq) -> None:
+        self._dlq = dlq
 
     async def consume(self, handler: Callable[[dict, dict], Awaitable[None]]) -> None:
         """Consume messages. handler receives (value, headers_dict)."""
@@ -45,8 +49,15 @@ class KafkaConsumerWrapper:
                 if batch_count >= 200:
                     await self._consumer.commit()
                     batch_count = 0
-            except Exception:
+            except Exception as e:
                 logger.exception("Error processing message from %s (offset=%d)", self._topic, msg.offset)
+                if self._dlq:
+                    try:
+                        await self._dlq.send(
+                            self._topic, msg.value, str(e), type(e).__name__
+                        )
+                    except Exception:
+                        logger.exception("Failed to send to DLQ for topic %s", self._topic)
 
         if batch_count > 0 and self._consumer:
             await self._consumer.commit()

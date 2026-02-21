@@ -1,22 +1,80 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Activity, Bell, CheckCircle2, XCircle } from 'lucide-react'
+import { Activity, Bell, CheckCircle2, XCircle, ShieldAlert, Power } from 'lucide-react'
 
 export default function System() {
+  const qc = useQueryClient()
+  const [killMsg, setKillMsg] = useState<string | null>(null)
+
   const { data: health } = useQuery({
     queryKey: ['system-health'],
     queryFn: () => axios.get('/api/v1/system/health').then((r) => r.data),
+    refetchInterval: 10000,
   })
   const { data: notifications } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => axios.get('/api/v1/notifications?limit=10').then((r) => r.data),
   })
+  const { data: systemConfig } = useQuery({
+    queryKey: ['system-config'],
+    queryFn: () => axios.get('/api/v1/system/config').then((r) => r.data),
+  })
+
+  const killMut = useMutation({
+    mutationFn: () => axios.post('/api/v1/system/kill-switch'),
+    onSuccess: (res) => {
+      const active = res.data.kill_switch_active
+      setKillMsg(active ? 'Kill switch ACTIVATED — trading disabled' : 'Trading RE-ENABLED')
+      qc.invalidateQueries({ queryKey: ['system-config'] })
+      setTimeout(() => setKillMsg(null), 3000)
+    },
+  })
+
+  const tradingEnabled = systemConfig?.enable_trading?.value ?? true
 
   return (
     <div className="space-y-6">
+      {killMsg && (
+        <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3 text-yellow-600 text-sm">
+          {killMsg}
+        </div>
+      )}
+
+      <Card className={!tradingEnabled ? 'border-red-500/50' : ''}>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <ShieldAlert className="h-5 w-5 text-red-500" />
+          <CardTitle className="text-base">Kill Switch</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Trading Status</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {tradingEnabled
+                  ? 'Trading is active. Press to disable all trade execution.'
+                  : 'Trading is DISABLED. Press to re-enable.'}
+              </p>
+            </div>
+            <Button
+              variant={tradingEnabled ? 'destructive' : 'default'}
+              onClick={() => killMut.mutate()}
+              disabled={killMut.isPending}
+            >
+              <Power className="h-4 w-4 mr-2" />
+              {tradingEnabled ? 'Disable Trading' : 'Enable Trading'}
+            </Button>
+          </div>
+          {!tradingEnabled && (
+            <Badge variant="destructive" className="mt-3">KILL SWITCH ACTIVE</Badge>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="flex flex-row items-center gap-2">
           <Activity className="h-5 w-5 text-primary" />

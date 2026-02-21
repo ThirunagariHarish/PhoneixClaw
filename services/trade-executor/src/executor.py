@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 from services.trade_executor.src.buffer import calculate_buffered_price  # noqa: E402
 from services.trade_executor.src.validator import trade_validator  # noqa: E402
 from shared.broker.adapter import BrokerAdapter
+from shared.broker.circuit_breaker import CircuitBreaker, CircuitOpenError
 from shared.broker.factory import create_broker_adapter
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
+from shared.kafka_utils.dlq import DeadLetterQueue
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
 from shared.models.trade import AccountSourceMapping, TradingAccount
+from shared.retry import RetryExhaustedError, retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -18,21 +21,35 @@ logger = logging.getLogger(__name__)
 class TradeExecutorService:
     def __init__(self, broker: BrokerAdapter | None = None) -> None:
         self.consumer = KafkaConsumerWrapper("approved-trades", "trade-executor-group")
+        self.exit_consumer = KafkaConsumerWrapper("exit-signals", "trade-executor-exit-group")
         self.producer = KafkaProducerWrapper()
         self.broker = broker
         self._broker_cache: dict[str, BrokerAdapter] = {}
+        self._circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60.0)
+        self._dry_run = False
 
     async def start(self) -> None:
+        from shared.config.base_config import config as app_config
+        self._dry_run = app_config.risk.dry_run_mode
         await self.producer.start()
+        dlq = DeadLetterQueue(self.producer)
+        self.consumer.set_dlq(dlq)
+        self.exit_consumer.set_dlq(dlq)
         await self.consumer.start()
-        logger.info("Trade executor service started")
+        await self.exit_consumer.start()
+        logger.info("Trade executor started (dry_run=%s)", self._dry_run)
 
     async def stop(self) -> None:
         await self.consumer.stop()
+        await self.exit_consumer.stop()
         await self.producer.stop()
 
     async def run(self) -> None:
-        await self.consumer.consume(self._handle_trade)
+        import asyncio
+        await asyncio.gather(
+            self.consumer.consume(self._handle_trade),
+            self.exit_consumer.consume(self._handle_exit_signal),
+        )
 
     async def _resolve_broker(self, trade: dict) -> BrokerAdapter | None:
         if self.broker:
@@ -130,8 +147,22 @@ class TradeExecutorService:
 
         symbol = broker.format_option_symbol(ticker, expiration, option_type, strike)
 
+        if self._dry_run:
+            trade["broker_order_id"] = f"DRY-{trade_id[:8]}"
+            trade["buffered_price"] = buffered_price
+            trade["buffer_pct_used"] = buffer_pct
+            trade["broker_symbol"] = symbol
+            await self._publish_result(trade, "EXECUTED", start_time=start_time)
+            logger.info("[DRY RUN] Trade %s: %s %d %s @ %.2f", trade_id, action, quantity, symbol, buffered_price)
+            return
+
         try:
-            order_id = await broker.place_limit_order(symbol, quantity, action, buffered_price)
+            order_id = await retry_async(
+                self._circuit_breaker.call,
+                broker.place_limit_order, symbol, quantity, action, buffered_price,
+                max_retries=2, base_delay=1.0,
+                retryable_exceptions=(ConnectionError, TimeoutError, OSError),
+            )
             trade["broker_order_id"] = order_id
             trade["buffered_price"] = buffered_price
             trade["buffer_pct_used"] = buffer_pct
@@ -139,8 +170,86 @@ class TradeExecutorService:
             await self._publish_result(trade, "EXECUTED", start_time=start_time)
             logger.info("Executed trade %s: %s %d %s @ %.2f (buffered=%.2f, order=%s)",
                          trade_id, action, quantity, symbol, price, buffered_price, order_id)
+        except CircuitOpenError:
+            logger.error("Circuit breaker OPEN — trade %s deferred", trade_id)
+            await self._publish_result(trade, "ERROR", error_message="BROKER_CIRCUIT_OPEN", start_time=start_time)
+        except RetryExhaustedError as e:
+            logger.error("Retries exhausted for trade %s: %s", trade_id, e)
+            await self._publish_result(trade, "ERROR", error_message=f"BROKER_TIMEOUT: {e}", start_time=start_time)
         except Exception as e:
             logger.error("Failed to execute trade %s: %s", trade_id, e)
+            await self._publish_result(trade, "ERROR", error_message=str(e), start_time=start_time)
+
+    async def _handle_exit_signal(self, signal: dict, headers: dict) -> None:
+        """Process an exit signal from the position monitor to close a position."""
+        position_id = signal.get("position_id")
+        action_type = signal.get("action", "MANUAL_EXIT")
+        ticker = signal.get("ticker", "")
+        quantity = signal.get("quantity", 1)
+        current_price = signal.get("current_price", 0)
+        user_id = signal.get("user_id", "")
+        trading_account_id = signal.get("trading_account_id", "")
+
+        logger.info("Exit signal: %s for position %s (%s)", action_type, position_id, ticker)
+
+        trade = {
+            "trade_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "trading_account_id": trading_account_id,
+            "ticker": ticker,
+            "action": "SELL",
+            "strike": signal.get("strike", 0),
+            "option_type": signal.get("option_type", "CALL"),
+            "expiration": signal.get("expiration"),
+            "quantity": quantity,
+            "price": current_price,
+            "source": "exit-signal",
+            "raw_message": f"Auto-exit: {action_type}",
+        }
+
+        broker = await self._resolve_broker(trade)
+        if not broker:
+            logger.error("No broker for exit signal on position %s", position_id)
+            return
+
+        start_time = time.monotonic()
+        symbol = signal.get("broker_symbol", "")
+        if not symbol:
+            exp = signal.get("expiration")
+            if exp:
+                symbol = broker.format_option_symbol(
+                    ticker, exp, signal.get("option_type", "CALL"), signal.get("strike", 0)
+                )
+
+        try:
+            if self._dry_run:
+                order_id = f"DRY-EXIT-{trade['trade_id'][:8]}"
+            else:
+                sell_price = current_price * 0.97
+                order_id = await broker.place_limit_order(symbol, quantity, "SELL", sell_price)
+
+            trade["broker_order_id"] = order_id
+            await self._publish_result(trade, "EXECUTED", start_time=start_time)
+
+            from sqlalchemy import update as sa_update
+
+            from shared.models.trade import Position
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    sa_update(Position)
+                    .where(Position.id == int(position_id))
+                    .values(
+                        status="CLOSED",
+                        close_reason=action_type,
+                        close_price=current_price,
+                        closed_at=datetime.now(timezone.utc),
+                        realized_pnl=signal.get("pnl_amount"),
+                    )
+                )
+                await session.commit()
+            logger.info("Closed position %s via %s (order=%s)", position_id, action_type, order_id)
+        except Exception as e:
+            logger.error("Failed to close position %s: %s", position_id, e)
             await self._publish_result(trade, "ERROR", error_message=str(e), start_time=start_time)
 
     async def _update_trade_in_db(
