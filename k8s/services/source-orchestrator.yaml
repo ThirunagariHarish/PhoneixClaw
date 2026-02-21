@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: source-orchestrator
+  namespace: phoenixtrader
+  labels:
+    app: source-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: source-orchestrator
+  template:
+    metadata:
+      labels:
+        app: source-orchestrator
+    spec:
+      containers:
+        - name: source-orchestrator
+          image: phoenixtrader/source-orchestrator:latest
+          ports:
+            - containerPort: 8005
+          envFrom:
+            - configMapRef:
+                name: phoenixtrader-config
+            - secretRef:
+                name: phoenixtrader-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: source-orchestrator
+  namespace: phoenixtrader
+spec:
+  selector:
+    app: source-orchestrator
+  ports:
+    - port: 8005
+      targetPort: 8005

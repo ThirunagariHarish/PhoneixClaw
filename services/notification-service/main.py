@@ -10,6 +10,7 @@ from fastapi import FastAPI
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
 
 from shared.graceful_shutdown import shutdown
+from shared.metrics import create_metrics_route
 
 SERVICE_NAME = "notification-service"
 logger = logging.getLogger(SERVICE_NAME)
@@ -83,6 +84,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=SERVICE_NAME, lifespan=lifespan)
+
+
+create_metrics_route(app)
 
 
 @app.get("/health")

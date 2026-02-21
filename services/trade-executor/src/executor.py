@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from services.trade_executor.src.buffer import calculate_buffered_price  # noqa: E402
+from services.trade_executor.src.fill_tracker import FillTracker
 from services.trade_executor.src.validator import trade_validator  # noqa: E402
 from shared.broker.adapter import BrokerAdapter
 from shared.broker.circuit_breaker import CircuitBreaker, CircuitOpenError
@@ -27,6 +28,7 @@ class TradeExecutorService:
         self._broker_cache: dict[str, BrokerAdapter] = {}
         self._circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60.0)
         self._dry_run = False
+        self._fill_tracker = FillTracker()
 
     async def start(self) -> None:
         from shared.config.base_config import config as app_config
@@ -37,9 +39,11 @@ class TradeExecutorService:
         self.exit_consumer.set_dlq(dlq)
         await self.consumer.start()
         await self.exit_consumer.start()
+        await self._fill_tracker.start()
         logger.info("Trade executor started (dry_run=%s)", self._dry_run)
 
     async def stop(self) -> None:
+        await self._fill_tracker.stop()
         await self.consumer.stop()
         await self.exit_consumer.stop()
         await self.producer.stop()
@@ -49,6 +53,7 @@ class TradeExecutorService:
         await asyncio.gather(
             self.consumer.consume(self._handle_trade),
             self.exit_consumer.consume(self._handle_exit_signal),
+            self._fill_tracker.run(),
         )
 
     async def _resolve_broker(self, trade: dict) -> BrokerAdapter | None:
@@ -168,6 +173,7 @@ class TradeExecutorService:
             trade["buffer_pct_used"] = buffer_pct
             trade["broker_symbol"] = symbol
             await self._publish_result(trade, "EXECUTED", start_time=start_time)
+            await self._fill_tracker.track(order_id, trade, broker)
             logger.info("Executed trade %s: %s %d %s @ %.2f (buffered=%.2f, order=%s)",
                          trade_id, action, quantity, symbol, price, buffered_price, order_id)
         except CircuitOpenError:

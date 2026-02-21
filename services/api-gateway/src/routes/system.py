@@ -7,8 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.feature_flags import feature_flags
 from shared.models.database import get_session
 from shared.models.trade import Configuration
+from shared.retention import get_retention_stats, purge_old_records
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
@@ -126,3 +128,32 @@ async def toggle_kill_switch(
         session.add(config_row)
     await session.commit()
     return {"kill_switch_active": not new_value, "enable_trading": new_value}
+
+
+@router.get("/feature-flags")
+async def get_feature_flags():
+    return feature_flags.get_all()
+
+
+class FeatureFlagUpdate(BaseModel):
+    flag: str
+    enabled: bool
+
+
+@router.put("/feature-flags")
+async def update_feature_flag(body: FeatureFlagUpdate, request: Request):
+    feature_flags.set_flag(body.flag, body.enabled)
+    return {"flag": body.flag, "enabled": body.enabled}
+
+
+@router.get("/retention")
+async def retention_stats():
+    """Return data retention stats (row counts and oldest record per table)."""
+    return await get_retention_stats()
+
+
+@router.post("/retention/purge")
+async def retention_purge(request: Request):
+    """Manually trigger data retention purge."""
+    results = await purge_old_records()
+    return {"purged": results}

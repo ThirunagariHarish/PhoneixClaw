@@ -6,6 +6,7 @@ from sqlalchemy import select
 from services.position_monitor.src.exit_engine import ExitEngine
 from shared.broker.factory import create_broker_adapter
 from shared.config.base_config import config
+from shared.feature_flags import feature_flags
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
 from shared.models.trade import Position, TradingAccount
@@ -81,7 +82,10 @@ class PositionMonitorService:
                     "trading_account_id": pos.trading_account_id,
                     "ticker": pos.ticker,
                     "quantity": pos.quantity,
-                    "trailing_stop_enabled": config.monitor.trailing_stop_enabled,
+                    "trailing_stop_enabled": (
+                        config.monitor.trailing_stop_enabled
+                        and feature_flags.is_enabled("trailing_stops", str(pos.user_id))
+                    ),
                     "trailing_stop_offset": config.monitor.trailing_stop_offset,
                 }
 

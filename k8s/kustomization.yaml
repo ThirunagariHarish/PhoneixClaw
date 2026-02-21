@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: phoenixtrader
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - infrastructure/postgres.yaml
+  - infrastructure/redis.yaml
+  - infrastructure/kafka.yaml
+  - services/api-gateway.yaml
+  - services/auth-service.yaml
+  - services/dashboard-ui.yaml
+  - services/discord-ingestor.yaml
+  - services/nlp-parser.yaml
+  - services/notification-service.yaml
+  - services/position-monitor.yaml
+  - services/source-orchestrator.yaml
+  - services/trade-executor.yaml
+  - services/trade-gateway.yaml
+  - services/trade-parser.yaml
+  - ingress.yaml
+  - hpa.yaml

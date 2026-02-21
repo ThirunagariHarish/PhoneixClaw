@@ -5,10 +5,18 @@ metadata:
   namespace: phoenixtrader
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: api-gateway
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.cashflowus.com
+      secretName: phoenixtrader-tls
   rules:
-    - host: app.phoenixtrader.local
+    - host: app.cashflowus.com
       http:
         paths:
           - path: /api
@@ -19,6 +27,20 @@ spec:
                 port:
                   number: 8011
           - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8011
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8011
+          - path: /metrics
             pathType: Prefix
             backend:
               service:

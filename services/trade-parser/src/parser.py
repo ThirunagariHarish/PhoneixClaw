@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 
@@ -12,11 +12,19 @@ def parse_trade_message(text: str) -> dict[str, Any]:
     - "STC AAPL 190C @ 3.00"
     - "Bought IWM 250P at 1.50 Exp: 02/20/2026"
     - "Sold 50% SPX 6950C at 6.50"
+    - Time references: "0DTE", "weekly", "4hr", "2 week"
     """
     text_upper = text.upper().strip()
     actions: list[dict[str, Any]] = []
 
     expiration = _extract_expiration(text_upper)
+
+    timeframe = extract_timeframe(text_upper)
+    inferred_expiration = None
+    if not expiration and timeframe:
+        days = timeframe["days_offset"]
+        inferred_expiration = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        expiration = inferred_expiration
 
     # BTO/STC/BTC/STO compact format: "BTO AAPL 190C 3/21 @ 2.50"
     compact_pattern = (
@@ -62,7 +70,12 @@ def parse_trade_message(text: str) -> dict[str, Any]:
         })
 
     if actions:
-        return {"actions": actions, "raw_message": text}
+        result: dict[str, Any] = {"actions": actions, "raw_message": text}
+        if timeframe:
+            result["timeframe"] = timeframe
+        if inferred_expiration:
+            result["inferred_expiration"] = True
+        return result
 
     # Legacy verbose format: "Bought AAPL 190C at 2.50"
     buy_pattern = (
@@ -84,7 +97,12 @@ def parse_trade_message(text: str) -> dict[str, Any]:
         if action:
             actions.append(action)
 
-    return {"actions": actions, "raw_message": text}
+    result2: dict[str, Any] = {"actions": actions, "raw_message": text}
+    if timeframe:
+        result2["timeframe"] = timeframe
+    if inferred_expiration:
+        result2["inferred_expiration"] = True
+    return result2
 
 
 def _extract_expiration(text: str) -> str | None:
@@ -101,6 +119,80 @@ def _extract_expiration(text: str) -> str | None:
                 return datetime(year, int(m), int(d)).strftime("%Y-%m-%d")
             except ValueError:
                 continue
+    return None
+
+
+_TIMEFRAME_MAP = {
+    "0DTE": 0,
+    "0 DTE": 0,
+    "SAME DAY": 0,
+    "1DTE": 1,
+    "1 DTE": 1,
+    "NEXT DAY": 1,
+    "DAILY": 1,
+    "2DTE": 2,
+    "3DTE": 3,
+    "WEEKLY": 5,
+    "WEEKLIES": 5,
+    "1W": 5,
+    "2W": 10,
+    "BIWEEKLY": 10,
+    "MONTHLY": 30,
+    "1M": 30,
+    "2M": 60,
+    "QUARTERLY": 90,
+    "3M": 90,
+    "6M": 180,
+    "YEARLY": 365,
+    "1Y": 365,
+    "LEAPS": 365,
+    "LEAP": 365,
+}
+
+_RELATIVE_TIME_PATTERN = re.compile(
+    r"(\d+)\s*(?:HR|HOUR|H)\b", re.IGNORECASE
+)
+_DAY_PATTERN = re.compile(
+    r"(\d+)\s*(?:DAY|D|DTE)\b", re.IGNORECASE
+)
+_WEEK_PATTERN = re.compile(
+    r"(\d+)\s*(?:WEEK|WK|W)\b", re.IGNORECASE
+)
+_MONTH_PATTERN = re.compile(
+    r"(\d+)\s*(?:MONTH|MO|M)\b", re.IGNORECASE
+)
+
+
+def extract_timeframe(text: str) -> dict[str, Any] | None:
+    """Parse time-reference hints like '4hr', 'weekly', '0DTE', '2 week' from messages.
+
+    Returns a dict with 'label' and 'days_offset' or None if no match.
+    """
+    upper = text.upper().strip()
+
+    for label, days in _TIMEFRAME_MAP.items():
+        if label in upper:
+            return {"label": label, "days_offset": days}
+
+    match = _DAY_PATTERN.search(upper)
+    if match:
+        d = int(match.group(1))
+        return {"label": f"{d}DTE", "days_offset": d}
+
+    match = _WEEK_PATTERN.search(upper)
+    if match:
+        w = int(match.group(1))
+        return {"label": f"{w}W", "days_offset": w * 7}
+
+    match = _MONTH_PATTERN.search(upper)
+    if match:
+        m = int(match.group(1))
+        return {"label": f"{m}M", "days_offset": m * 30}
+
+    match = _RELATIVE_TIME_PATTERN.search(upper)
+    if match:
+        return {"label": f"{match.group(1)}HR", "days_offset": 0}
+
     return None
 
 

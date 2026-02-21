@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from shared.config.base_config import config
+from shared.feature_flags import feature_flags
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
@@ -71,8 +72,18 @@ class TradeGatewayService:
 
     async def _handle_trade(self, trade: dict, headers: dict) -> None:
         trade_id = trade.get("trade_id", "unknown")
+        user_id = trade.get("user_id")
 
-        if self.mode == "auto":
+        if not feature_flags.is_enabled("audit_logging", user_id):
+            logger.debug("Audit logging disabled for user %s", user_id)
+
+        override_manual = feature_flags.is_enabled("manual_approval", user_id)
+        effective_mode = "manual" if override_manual else self.mode
+
+        if feature_flags.is_enabled("paper_trading_only", user_id):
+            trade["paper_mode"] = True
+
+        if effective_mode == "auto":
             trade["status"] = "APPROVED"
             trade["approved_by"] = "auto-gateway"
             trade["approved_at"] = datetime.now(timezone.utc).isoformat()
@@ -80,7 +91,7 @@ class TradeGatewayService:
         else:
             trade["status"] = "PENDING"
             await self._persist_trade(trade, "PENDING")
-            logger.info("Trade %s pending manual approval", trade_id)
+            logger.info("Trade %s pending manual approval (flags: manual_approval=%s)", trade_id, override_manual)
             return
 
         await self._persist_trade(trade, "APPROVED")

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlp-parser
+  namespace: phoenixtrader
+  labels:
+    app: nlp-parser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nlp-parser
+  template:
+    metadata:
+      labels:
+        app: nlp-parser
+    spec:
+      containers:
+        - name: nlp-parser
+          image: phoenixtrader/nlp-parser:latest
+          ports:
+            - containerPort: 8020
+          envFrom:
+            - configMapRef:
+                name: phoenixtrader-config
+            - secretRef:
+                name: phoenixtrader-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8020
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nlp-parser
+  namespace: phoenixtrader
+spec:
+  selector:
+    app: nlp-parser
+  ports:
+    - port: 8020
+      targetPort: 8020

@@ -22,8 +22,11 @@ from services.api_gateway.src.routes.positions import router as positions_router
 from services.api_gateway.src.routes.sources import router as sources_router
 from services.api_gateway.src.routes.system import router as system_router
 from services.api_gateway.src.routes.trades import router as trades_router
+from services.api_gateway.src.websocket import router as ws_router
+from services.api_gateway.src.websocket import run_ws_consumer
 from services.auth_service.src.auth import router as auth_router
 from shared.graceful_shutdown import shutdown
+from shared.metrics import create_metrics_route
 
 SERVICE_NAME = "api-gateway"
 logger = logging.getLogger(SERVICE_NAME)
@@ -69,8 +72,36 @@ async def lifespan(app: FastAPI):
         logger.info("Kafka producer initialized for chat")
     except Exception:
         logger.warning("Kafka producer unavailable — chat messages will not be routed to trade pipeline")
+    import asyncio
+
+    _ws_task = None
+    _retention_task = None
+    try:
+        _ws_task = asyncio.create_task(run_ws_consumer())
+        logger.info("WebSocket consumer started")
+    except Exception:
+        logger.warning("WebSocket consumer not started")
+
+    async def _retention_loop():
+        from shared.retention import purge_old_records
+        while True:
+            await asyncio.sleep(86400)
+            try:
+                results = await purge_old_records()
+                logger.info("Retention purge completed: %s", results)
+            except Exception:
+                logger.exception("Retention purge failed")
+
+    try:
+        _retention_task = asyncio.create_task(_retention_loop())
+    except Exception:
+        pass
     logger.info("%s ready", SERVICE_NAME)
     yield
+    if _retention_task:
+        _retention_task.cancel()
+    if _ws_task:
+        _ws_task.cancel()
     if _kafka_producer:
         await _kafka_producer.stop()
     await shutdown.run_cleanup()
@@ -98,6 +129,10 @@ app.include_router(notifications_router)
 app.include_router(system_router)
 app.include_router(chat_router)
 app.include_router(messages_router)
+app.include_router(ws_router)
+
+
+create_metrics_route(app)
 
 
 @app.get("/health")
