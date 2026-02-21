@@ -21,7 +21,7 @@ SERVICE_URLS = {
     "trade-executor": "http://trade-executor:8008/health",
     "position-monitor": "http://position-monitor:8009/health",
     "notification-service": "http://notification-service:8010/health",
-    "source-orchestrator": "http://source-orchestrator:8005/health",
+    "source-orchestrator": "http://source-orchestrator:8002/health",
     "nlp-parser": "http://nlp-parser:8020/health",
 }
 
