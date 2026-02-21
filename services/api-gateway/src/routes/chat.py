@@ -8,7 +8,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
-from shared.models.trade import ChatMessage
+from shared.models.trade import ChatMessage, RawMessage
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,17 @@ async def send_chat_message(
         role="user",
     )
     session.add(msg)
+
+    raw_msg = RawMessage(
+        user_id=uuid.UUID(user_id),
+        source_type="chat",
+        channel_name="chat-widget",
+        author="You",
+        content=body.message,
+        source_message_id=None,
+        raw_metadata={"origin": "chat-widget"},
+    )
+    session.add(raw_msg)
     await session.commit()
     await session.refresh(msg)
 
