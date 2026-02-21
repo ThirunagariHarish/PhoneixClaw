@@ -46,6 +46,8 @@ async def _run_migrations():
     migrations = [
         "ALTER TABLE trades ALTER COLUMN trading_account_id DROP NOT NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'trader'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -23,6 +23,7 @@ import {
   PanelLeft,
   TrendingUp,
   ShieldCheck,
+  UserCog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -36,7 +37,10 @@ const baseNavItems = [
   { to: '/system', icon: Settings, label: 'System' },
 ]
 
-const adminNavItem = { to: '/admin', icon: ShieldCheck, label: 'Admin Panel' }
+const adminNavItems = [
+  { to: '/access', icon: UserCog, label: 'Access Management' },
+  { to: '/admin', icon: ShieldCheck, label: 'Admin Panel' },
+]
 
 function NavItem({
   to,
@@ -84,11 +88,17 @@ function SidebarContent({
   onCollapse,
   onLogout,
   navItems,
+  displayName = 'User',
+  initials = 'U',
+  role,
 }: {
   collapsed: boolean
   onCollapse?: () => void
   onLogout: () => void
   navItems: typeof baseNavItems
+  displayName?: string
+  initials?: string
+  role?: string
 }) {
   const { theme, setTheme } = useTheme()
 
@@ -135,11 +145,12 @@ function SidebarContent({
 
         <div className={cn('flex items-center gap-3', collapsed && 'justify-center')}>
           <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-primary/10 text-primary text-xs">CT</AvatarFallback>
+            <AvatarFallback className="bg-primary/10 text-primary text-xs">{initials}</AvatarFallback>
           </Avatar>
           {!collapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">Trader</p>
+              <p className="text-sm font-medium truncate">{displayName}</p>
+              {role && <p className="text-[10px] text-muted-foreground leading-tight">{role}</p>}
             </div>
           )}
           <Tooltip>
@@ -164,16 +175,35 @@ const pageTitles: Record<string, string> = {
   '/messages': 'Raw Messages',
   '/analytics': 'Analytics',
   '/system': 'System',
+  '/access': 'Access Management',
   '/admin': 'Admin Panel',
+}
+
+function getInitials(name: string | null | undefined, email: string | null | undefined): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    return name.slice(0, 2).toUpperCase()
+  }
+  if (email) return email.slice(0, 2).toUpperCase()
+  return 'U'
+}
+
+function getDisplayName(name: string | null | undefined, email: string | null | undefined): string {
+  if (name) return name
+  if (email) return email.split('@')[0]
+  return 'User'
 }
 
 export default function AppShell() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const { logout, isAdmin } = useAuth()
+  const { logout, isAdmin, user } = useAuth()
   const location = useLocation()
   const pageTitle = pageTitles[location.pathname] || 'PhoenixTrade'
-  const navItems = isAdmin ? [...baseNavItems, adminNavItem] : baseNavItems
+  const navItems = isAdmin ? [...baseNavItems, ...adminNavItems] : baseNavItems
+  const displayName = getDisplayName(user?.name, user?.email)
+  const initials = getInitials(user?.name, user?.email)
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -189,6 +219,9 @@ export default function AppShell() {
           onCollapse={() => setCollapsed((c) => !c)}
           onLogout={logout}
           navItems={navItems}
+          displayName={displayName}
+          initials={initials}
+          role={isAdmin ? 'Admin' : 'User'}
         />
       </aside>
 
@@ -204,7 +237,7 @@ export default function AppShell() {
             </SheetTrigger>
             <SheetContent side="left" className="w-64 p-0">
               <SheetTitle className="sr-only">Navigation</SheetTitle>
-              <SidebarContent collapsed={false} onLogout={logout} navItems={navItems} />
+              <SidebarContent collapsed={false} onLogout={logout} navItems={navItems} displayName={displayName} initials={initials} role={isAdmin ? 'Admin' : 'User'} />
             </SheetContent>
           </Sheet>
 

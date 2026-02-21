@@ -43,6 +43,8 @@ class UserResponse(BaseModel):
     timezone: str
     is_active: bool
     is_admin: bool
+    role: str
+    permissions: dict[str, bool]
     created_at: str
 
 
@@ -139,6 +141,8 @@ async def get_me(request: Request, session: AsyncSession = Depends(get_session))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    from shared.models.trade import ADMIN_PERMISSIONS, DEFAULT_PERMISSIONS
+    perms = ADMIN_PERMISSIONS if user.is_admin else (getattr(user, "permissions", None) or DEFAULT_PERMISSIONS)
     return UserResponse(
         id=str(user.id),
         email=user.email,
@@ -146,5 +150,7 @@ async def get_me(request: Request, session: AsyncSession = Depends(get_session))
         timezone=user.timezone,
         is_active=user.is_active,
         is_admin=user.is_admin,
+        role=getattr(user, "role", "trader") or "trader",
+        permissions=perms,
         created_at=user.created_at.isoformat(),
     )

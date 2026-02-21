@@ -1,11 +1,14 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
 from shared.models.trade import (
+    DEFAULT_PERMISSIONS,
+    ROLE_PRESETS,
     AccountSourceMapping,
     Channel,
     DataSource,
@@ -22,6 +25,20 @@ def _require_admin(request: Request) -> str:
     return request.state.user_id
 
 
+def _user_response(u: User) -> dict:
+    return {
+        "id": str(u.id),
+        "email": u.email,
+        "name": u.name,
+        "is_active": u.is_active,
+        "is_admin": u.is_admin,
+        "role": getattr(u, "role", "trader") or "trader",
+        "permissions": getattr(u, "permissions", None) or DEFAULT_PERMISSIONS,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "last_login": u.last_login.isoformat() if u.last_login else None,
+    }
+
+
 @router.get("/users")
 async def list_users(
     admin_id: str = Depends(_require_admin),
@@ -29,18 +46,7 @@ async def list_users(
 ):
     result = await session.execute(select(User).order_by(User.created_at))
     users = result.scalars().all()
-    return [
-        {
-            "id": str(u.id),
-            "email": u.email,
-            "name": u.name,
-            "is_active": u.is_active,
-            "is_admin": u.is_admin,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-            "last_login": u.last_login.isoformat() if u.last_login else None,
-        }
-        for u in users
-    ]
+    return [_user_response(u) for u in users]
 
 
 @router.get("/sources")
@@ -179,3 +185,112 @@ async def demote_user(
     user.is_admin = False
     await session.commit()
     return {"status": "demoted", "user_id": user_id}
+
+
+# ── Access Management ──
+
+
+@router.get("/roles")
+async def list_roles(admin_id: str = Depends(_require_admin)):
+    """Return all available role presets and their default permissions."""
+    return {
+        "roles": list(ROLE_PRESETS.keys()),
+        "presets": ROLE_PRESETS,
+        "all_permissions": list(DEFAULT_PERMISSIONS.keys()),
+    }
+
+
+class AssignRoleRequest(BaseModel):
+    role: str
+
+
+@router.put("/users/{user_id}/role")
+async def assign_role(
+    user_id: str,
+    body: AssignRoleRequest,
+    admin_id: str = Depends(_require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Assign a role preset to a user, updating their permissions accordingly."""
+    if body.role not in ROLE_PRESETS:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {list(ROLE_PRESETS.keys())}")
+
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.role = body.role
+    user.permissions = dict(ROLE_PRESETS[body.role])
+    user.is_admin = body.role == "admin"
+    await session.commit()
+    return _user_response(user)
+
+
+class UpdatePermissionsRequest(BaseModel):
+    permissions: dict[str, bool]
+
+
+@router.put("/users/{user_id}/permissions")
+async def update_permissions(
+    user_id: str,
+    body: UpdatePermissionsRequest,
+    admin_id: str = Depends(_require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update individual permissions for a user (granular override)."""
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    invalid = [k for k in body.permissions if k not in DEFAULT_PERMISSIONS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown permissions: {invalid}")
+
+    current = dict(user.permissions or DEFAULT_PERMISSIONS)
+    current.update(body.permissions)
+    user.permissions = current
+    user.role = "custom"
+    await session.commit()
+    return _user_response(user)
+
+
+@router.put("/users/{user_id}/toggle-active")
+async def toggle_user_active(
+    user_id: str,
+    admin_id: str = Depends(_require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Enable or disable a user account."""
+    if user_id == admin_id:
+        raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = not user.is_active
+    await session.commit()
+    return _user_response(user)
+
+
+@router.get("/users/{user_id}")
+async def get_user_detail(
+    user_id: str,
+    admin_id: str = Depends(_require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get full user details including permissions."""
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    ta_count = (await session.execute(
+        select(func.count(TradingAccount.id)).where(TradingAccount.user_id == user.id)
+    )).scalar() or 0
+
+    ds_count = (await session.execute(
+        select(func.count(DataSource.id)).where(DataSource.user_id == user.id)
+    )).scalar() or 0
+
+    resp = _user_response(user)
+    resp["trading_accounts_count"] = ta_count
+    resp["data_sources_count"] = ds_count
+    return resp

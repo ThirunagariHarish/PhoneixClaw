@@ -1,9 +1,20 @@
 import { createContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react'
 import axios, { AxiosError } from 'axios'
 
+export interface UserProfile {
+  id: string
+  email: string
+  name: string | null
+  timezone: string
+  is_active: boolean
+  is_admin: boolean
+  created_at: string
+}
+
 interface AuthContextType {
   token: string | null
   isAdmin: boolean
+  user: UserProfile | null
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string, name?: string) => Promise<void>
   logout: () => void
@@ -22,16 +33,28 @@ export const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
+  const [user, setUser] = useState<UserProfile | null>(null)
   const [isAdmin, setIsAdmin] = useState(() => {
     const t = localStorage.getItem('token')
     return t ? !!parseJwtPayload(t).admin : false
   })
   const logoutRef = useRef<() => void>(() => {})
 
+  const fetchProfile = useCallback(async () => {
+    try {
+      const res = await axios.get('/auth/me')
+      setUser(res.data)
+      setIsAdmin(res.data.is_admin)
+    } catch {
+      // ignore — will be fetched on next login
+    }
+  }, [])
+
   const logout = useCallback(() => {
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
     setToken(null)
+    setUser(null)
     delete axios.defaults.headers.common['Authorization']
     window.location.href = '/login'
   }, [])
@@ -74,6 +97,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => axios.interceptors.response.eject(interceptor)
   }, [])
 
+  useEffect(() => {
+    if (token && !user) {
+      fetchProfile()
+    }
+  }, [token, user, fetchProfile])
+
   const login = useCallback(async (email: string, password: string) => {
     const res = await axios.post('/auth/login', { email, password })
     const t = res.data.access_token
@@ -82,7 +111,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(t)
     setIsAdmin(!!parseJwtPayload(t).admin)
     axios.defaults.headers.common['Authorization'] = `Bearer ${t}`
-  }, [])
+    await fetchProfile()
+  }, [fetchProfile])
 
   const register = useCallback(async (email: string, password: string, name?: string) => {
     const res = await axios.post('/auth/register', { email, password, name })
@@ -91,11 +121,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('refresh_token', res.data.refresh_token)
     setToken(t)
     axios.defaults.headers.common['Authorization'] = `Bearer ${t}`
-  }, [])
+    await fetchProfile()
+  }, [fetchProfile])
 
   if (token) {
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
   }
 
-  return <AuthContext.Provider value={{ token, isAdmin, login, register, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ token, isAdmin, user, login, register, logout }}>{children}</AuthContext.Provider>
 }

@@ -12,6 +12,7 @@ import Analytics from './pages/Analytics'
 import Positions from './pages/Positions'
 import System from './pages/System'
 import Admin from './pages/Admin'
+import AccessManagement from './pages/AccessManagement'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuth()
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="analytics" element={<Analytics />} />
           <Route path="system" element={<System />} />
           <Route path="admin" element={<Admin />} />
+          <Route path="access" element={<AccessManagement />} />
         </Route>
       </Routes>
       {token && <ChatWidget />}

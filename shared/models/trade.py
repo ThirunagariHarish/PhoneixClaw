@@ -27,6 +27,52 @@ class Base(DeclarativeBase):
     pass
 
 
+DEFAULT_PERMISSIONS = {
+    "trade_execute": False,
+    "trade_approve": False,
+    "trade_view": True,
+    "positions_view": True,
+    "positions_close": False,
+    "sources_manage": False,
+    "sources_view": True,
+    "accounts_manage": False,
+    "accounts_view": True,
+    "messages_view": True,
+    "analytics_view": True,
+    "system_config": False,
+    "admin_users": False,
+    "admin_access": False,
+    "kill_switch": False,
+}
+
+ADMIN_PERMISSIONS = {k: True for k in DEFAULT_PERMISSIONS}
+
+ROLE_PRESETS = {
+    "viewer": {
+        **DEFAULT_PERMISSIONS,
+    },
+    "trader": {
+        **DEFAULT_PERMISSIONS,
+        "trade_execute": True,
+        "trade_approve": True,
+        "positions_close": True,
+        "sources_manage": True,
+        "accounts_manage": True,
+    },
+    "manager": {
+        **DEFAULT_PERMISSIONS,
+        "trade_execute": True,
+        "trade_approve": True,
+        "positions_close": True,
+        "sources_manage": True,
+        "accounts_manage": True,
+        "system_config": True,
+        "admin_users": True,
+    },
+    "admin": ADMIN_PERMISSIONS,
+}
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -38,11 +84,19 @@ class User(Base):
     notification_prefs = Column(JSONB, nullable=False, default=lambda: {"email_enabled": True})
     is_active = Column(Boolean, nullable=False, default=True)
     is_admin = Column(Boolean, nullable=False, default=False)
+    role = Column(String(30), nullable=False, default="trader")
+    permissions = Column(JSONB, nullable=False, default=lambda: dict(DEFAULT_PERMISSIONS))
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     last_login = Column(DateTime(timezone=True), nullable=True)
 
     trading_accounts = relationship("TradingAccount", back_populates="user", cascade="all, delete-orphan")
     data_sources = relationship("DataSource", back_populates="user", cascade="all, delete-orphan")
+
+    def has_permission(self, perm: str) -> bool:
+        if self.is_admin:
+            return True
+        perms = self.permissions or {}
+        return bool(perms.get(perm, DEFAULT_PERMISSIONS.get(perm, False)))
 
 
 class TradingAccount(Base):
