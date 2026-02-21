@@ -31,9 +31,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 _kafka_producer = None
 
 
+async def _run_migrations():
+    """Run DB schema creation and any needed migrations."""
+    from shared.models.database import engine, init_db
+
+    await init_db()
+    async with engine.begin() as conn:
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE trades ALTER COLUMN trading_account_id DROP NOT NULL"
+            )
+        )
+    logger.info("Database schema ready")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _kafka_producer
+    try:
+        await _run_migrations()
+    except Exception:
+        logger.warning("DB migration step skipped (may already be applied)", exc_info=True)
     try:
         from shared.kafka_utils.producer import KafkaProducerWrapper
 

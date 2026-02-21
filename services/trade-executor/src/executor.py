@@ -10,7 +10,7 @@ from shared.broker.factory import create_broker_adapter
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
-from shared.models.trade import AccountSourceMapping, Channel, TradingAccount
+from shared.models.trade import AccountSourceMapping, TradingAccount
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,95 @@ class TradeExecutorService:
             logger.error("Failed to execute trade %s: %s", trade_id, e)
             await self._publish_result(trade, "ERROR", error_message=str(e), start_time=start_time)
 
+    async def _update_trade_in_db(
+        self, trade: dict, status: str, error_message: str | None = None, latency_ms: int = 0
+    ) -> None:
+        """Update the Trade row that was created by the gateway."""
+        try:
+            trade_id_str = trade.get("trade_id")
+            if not trade_id_str:
+                return
+
+            from sqlalchemy import update
+
+            from shared.models.trade import Trade
+
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    update(Trade)
+                    .where(Trade.trade_id == uuid.UUID(trade_id_str))
+                    .values(
+                        status=status,
+                        processed_at=datetime.now(timezone.utc),
+                        execution_latency_ms=latency_ms,
+                        error_message=error_message,
+                        broker_order_id=trade.get("broker_order_id"),
+                        buffered_price=trade.get("buffered_price"),
+                        buffer_pct_used=trade.get("buffer_pct_used"),
+                        trading_account_id=(
+                            uuid.UUID(trade["trading_account_id"])
+                            if trade.get("trading_account_id")
+                            else None
+                        ),
+                    )
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+
+                if result.rowcount == 0:
+                    logger.warning("Trade %s not found in DB for update, creating", trade_id_str)
+                    await self._create_trade_fallback(trade, status, error_message, latency_ms, session)
+
+        except Exception:
+            logger.exception("Failed to update trade %s in DB", trade.get("trade_id"))
+
+    async def _create_trade_fallback(
+        self, trade: dict, status: str, error_message: str | None,
+        latency_ms: int, session,
+    ) -> None:
+        """Insert trade if gateway didn't persist it."""
+        from shared.models.trade import Trade
+
+        user_id = trade.get("user_id")
+        if not user_id:
+            return
+
+        expiration = None
+        if trade.get("expiration"):
+            try:
+                expiration = datetime.strptime(trade["expiration"], "%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
+
+        record = Trade(
+            trade_id=uuid.UUID(trade["trade_id"]),
+            user_id=uuid.UUID(user_id),
+            trading_account_id=(
+                uuid.UUID(trade["trading_account_id"])
+                if trade.get("trading_account_id")
+                else None
+            ),
+            ticker=trade.get("ticker", ""),
+            strike=trade.get("strike", 0),
+            option_type=trade.get("option_type", "CALL"),
+            expiration=expiration,
+            action=trade.get("action", "BUY"),
+            quantity=str(trade.get("quantity", "1")),
+            price=trade.get("price", 0),
+            source=trade.get("source", "chat"),
+            raw_message=trade.get("raw_message"),
+            status=status,
+            error_message=error_message,
+            execution_latency_ms=latency_ms,
+            broker_order_id=trade.get("broker_order_id"),
+            buffered_price=trade.get("buffered_price"),
+            buffer_pct_used=trade.get("buffer_pct_used"),
+            processed_at=datetime.now(timezone.utc),
+        )
+        session.add(record)
+        await session.commit()
+        logger.info("Created fallback trade record %s", trade.get("trade_id"))
+
     async def _publish_result(
         self, trade: dict, status: str, error_message: str | None = None, start_time: float = 0
     ) -> None:
@@ -152,6 +241,8 @@ class TradeExecutorService:
         trade["execution_latency_ms"] = latency_ms
         if error_message:
             trade["error_message"] = error_message
+
+        await self._update_trade_in_db(trade, status, error_message, latency_ms)
 
         msg_headers = []
         user_id = trade.get("user_id", "")

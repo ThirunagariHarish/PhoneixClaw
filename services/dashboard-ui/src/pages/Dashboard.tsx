@@ -24,6 +24,10 @@ const statusBadge = (status: string) => {
       return <Badge variant="destructive">Error</Badge>
     case 'REJECTED':
       return <Badge variant="warning">Rejected</Badge>
+    case 'APPROVED':
+      return <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30">Approved</Badge>
+    case 'PENDING':
+      return <Badge variant="outline">Pending</Badge>
     default:
       return <Badge variant="secondary">{status}</Badge>
   }
@@ -40,6 +44,7 @@ export default function Dashboard() {
   const { data: trades } = useQuery<Trade[]>({
     queryKey: ['trades'],
     queryFn: () => axios.get('/api/v1/trades?limit=20').then((r) => r.data),
+    refetchInterval: 5000,
   })
   const { data: metrics } = useQuery({
     queryKey: ['metrics'],

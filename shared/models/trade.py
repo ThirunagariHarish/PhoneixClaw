@@ -140,7 +140,7 @@ class Trade(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     trade_id = Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    trading_account_id = Column(UUID(as_uuid=True), ForeignKey("trading_accounts.id"), nullable=False)
+    trading_account_id = Column(UUID(as_uuid=True), ForeignKey("trading_accounts.id"), nullable=True)
     channel_id = Column(UUID(as_uuid=True), ForeignKey("channels.id"), nullable=True)
     ticker = Column(String(10), nullable=False)
     strike = Column(Numeric(10, 2), nullable=False)
