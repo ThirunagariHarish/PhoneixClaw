@@ -143,16 +143,7 @@ async def create_source(req: SourceCreate, request: Request, session: AsyncSessi
 
 @router.delete("/{source_id}", status_code=204)
 async def delete_source(source_id: str, request: Request, session: AsyncSession = Depends(get_session)):
-    user_id = request.state.user_id
-    result = await session.execute(
-        select(DataSource).where(
-            DataSource.id == uuid.UUID(source_id),
-            DataSource.user_id == uuid.UUID(user_id),
-        )
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
+    source = await _get_source_for_user_or_admin(source_id, request, session)
     await session.delete(source)
     await session.commit()
 
@@ -298,16 +289,7 @@ async def test_connection(
     source_id: str, request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    result = await session.execute(
-        select(DataSource).where(
-            DataSource.id == uuid.UUID(source_id),
-            DataSource.user_id == uuid.UUID(user_id),
-        )
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
+    source = await _get_source_for_user_or_admin(source_id, request, session)
 
     creds = decrypt_credentials(source.credentials_encrypted)
     status = "ERROR"
@@ -350,16 +332,7 @@ async def toggle_source(
     source_id: str, request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    result = await session.execute(
-        select(DataSource).where(
-            DataSource.id == uuid.UUID(source_id),
-            DataSource.user_id == uuid.UUID(user_id),
-        )
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
+    source = await _get_source_for_user_or_admin(source_id, request, session)
 
     source.enabled = not source.enabled
     source.updated_at = datetime.now(timezone.utc)

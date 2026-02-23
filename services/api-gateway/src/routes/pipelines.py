@@ -89,6 +89,19 @@ def _safe_uuid(val: str, field: str) -> uuid.UUID:
         raise HTTPException(status_code=400, detail=f"Invalid UUID for {field}: {val}")
 
 
+async def _get_pipeline(
+    pipeline_id: str, request: Request, session: AsyncSession,
+) -> TradePipeline:
+    p_id = _safe_uuid(pipeline_id, "pipeline_id")
+    pipeline = await session.get(TradePipeline, p_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    is_admin = getattr(request.state, "is_admin", False)
+    if not is_admin and str(pipeline.user_id) != request.state.user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    return pipeline
+
+
 @router.get("", response_model=list[PipelineResponse])
 async def list_pipelines(
     request: Request,
@@ -127,8 +140,10 @@ async def create_pipeline(
     ch_id = _safe_uuid(req.channel_id, "channel_id")
     ta_id = _safe_uuid(req.trading_account_id, "trading_account_id")
 
+    is_admin = getattr(request.state, "is_admin", False)
+
     source = await session.get(DataSource, ds_id)
-    if not source or source.user_id != uid:
+    if not source or (not is_admin and source.user_id != uid):
         raise HTTPException(status_code=404, detail="Data source not found")
 
     channel = await session.get(Channel, ch_id)
@@ -136,7 +151,7 @@ async def create_pipeline(
         raise HTTPException(status_code=404, detail="Channel not found for this data source")
 
     account = await session.get(TradingAccount, ta_id)
-    if not account or account.user_id != uid:
+    if not account or (not is_admin and account.user_id != uid):
         raise HTTPException(status_code=404, detail="Trading account not found")
 
     existing = await session.execute(
@@ -189,13 +204,7 @@ async def get_pipeline(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    p_id = _safe_uuid(pipeline_id, "pipeline_id")
-
-    pipeline = await session.get(TradePipeline, p_id)
-    if not pipeline or str(pipeline.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-
+    pipeline = await _get_pipeline(pipeline_id, request, session)
     await session.refresh(pipeline, ["data_source", "channel", "trading_account"])
     return _pipeline_response(pipeline)
 
@@ -207,12 +216,7 @@ async def update_pipeline(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    p_id = _safe_uuid(pipeline_id, "pipeline_id")
-
-    pipeline = await session.get(TradePipeline, p_id)
-    if not pipeline or str(pipeline.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    pipeline = await _get_pipeline(pipeline_id, request, session)
 
     if req.name is not None:
         pipeline.name = req.name
@@ -233,13 +237,7 @@ async def delete_pipeline(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    p_id = _safe_uuid(pipeline_id, "pipeline_id")
-
-    pipeline = await session.get(TradePipeline, p_id)
-    if not pipeline or str(pipeline.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-
+    pipeline = await _get_pipeline(pipeline_id, request, session)
     await session.delete(pipeline)
     await session.commit()
 
@@ -250,12 +248,7 @@ async def start_pipeline(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    p_id = _safe_uuid(pipeline_id, "pipeline_id")
-
-    pipeline = await session.get(TradePipeline, p_id)
-    if not pipeline or str(pipeline.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    pipeline = await _get_pipeline(pipeline_id, request, session)
 
     pipeline.enabled = True
     pipeline.status = "STOPPED"
@@ -278,12 +271,7 @@ async def stop_pipeline(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    user_id = request.state.user_id
-    p_id = _safe_uuid(pipeline_id, "pipeline_id")
-
-    pipeline = await session.get(TradePipeline, p_id)
-    if not pipeline or str(pipeline.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
+    pipeline = await _get_pipeline(pipeline_id, request, session)
 
     pipeline.enabled = False
     pipeline.status = "STOPPED"
