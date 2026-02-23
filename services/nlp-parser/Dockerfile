@@ -17,13 +17,11 @@ FROM deps AS models
 
 RUN python -m spacy download en_core_web_sm
 
-RUN --mount=type=cache,target=/root/.cache/huggingface \
-    python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
+RUN python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
     AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
     AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
 
-RUN --mount=type=cache,target=/root/.cache/huggingface \
-    python -c "from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; \
+RUN python -c "from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; \
     AutoTokenizer.from_pretrained('google/flan-t5-small'); \
     AutoModelForSeq2SeqLM.from_pretrained('google/flan-t5-small')"
 
