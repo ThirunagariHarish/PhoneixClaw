@@ -41,6 +41,8 @@ class ChannelResponse(BaseModel):
     id: str
     channel_identifier: str
     display_name: str
+    guild_id: str | None = None
+    guild_name: str | None = None
     enabled: bool
 
 @router.get("", response_model=list[SourceResponse])
@@ -157,7 +159,10 @@ def _channel_responses(channels) -> list[ChannelResponse]:
     return [
         ChannelResponse(
             id=str(c.id), channel_identifier=c.channel_identifier,
-            display_name=c.display_name, enabled=c.enabled,
+            display_name=c.display_name,
+            guild_id=getattr(c, "guild_id", None),
+            guild_name=getattr(c, "guild_name", None),
+            enabled=c.enabled,
         )
         for c in channels
     ]
@@ -185,17 +190,58 @@ async def list_channels(source_id: str, request: Request, session: AsyncSession 
 
 @router.post("/{source_id}/sync-channels", response_model=list[ChannelResponse])
 async def sync_channels(source_id: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Create Channel records from channel_ids in credentials for existing sources."""
+    """Discover channels from Discord server and sync them to DB."""
     source = await _get_source_for_user_or_admin(source_id, request, session)
     creds = decrypt_credentials(source.credentials_encrypted)
-    await _ensure_channels_from_credentials(source, creds, session)
-    await session.commit()
+
+    if source.source_type == "discord":
+        token = creds.get("user_token") or creds.get("bot_token", "")
+        if not token:
+            raise HTTPException(status_code=400, detail="No Discord token in credentials")
+        try:
+            from shared.discord_utils.channel_discovery import discover_channels
+            discovered = await discover_channels(token, auth_type=source.auth_type)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc))
+        except Exception as exc:
+            logger.exception("Channel discovery failed for source %s", source_id)
+            raise HTTPException(status_code=502, detail=f"Discovery failed: {str(exc)[:200]}")
+
+        result = await session.execute(
+            select(Channel.channel_identifier).where(Channel.data_source_id == source.id)
+        )
+        existing = {row[0] for row in result.fetchall()}
+        created = 0
+        for ch_info in discovered:
+            cid = ch_info["channel_id"]
+            if cid in existing:
+                continue
+            guild_name = ch_info.get("guild_name", "")
+            ch_name = ch_info.get("channel_name", cid)
+            display = f"{guild_name} / #{ch_name}" if guild_name else f"#{ch_name}"
+            ch = Channel(
+                data_source_id=source.id,
+                channel_identifier=cid,
+                display_name=display[:100],
+                guild_id=ch_info.get("guild_id"),
+                guild_name=guild_name[:200] if guild_name else None,
+            )
+            session.add(ch)
+            existing.add(cid)
+            created += 1
+        if created:
+            await session.commit()
+        logger.info("Discovered %d new channels for source %s", created, source_id)
+    else:
+        await _ensure_channels_from_credentials(source, creds, session)
+        await session.commit()
+
     result = await session.execute(select(Channel).where(Channel.data_source_id == source.id))
     channels = result.scalars().all()
     if not channels:
         raise HTTPException(
             status_code=400,
-            detail="No channel_ids found in source credentials. Edit the source and add channel IDs.",
+            detail="No channels discovered. Check that the token has access to at least one server.",
         )
     return _channel_responses(channels)
 

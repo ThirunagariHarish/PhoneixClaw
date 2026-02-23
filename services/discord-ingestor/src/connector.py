@@ -46,6 +46,7 @@ class DiscordIngestor:
         auth_type: str = "user_token",
         producer: KafkaProducerWrapper | None = None,
         data_source_id: str | None = None,
+        on_connected: "asyncio.coroutines.coroutine | None" = None,
     ) -> None:
         self._token = token
         self._target_channels = set(target_channels)
@@ -53,15 +54,13 @@ class DiscordIngestor:
         self._auth_type = auth_type
         self._producer = producer or KafkaProducerWrapper()
         self._data_source_id = data_source_id
+        self._on_connected = on_connected
         self._dedup_cache: set[str] = set()
 
         self._client = discord.Client()
 
-        # CRITICAL: Register event handlers with correct names.
-        # discord.py dispatches events by looking up `client.on_ready`,
-        # `client.on_message`, etc.  Using `client.event(self._on_ready)`
-        # would register under the wrong name `_on_ready` (with underscore)
-        # causing events to be silently dropped.
+        # discord.py dispatches events via getattr(client, 'on_<event>').
+        # Setting attributes directly ensures the correct lookup name.
         self._client.on_ready = self._handle_ready  # type: ignore[attr-defined]
         self._client.on_message = self._handle_message  # type: ignore[attr-defined]
 
@@ -70,6 +69,11 @@ class DiscordIngestor:
             "Discord ingestor ready (user=%s, mode=%s, channels=%s, data_source=%s)",
             self._user_id, self._auth_type, self._target_channels, self._data_source_id,
         )
+        if self._on_connected:
+            try:
+                await self._on_connected()
+            except Exception:
+                logger.exception("on_connected callback failed")
         if not self._target_channels:
             logger.info("No target channels configured — listing available channels:")
             for guild in self._client.guilds:

@@ -25,12 +25,14 @@ import {
   ShieldCheck,
   UserCog,
   LineChart,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const baseNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/positions', icon: TrendingUp, label: 'Positions' },
+  { to: '/pipelines', icon: Workflow, label: 'Trade Pipelines' },
   { to: '/backtest', icon: LineChart, label: 'Backtesting' },
   { to: '/sources', icon: Database, label: 'Data Sources' },
   { to: '/accounts', icon: Wallet, label: 'Trading Accounts' },
@@ -172,6 +174,7 @@ function SidebarContent({
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/positions': 'Positions',
+  '/pipelines': 'Trade Pipelines',
   '/backtest': 'Backtesting',
   '/sources': 'Data Sources',
   '/accounts': 'Trading Accounts',

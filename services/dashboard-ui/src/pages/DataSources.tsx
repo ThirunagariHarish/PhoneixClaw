@@ -235,18 +235,10 @@ export default function DataSources() {
                         className="font-mono"
                       />
                     </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="ds-channels">
-                        Channel IDs <span className="text-muted-foreground font-normal">(comma-separated, optional)</span>
-                      </Label>
-                      <Input
-                        id="ds-channels"
-                        value={form.channels}
-                        onChange={(e) => setForm({ ...form, channels: e.target.value })}
-                        placeholder="e.g. 1234567890,9876543210"
-                        className="font-mono"
-                      />
-                    </div>
+                    <p className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2">
+                      Channels are auto-discovered when you create a Trade Pipeline.
+                      Go to <strong>Trade Pipelines</strong> after adding this source to set up monitoring.
+                    </p>
                   </>
                 )}
 

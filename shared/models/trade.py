@@ -160,6 +160,8 @@ class Channel(Base):
     )
     channel_identifier = Column(String(200), nullable=False)
     display_name = Column(String(100), nullable=False)
+    guild_id = Column(String(100), nullable=True)
+    guild_name = Column(String(200), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -187,6 +189,44 @@ class AccountSourceMapping(Base):
     channel = relationship("Channel", back_populates="mappings")
 
     __table_args__ = (UniqueConstraint("trading_account_id", "channel_id", name="uq_account_channel"),)
+
+
+class TradePipeline(Base):
+    __tablename__ = "trade_pipelines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    data_source_id = Column(
+        UUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    channel_id = Column(
+        UUID(as_uuid=True), ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    trading_account_id = Column(
+        UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    enabled = Column(Boolean, nullable=False, default=True)
+    status = Column(String(20), nullable=False, default="STOPPED")
+    error_message = Column(Text, nullable=True)
+    auto_approve = Column(Boolean, nullable=False, default=True)
+    paper_mode = Column(Boolean, nullable=False, default=False)
+    last_message_at = Column(DateTime(timezone=True), nullable=True)
+    messages_count = Column(Integer, nullable=False, default=0)
+    trades_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    user = relationship("User")
+    data_source = relationship("DataSource")
+    channel = relationship("Channel")
+    trading_account = relationship("TradingAccount")
+
+    __table_args__ = (
+        UniqueConstraint("channel_id", "trading_account_id", name="uq_pipeline_channel_account"),
+        Index("idx_pipeline_user", "user_id"),
+        Index("idx_pipeline_source", "data_source_id"),
+    )
 
 
 class Trade(Base):

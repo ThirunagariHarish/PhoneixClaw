@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from services.trade_parser.src.parser import parse_trade_message
 
+OPTIONS_MULTIPLIER = 100
+
 
 def _position_key(ticker: str, strike: float, option_type: str, _expiration: str | None = None) -> str:
     """Match positions by ticker+strike+option_type only (SELL msgs often omit expiration)."""
@@ -141,7 +143,8 @@ def run_backtest(
                     p = stack.pop(0)
                     closed += 1
                     entry = float(p.entry_price)
-                    pnl = (price - entry) * 1 if p.option_type == "CALL" else (entry - price) * 1
+                    raw_diff = (price - entry) if p.option_type == "CALL" else (entry - price)
+                    pnl = raw_diff * OPTIONS_MULTIPLIER
                     total_pnl += pnl
                     if pnl > 0:
                         winning += 1

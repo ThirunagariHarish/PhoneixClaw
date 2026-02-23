@@ -19,6 +19,7 @@ from services.api_gateway.src.routes.mappings import router as mappings_router
 from services.api_gateway.src.routes.messages import router as messages_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
+from services.api_gateway.src.routes.pipelines import router as pipelines_router
 from services.api_gateway.src.routes.positions import router as positions_router
 from services.api_gateway.src.routes.sources import router as sources_router
 from services.api_gateway.src.routes.system import router as system_router
@@ -49,6 +50,8 @@ async def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'trader'",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE channels ADD COLUMN IF NOT EXISTS guild_id VARCHAR(100)",
+        "ALTER TABLE channels ADD COLUMN IF NOT EXISTS guild_name VARCHAR(200)",
     ]
     async with engine.begin() as conn:
         for sql in migrations:
@@ -125,6 +128,7 @@ app.include_router(admin_router)
 app.include_router(accounts_router)
 app.include_router(backtest_router)
 app.include_router(sources_router)
+app.include_router(pipelines_router)
 app.include_router(mappings_router)
 app.include_router(trades_router)
 app.include_router(positions_router)
