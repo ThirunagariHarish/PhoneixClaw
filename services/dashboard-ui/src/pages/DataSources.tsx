@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Plus, MoreVertical, Trash2, Database, Loader2, Plug, Play, Square } from 'lucide-react'
+import { Plus, MoreVertical, Trash2, Database, Loader2, Plug, Play, Square, RefreshCw } from 'lucide-react'
 
 interface Source {
   id: string
@@ -98,6 +98,21 @@ export default function DataSources() {
     mutationFn: (id: string) => axios.post(`/api/v1/sources/${id}/toggle`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sources'] }); setError(null) },
     onError: () => setError('Failed to toggle source.'),
+  })
+
+  const [syncingId, setSyncingId] = useState<string | null>(null)
+  const syncChannelsMutation = useMutation({
+    mutationFn: async (id: string) => {
+      setSyncingId(id)
+      const res = await axios.post(`/api/v1/sources/${id}/sync-channels`)
+      return { id, channels: res.data }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sources'] })
+      setSyncingId(null)
+      setError(null)
+    },
+    onError: () => { setSyncingId(null); setError('Failed to sync channels.') },
   })
 
   function handleSubmit(e: React.FormEvent) {
@@ -318,6 +333,17 @@ export default function DataSources() {
                         <Plug className="mr-2 h-4 w-4" />
                       )}
                       Test Connection
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => syncChannelsMutation.mutate(s.id)}
+                      disabled={syncingId === s.id}
+                    >
+                      {syncingId === s.id ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Sync Channels
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => toggleMutation.mutate(s.id)}
