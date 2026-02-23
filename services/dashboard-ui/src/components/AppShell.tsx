@@ -209,7 +209,8 @@ export default function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { logout, isAdmin, user } = useAuth()
   const location = useLocation()
-  const pageTitle = pageTitles[location.pathname] || 'PhoenixTrade'
+  const pageTitle = pageTitles[location.pathname]
+    || (location.pathname.startsWith('/board/') ? 'Task Detail' : 'PhoenixTrade')
   const navItems = isAdmin ? [...baseNavItems, ...adminNavItems] : baseNavItems
   const displayName = getDisplayName(user?.name, user?.email)
   const initials = getInitials(user?.name, user?.email)

@@ -16,6 +16,7 @@ import System from './pages/System'
 import Admin from './pages/Admin'
 import AccessManagement from './pages/AccessManagement'
 import SprintBoard from './pages/SprintBoard'
+import TaskDetail from './pages/TaskDetail'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuth()
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="admin" element={<Admin />} />
           <Route path="access" element={<AccessManagement />} />
           <Route path="board" element={<SprintBoard />} />
+          <Route path="board/:taskId" element={<TaskDetail />} />
         </Route>
       </Routes>
       {token && <ChatWidget />}
