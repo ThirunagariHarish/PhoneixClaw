@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAuth } from '@/hooks/useAuth'
@@ -60,6 +60,7 @@ export default function DataSources() {
   const { data: sources } = useQuery<Source[]>({
     queryKey: ['sources'],
     queryFn: () => axios.get('/api/v1/sources').then((r) => r.data),
+    refetchInterval: 10_000,
   })
 
   const [error, setError] = useState<string | null>(null)
@@ -103,6 +104,13 @@ export default function DataSources() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sources'] }); setError(null) },
     onError: () => setError('Failed to toggle source.'),
   })
+
+  useEffect(() => {
+    if (error) {
+      const t = setTimeout(() => setError(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [error])
 
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const syncChannelsMutation = useMutation({
@@ -318,9 +326,13 @@ export default function DataSources() {
                       className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${
                         s.enabled && s.connection_status === 'CONNECTED'
                           ? 'bg-green-500'
-                          : s.enabled
-                            ? 'bg-yellow-500'
-                            : 'bg-gray-400'
+                          : s.enabled && s.connection_status === 'ERROR'
+                            ? 'bg-red-500'
+                            : s.enabled && s.connection_status === 'CONNECTING'
+                              ? 'bg-yellow-500 animate-pulse'
+                              : s.enabled
+                                ? 'bg-yellow-500'
+                                : 'bg-gray-400'
                       }`}
                     />
                   </div>
@@ -372,7 +384,11 @@ export default function DataSources() {
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => deleteMutation.mutate(s.id)}
+                      onClick={() => {
+                        if (window.confirm(`Delete data source "${s.display_name}"? This will remove all channels and mappings.`)) {
+                          deleteMutation.mutate(s.id)
+                        }
+                      }}
                     >
                       <Trash2 className="mr-2 h-4 w-4" /> Delete
                     </DropdownMenuItem>
@@ -380,8 +396,10 @@ export default function DataSources() {
                 </DropdownMenu>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <Badge variant={s.connection_status === 'CONNECTED' ? 'success' : 'secondary'}>
-                  {s.connection_status}
+                <Badge variant={s.connection_status === 'CONNECTED' ? 'success' : s.connection_status === 'ERROR' ? 'destructive' : 'secondary'}>
+                  {s.connection_status === 'CONNECTING' ? (
+                    <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Connecting</>
+                  ) : s.connection_status}
                 </Badge>
                 <Badge variant={s.enabled ? 'default' : 'outline'} className="text-xs">
                   {s.enabled ? 'Active' : 'Stopped'}

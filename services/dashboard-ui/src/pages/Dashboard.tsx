@@ -3,8 +3,9 @@ import axios from 'axios'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { TrendingUp, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+import { TrendingUp, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react'
 
 interface Trade {
   trade_id: string
@@ -41,12 +42,12 @@ const kpiCards = [
 ] as const
 
 export default function Dashboard() {
-  const { data: trades } = useQuery<Trade[]>({
+  const { data: trades, isLoading: tradesLoading, isError: tradesError, refetch: refetchTrades } = useQuery<Trade[]>({
     queryKey: ['trades'],
     queryFn: () => axios.get('/api/v1/trades?limit=20').then((r) => r.data),
     refetchInterval: 5000,
   })
-  const { data: metrics } = useQuery({
+  const { data: metrics, isError: metricsError } = useQuery({
     queryKey: ['metrics'],
     queryFn: () => axios.get('/api/v1/metrics/daily?days=7').then((r) => r.data),
   })
@@ -56,6 +57,17 @@ export default function Dashboard() {
     executed: trades?.filter((t) => t.status === 'EXECUTED').length || 0,
     rejected: trades?.filter((t) => t.status === 'REJECTED').length || 0,
     errored: trades?.filter((t) => t.status === 'ERROR').length || 0,
+  }
+
+  if (tradesError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <XCircle className="h-10 w-10 text-destructive mb-3" />
+        <p className="text-lg font-medium">Failed to load dashboard data</p>
+        <p className="text-sm text-muted-foreground mt-1">Please check your connection and try again.</p>
+        <Button variant="outline" className="mt-4" onClick={() => refetchTrades()}>Retry</Button>
+      </div>
+    )
   }
 
   return (
@@ -78,7 +90,11 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {metrics && metrics.length > 0 && (
+      {tradesLoading && (
+        <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      )}
+
+      {metrics && metrics.length > 0 && !metricsError && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Daily P&L (7 days)</CardTitle>

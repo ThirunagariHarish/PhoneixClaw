@@ -5,13 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Activity, Bell, CheckCircle2, XCircle, ShieldAlert, Power } from 'lucide-react'
+import { Activity, Bell, CheckCircle2, XCircle, ShieldAlert, Power, Loader2 } from 'lucide-react'
 
 export default function System() {
   const qc = useQueryClient()
   const [killMsg, setKillMsg] = useState<string | null>(null)
 
-  const { data: health } = useQuery({
+  const { data: health, isLoading: healthLoading, isError: healthError, refetch: refetchHealth } = useQuery({
     queryKey: ['system-health'],
     queryFn: () => axios.get('/api/v1/system/health').then((r) => r.data),
     refetchInterval: 10000,
@@ -104,8 +104,17 @@ export default function System() {
                   </div>
                 )
               })}
-            {!health?.services && (
-              <p className="text-sm text-muted-foreground col-span-full">Loading service health...</p>
+            {healthLoading && (
+              <div className="flex justify-center py-4 col-span-full"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            )}
+            {healthError && (
+              <div className="col-span-full text-center py-4">
+                <p className="text-sm text-destructive">Failed to load health data</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => refetchHealth()}>Retry</Button>
+              </div>
+            )}
+            {!healthLoading && !healthError && !health?.services && (
+              <p className="text-sm text-muted-foreground col-span-full">No service data available</p>
             )}
           </div>
         </CardContent>

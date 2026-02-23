@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -9,6 +10,9 @@ from shared.kafka_utils.producer import KafkaProducerWrapper
 logger = logging.getLogger(__name__)
 
 _redis_client = None
+
+KAFKA_SEND_RETRIES = 3
+KAFKA_RETRY_DELAY = 0.5
 
 
 async def _get_redis():
@@ -30,8 +34,8 @@ class DiscordIngestor:
     """Per-user Discord ingestor that publishes messages to Kafka.
 
     Supports two auth modes:
-      - "bot"        → standard bot token (requires server admin to invite the bot)
-      - "user_token" → user account token via discord.py-self (works as a regular member)
+      - "bot"        -> standard bot token (requires server admin to invite the bot)
+      - "user_token" -> user account token via discord.py-self (works as a regular member)
     """
 
     def __init__(
@@ -52,13 +56,19 @@ class DiscordIngestor:
         self._dedup_cache: set[str] = set()
 
         self._client = discord.Client()
-        self._client.event(self._on_ready)
-        self._client.event(self._on_message)
 
-    async def _on_ready(self) -> None:
+        # CRITICAL: Register event handlers with correct names.
+        # discord.py dispatches events by looking up `client.on_ready`,
+        # `client.on_message`, etc.  Using `client.event(self._on_ready)`
+        # would register under the wrong name `_on_ready` (with underscore)
+        # causing events to be silently dropped.
+        self._client.on_ready = self._handle_ready  # type: ignore[attr-defined]
+        self._client.on_message = self._handle_message  # type: ignore[attr-defined]
+
+    async def _handle_ready(self) -> None:
         logger.info(
-            "Discord ingestor ready (user=%s, mode=%s, channels=%s)",
-            self._user_id, self._auth_type, self._target_channels,
+            "Discord ingestor ready (user=%s, mode=%s, channels=%s, data_source=%s)",
+            self._user_id, self._auth_type, self._target_channels, self._data_source_id,
         )
         if not self._target_channels:
             logger.info("No target channels configured — listing available channels:")
@@ -66,56 +76,80 @@ class DiscordIngestor:
                 for channel in guild.text_channels:
                     logger.info("  #%s (id: %d) in %s", channel.name, channel.id, guild.name)
 
-    async def _on_message(self, message: Message) -> None:
-        if message.author == self._client.user:
-            return
-        if self._target_channels and message.channel.id not in self._target_channels:
-            return
-
-        content = message.content.strip()
-        if not content:
-            return
-
-        msg_key = f"{message.id}"
-
-        redis_cl = await _get_redis()
-        if redis_cl:
-            dedup_key = f"dedup:discord:{msg_key}"
-            if await redis_cl.exists(dedup_key):
-                return
-            await redis_cl.set(dedup_key, "1", ex=3600)
-        else:
-            if msg_key in self._dedup_cache:
-                return
-            self._dedup_cache.add(msg_key)
-            if len(self._dedup_cache) > 10000:
-                self._dedup_cache.clear()
-
-        raw_msg = {
-            "content": content,
-            "message_id": str(message.id),
-            "source_message_id": str(message.id),
-            "author": str(message.author),
-            "channel_name": str(message.channel),
-            "channel_id": str(message.channel.id),
-            "guild_id": str(message.guild.id) if message.guild else "",
-            "user_id": self._user_id,
-            "data_source_id": self._data_source_id,
-            "source": "discord",
-            "source_type": "discord",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        headers = [
-            ("user_id", self._user_id.encode("utf-8")),
-            ("channel_id", str(message.channel.id).encode("utf-8")),
-        ]
-
+    async def _handle_message(self, message: Message) -> None:
         try:
-            await self._producer.send("raw-messages", value=raw_msg, key=msg_key, headers=headers)
-            logger.debug("Published message %s to raw-messages", msg_key)
+            if message.author == self._client.user:
+                return
+            if self._target_channels and message.channel.id not in self._target_channels:
+                return
+
+            content = message.content.strip()
+            if not content:
+                return
+
+            channel_id = str(message.channel.id)
+            msg_key = f"{channel_id}:{message.id}"
+
+            redis_cl = await _get_redis()
+            if redis_cl:
+                dedup_key = f"dedup:discord:{msg_key}"
+                if await redis_cl.exists(dedup_key):
+                    return
+                await redis_cl.set(dedup_key, "1", ex=3600)
+            else:
+                if msg_key in self._dedup_cache:
+                    return
+                self._dedup_cache.add(msg_key)
+                if len(self._dedup_cache) > 10000:
+                    self._dedup_cache.clear()
+
+            guild_id = ""
+            try:
+                guild_id = str(message.guild.id) if message.guild else ""
+            except AttributeError:
+                guild_id = ""
+
+            raw_msg = {
+                "content": content,
+                "message_id": str(message.id),
+                "source_message_id": str(message.id),
+                "author": str(message.author),
+                "channel_name": str(message.channel),
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "user_id": self._user_id,
+                "data_source_id": self._data_source_id,
+                "source": "discord",
+                "source_type": "discord",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+            headers = [
+                ("user_id", self._user_id.encode("utf-8")),
+                ("channel_id", channel_id.encode("utf-8")),
+            ]
+
+            for attempt in range(1, KAFKA_SEND_RETRIES + 1):
+                try:
+                    await self._producer.send(
+                        "raw-messages", value=raw_msg, key=msg_key, headers=headers,
+                    )
+                    logger.debug("Published message %s to raw-messages", msg_key)
+                    break
+                except Exception:
+                    if attempt == KAFKA_SEND_RETRIES:
+                        logger.exception(
+                            "Failed to publish message %s after %d attempts (dropped)",
+                            msg_key, KAFKA_SEND_RETRIES,
+                        )
+                    else:
+                        logger.warning(
+                            "Kafka send attempt %d/%d failed for %s, retrying...",
+                            attempt, KAFKA_SEND_RETRIES, msg_key,
+                        )
+                        await asyncio.sleep(KAFKA_RETRY_DELAY * attempt)
         except Exception:
-            logger.exception("Failed to publish message %s", msg_key)
+            logger.exception("Unhandled error processing message %s", getattr(message, "id", "?"))
 
     async def start(self) -> None:
         if not self._producer.is_started:

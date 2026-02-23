@@ -1,11 +1,14 @@
+import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
 from shared.models.trade import RawMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/messages", tags=["messages"])
 
@@ -19,9 +22,20 @@ async def list_messages(
     session: AsyncSession = Depends(get_session),
 ):
     user_id = request.state.user_id
-    filters = [RawMessage.user_id == uuid.UUID(user_id)]
+    is_admin = getattr(request.state, "is_admin", False)
+
+    filters = []
+    if not is_admin:
+        try:
+            filters.append(RawMessage.user_id == uuid.UUID(user_id))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid user ID format")
+
     if source_id:
-        filters.append(RawMessage.data_source_id == uuid.UUID(source_id))
+        try:
+            filters.append(RawMessage.data_source_id == uuid.UUID(source_id))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid source_id format")
 
     stmt = (
         select(RawMessage)
@@ -38,6 +52,7 @@ async def list_messages(
 
     return {
         "total": total,
+        "has_more": offset + limit < total,
         "messages": [
             {
                 "id": str(m.id),

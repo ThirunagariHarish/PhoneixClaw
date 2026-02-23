@@ -29,13 +29,13 @@ interface Position {
 export default function Positions() {
   const qc = useQueryClient()
 
-  const { data: openPositions, isLoading: openLoading } = useQuery<Position[]>({
+  const { data: openPositions, isLoading: openLoading, isError: openError, refetch: refetchOpen } = useQuery<Position[]>({
     queryKey: ['positions', 'open'],
     queryFn: () => axios.get('/api/v1/positions?status=OPEN').then(r => r.data),
     refetchInterval: 5000,
   })
 
-  const { data: closedPositions, isLoading: closedLoading } = useQuery<Position[]>({
+  const { data: closedPositions, isLoading: closedLoading, isError: closedError } = useQuery<Position[]>({
     queryKey: ['positions', 'closed'],
     queryFn: () => axios.get('/api/v1/positions?status=CLOSED&limit=50').then(r => r.data),
   })
@@ -45,9 +45,25 @@ export default function Positions() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['positions'] }),
   })
 
+  const handleClose = (id: number, ticker: string) => {
+    if (window.confirm(`Close position for ${ticker}? This action cannot be undone.`)) {
+      closeMut.mutate(id)
+    }
+  }
+
   const totalPnl = (closedPositions ?? []).reduce((s, p) => s + (p.realized_pnl ?? 0), 0)
   const winCount = (closedPositions ?? []).filter(p => (p.realized_pnl ?? 0) > 0).length
   const totalClosed = (closedPositions ?? []).length
+
+  if (openError || closedError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <XCircle className="h-10 w-10 text-destructive mb-3" />
+        <p className="text-lg font-medium">Failed to load positions</p>
+        <Button variant="outline" className="mt-4" onClick={() => refetchOpen()}>Retry</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -140,7 +156,7 @@ export default function Positions() {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => closeMut.mutate(p.id)}
+                        onClick={() => handleClose(p.id, `${p.ticker} $${p.strike}`)}
                         disabled={closeMut.isPending}
                       >
                         <XCircle className="h-4 w-4 mr-1" /> Close

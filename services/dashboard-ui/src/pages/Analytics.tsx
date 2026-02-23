@@ -12,9 +12,11 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Loader2, XCircle } from 'lucide-react'
 
 export default function Analytics() {
-  const { data: metrics } = useQuery({
+  const { data: metrics, isLoading, isError, refetch } = useQuery({
     queryKey: ['analytics-metrics'],
     queryFn: () => axios.get('/api/v1/metrics/daily?days=30').then((r) => r.data),
   })
@@ -46,6 +48,20 @@ export default function Analytics() {
     color: 'hsl(var(--card-foreground))',
   }
   const tickFill = 'hsl(var(--muted-foreground))'
+
+  if (isLoading) {
+    return <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <XCircle className="h-10 w-10 text-destructive mb-3" />
+        <p className="text-lg font-medium">Failed to load analytics</p>
+        <Button variant="outline" className="mt-4" onClick={() => refetch()}>Retry</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

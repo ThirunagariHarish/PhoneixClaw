@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,13 +37,41 @@ async def system_health():
             except Exception:
                 services[name] = "unreachable"
     services["api-gateway"] = "healthy"
+
+    infra = {}
+    try:
+        from shared.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            await session.execute(select(Configuration).limit(1))
+        infra["postgres"] = "healthy"
+    except Exception:
+        infra["postgres"] = "unhealthy"
+
+    try:
+        import redis.asyncio as aioredis
+
+        from shared.config.base_config import config as app_config
+        r = aioredis.from_url(app_config.redis.url, decode_responses=True)
+        await r.ping()
+        await r.aclose()
+        infra["redis"] = "healthy"
+    except Exception:
+        infra["redis"] = "unhealthy"
+
+    try:
+        from aiokafka import AIOKafkaProducer
+
+        from shared.config.base_config import config as app_config
+        kp = AIOKafkaProducer(bootstrap_servers=app_config.kafka.bootstrap_servers)
+        await kp.start()
+        await kp.stop()
+        infra["kafka"] = "healthy"
+    except Exception:
+        infra["kafka"] = "unhealthy"
+
     return {
         "services": services,
-        "infrastructure": {
-            "kafka": "healthy",
-            "postgres": "healthy",
-            "redis": "healthy",
-        },
+        "infrastructure": infra,
     }
 
 
@@ -102,6 +130,8 @@ async def toggle_kill_switch(
     session: AsyncSession = Depends(get_session),
 ):
     """Toggle the kill switch to disable/enable all trading."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
     user_id = uuid.UUID(request.state.user_id)
     result = await session.execute(
         select(Configuration).where(

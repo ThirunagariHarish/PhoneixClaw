@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +17,8 @@ from shared.models.trade import (
     User,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
@@ -23,6 +26,13 @@ def _require_admin(request: Request) -> str:
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(status_code=403, detail="Admin access required")
     return request.state.user_id
+
+
+def _safe_uuid(value: str, label: str = "ID") -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} format: {value}")
 
 
 def _user_response(u: User) -> dict:
@@ -95,7 +105,7 @@ async def list_source_channels(
 ):
     """List channels for any source (admin access)."""
     result = await session.execute(
-        select(Channel).where(Channel.data_source_id == uuid.UUID(source_id))
+        select(Channel).where(Channel.data_source_id == _safe_uuid(source_id, "source_id"))
     )
     channels = result.scalars().all()
     return [
@@ -123,11 +133,11 @@ async def create_admin_mapping(
     if not trading_account_id or not channel_id:
         raise HTTPException(status_code=400, detail="trading_account_id and channel_id required")
 
-    ta = await session.get(TradingAccount, uuid.UUID(trading_account_id))
+    ta = await session.get(TradingAccount, _safe_uuid(trading_account_id, "trading_account_id"))
     if not ta or str(ta.user_id) != admin_id:
         raise HTTPException(status_code=403, detail="Trading account does not belong to you")
 
-    ch = await session.get(Channel, uuid.UUID(channel_id))
+    ch = await session.get(Channel, _safe_uuid(channel_id, "channel_id"))
     if not ch:
         raise HTTPException(status_code=404, detail="Channel not found")
 
@@ -163,7 +173,7 @@ async def promote_user(
     admin_id: str = Depends(_require_admin),
     session: AsyncSession = Depends(get_session),
 ):
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.is_admin = True
@@ -179,7 +189,7 @@ async def demote_user(
 ):
     if user_id == admin_id:
         raise HTTPException(status_code=400, detail="Cannot demote yourself")
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.is_admin = False
@@ -215,7 +225,7 @@ async def assign_role(
     if body.role not in ROLE_PRESETS:
         raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {list(ROLE_PRESETS.keys())}")
 
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -238,7 +248,7 @@ async def update_permissions(
     session: AsyncSession = Depends(get_session),
 ):
     """Update individual permissions for a user (granular override)."""
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -263,7 +273,7 @@ async def toggle_user_active(
     """Enable or disable a user account."""
     if user_id == admin_id:
         raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.is_active = not user.is_active
@@ -278,7 +288,7 @@ async def get_user_detail(
     session: AsyncSession = Depends(get_session),
 ):
     """Get full user details including permissions."""
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, _safe_uuid(user_id, "user_id"))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

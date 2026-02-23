@@ -54,18 +54,30 @@ class RawMessageWriterService:
         for attempt in range(1, MAX_FLUSH_RETRIES + 1):
             try:
                 async with AsyncSessionLocal() as session:
+                    written = 0
                     for msg in batch:
                         user_id = msg.get("user_id")
                         if not user_id:
                             logger.warning("Skipping message without user_id: %s", msg.get("message_id"))
                             continue
+                        try:
+                            parsed_user_id = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+                        except (ValueError, AttributeError):
+                            logger.warning("Skipping message with invalid user_id: %s", user_id)
+                            continue
+                        try:
+                            ds_id_raw = msg.get("data_source_id")
+                            parsed_ds_id = (
+                                uuid.UUID(ds_id_raw)
+                                if ds_id_raw and isinstance(ds_id_raw, str)
+                                else ds_id_raw
+                            )
+                        except (ValueError, AttributeError):
+                            logger.warning("Invalid data_source_id %s, setting to None", ds_id_raw)
+                            parsed_ds_id = None
                         rm = RawMessage(
-                            user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
-                            data_source_id=(
-                                uuid.UUID(msg["data_source_id"])
-                                if msg.get("data_source_id") and isinstance(msg["data_source_id"], str)
-                                else msg.get("data_source_id")
-                            ),
+                            user_id=parsed_user_id,
+                            data_source_id=parsed_ds_id,
                             source_type=msg.get("source_type", "discord"),
                             channel_name=msg.get("channel_name"),
                             author=msg.get("author"),
@@ -74,9 +86,10 @@ class RawMessageWriterService:
                             raw_metadata=msg.get("raw_metadata", {}),
                         )
                         session.add(rm)
+                        written += 1
                     await session.commit()
-                self._total_written += len(batch)
-                logger.info("Flushed %d raw messages (total=%d)", len(batch), self._total_written)
+                self._total_written += written
+                logger.info("Flushed %d raw messages (total=%d)", written, self._total_written)
                 return
             except Exception:
                 self._total_errors += len(batch)

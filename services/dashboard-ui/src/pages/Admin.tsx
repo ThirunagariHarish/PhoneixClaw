@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -90,6 +90,20 @@ export default function Admin() {
   const [selectedAccount, setSelectedAccount] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (error) {
+      const t = setTimeout(() => setError(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [error])
+
+  useEffect(() => {
+    if (success) {
+      const t = setTimeout(() => setSuccess(null), 3000)
+      return () => clearTimeout(t)
+    }
+  }, [success])
 
   const { data: users, isLoading: usersLoading } = useQuery<AdminUser[]>({
     queryKey: ['admin-users'],

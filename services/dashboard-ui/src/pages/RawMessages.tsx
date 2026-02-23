@@ -4,6 +4,7 @@ import axios from 'axios'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -12,7 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { MessageSquare, RefreshCw, Loader2, Inbox } from 'lucide-react'
+import { MessageSquare, RefreshCw, Loader2, Inbox, Search, XCircle } from 'lucide-react'
 
 interface Source {
   id: string
@@ -35,6 +36,7 @@ interface RawMsg {
 
 export default function RawMessages() {
   const [selectedSource, setSelectedSource] = useState<string>('all')
+  const [searchText, setSearchText] = useState('')
   const [page, setPage] = useState(0)
   const limit = 50
 
@@ -45,9 +47,9 @@ export default function RawMessages() {
 
   useEffect(() => {
     setPage(0)
-  }, [selectedSource])
+  }, [selectedSource, searchText])
 
-  const { data: msgData, isLoading, refetch, isFetching } = useQuery<{ total: number; messages: RawMsg[] }>({
+  const { data: msgData, isLoading, isError, refetch, isFetching } = useQuery<{ total: number; messages: RawMsg[] }>({
     queryKey: ['raw-messages', selectedSource, page],
     queryFn: () => {
       const params: Record<string, string | number> = { limit, offset: page * limit }
@@ -57,7 +59,14 @@ export default function RawMessages() {
     refetchInterval: 10_000,
   })
 
-  const messages = msgData?.messages ?? []
+  const allMessages = msgData?.messages ?? []
+  const messages = searchText
+    ? allMessages.filter(m =>
+        m.content.toLowerCase().includes(searchText.toLowerCase()) ||
+        (m.author && m.author.toLowerCase().includes(searchText.toLowerCase())) ||
+        (m.channel_name && m.channel_name.toLowerCase().includes(searchText.toLowerCase()))
+      )
+    : allMessages
   const total = msgData?.total ?? 0
   const totalPages = Math.ceil(total / limit)
 
@@ -79,7 +88,16 @@ export default function RawMessages() {
         <div>
           <p className="text-sm text-muted-foreground">View all raw messages pulled from your data sources</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search messages, authors, channels..."
+              className="pl-9 w-[250px]"
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+            />
+          </div>
           <Select value={selectedSource} onValueChange={setSelectedSource}>
             <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Filter by source" />
@@ -104,7 +122,15 @@ export default function RawMessages() {
         <span className="text-xs">Auto-refreshes every 10s</span>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <Card className="border-destructive/30">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <XCircle className="h-10 w-10 text-destructive mb-3" />
+            <p className="text-destructive font-medium">Failed to load messages</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>Retry</Button>
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { Card, CardContent } from '@/components/ui/card'
@@ -47,10 +47,17 @@ export default function TradingAccounts() {
   const [form, setForm] = useState({ ...emptyForm })
   const [error, setError] = useState<string | null>(null)
 
-  const { data: accounts } = useQuery<Account[]>({
+  const { data: accounts, isLoading: accountsLoading, isError: accountsError, refetch } = useQuery<Account[]>({
     queryKey: ['accounts'],
     queryFn: () => axios.get('/api/v1/accounts').then((r) => r.data),
   })
+
+  useEffect(() => {
+    if (error) {
+      const t = setTimeout(() => setError(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [error])
 
   const createMutation = useMutation({
     mutationFn: (payload: object) => axios.post('/api/v1/accounts', payload),
@@ -185,7 +192,20 @@ export default function TradingAccounts() {
         </div>
       )}
 
-      {(!accounts || accounts.length === 0) && (
+      {accountsLoading && (
+        <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      )}
+
+      {accountsError && (
+        <Card className="border-destructive/30">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <p className="text-destructive font-medium">Failed to load accounts</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>Retry</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!accountsLoading && !accountsError && (!accounts || accounts.length === 0) && (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Wallet className="h-12 w-12 text-muted-foreground/50 mb-4" />
@@ -218,7 +238,11 @@ export default function TradingAccounts() {
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => deleteMutation.mutate(a.id)}
+                      onClick={() => {
+                        if (window.confirm(`Delete trading account "${a.display_name}"? This cannot be undone.`)) {
+                          deleteMutation.mutate(a.id)
+                        }
+                      }}
                     >
                       <Trash2 className="mr-2 h-4 w-4" /> Delete
                     </DropdownMenuItem>

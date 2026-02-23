@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -125,7 +125,9 @@ export default function Backtesting() {
     try {
       await axios.post(`/api/v1/sources/${form.data_source_id}/sync-channels`)
       await refetchChannels()
-    } catch { /* error handled by empty channel list display */ }
+    } catch {
+      setBtError('Failed to sync channels. Check that the data source has channel IDs configured.')
+    }
     setSyncing(false)
   }
 
@@ -142,6 +144,15 @@ export default function Backtesting() {
     enabled: !!selectedRunId,
   })
 
+  const [btError, setBtError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (btError) {
+      const t = setTimeout(() => setBtError(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [btError])
+
   const createMutation = useMutation({
     mutationFn: (payload: object) => axios.post('/api/v1/backtest', payload),
     onSuccess: (res) => {
@@ -151,7 +162,12 @@ export default function Backtesting() {
       setForm({ start_date: '', end_date: '', data_source_id: '', channel_id: '', trading_account_id: '', name: '' })
       setSelectedRunId(res.data.id)
     },
-    onError: () => {},
+    onError: (err: unknown) => {
+      const msg = axios.isAxiosError(err) && err.response?.data?.detail
+        ? err.response.data.detail
+        : 'Failed to create backtest. Please try again.'
+      setBtError(msg)
+    },
   })
 
   const deleteMutation = useMutation({
@@ -160,7 +176,14 @@ export default function Backtesting() {
       qc.invalidateQueries({ queryKey: ['backtest'] })
       if (selectedRunId) setSelectedRunId(null)
     },
+    onError: () => setBtError('Failed to delete backtest run.'),
   })
+
+  const handleDeleteRun = (id: string, name: string | null) => {
+    if (window.confirm(`Delete backtest "${name || id.slice(0, 8)}"? This cannot be undone.`)) {
+      deleteMutation.mutate(id)
+    }
+  }
 
   const handleRun = () => {
     const start = form.start_date ? `${form.start_date}T00:00:00Z` : ''
@@ -306,6 +329,13 @@ export default function Backtesting() {
         </Dialog>
       </div>
 
+      {btError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{btError}</span>
+          <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => setBtError(null)}>Dismiss</Button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -339,7 +369,7 @@ export default function Backtesting() {
                           ${((r.summary as Record<string, number>).total_pnl ?? 0).toFixed(0)}
                         </span>
                       )}
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={e => { e.stopPropagation(); deleteMutation.mutate(r.id) }}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={e => { e.stopPropagation(); handleDeleteRun(r.id, r.name) }}>
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
