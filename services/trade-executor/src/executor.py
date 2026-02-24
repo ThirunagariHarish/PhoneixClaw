@@ -7,6 +7,7 @@ from services.trade_executor.src.buffer import calculate_buffered_price  # noqa:
 from services.trade_executor.src.fill_tracker import FillTracker
 from services.trade_executor.src.validator import trade_validator  # noqa: E402
 from shared.broker.adapter import BrokerAdapter
+from shared.broker.alpaca_adapter import AlpacaAuthError
 from shared.broker.circuit_breaker import CircuitBreaker, CircuitOpenError
 from shared.broker.factory import create_broker_adapter
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
@@ -26,7 +27,12 @@ class TradeExecutorService:
         self.producer = KafkaProducerWrapper()
         self.broker = broker
         self._broker_cache: dict[str, BrokerAdapter] = {}
-        self._circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60.0)
+        self._verified_accounts: set[str] = set()
+        self._failed_accounts: dict[str, str] = {}
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=5, recovery_timeout=60.0,
+            excluded_exceptions=(AlpacaAuthError,),
+        )
         self._dry_run = False
         self._fill_tracker = FillTracker()
 
@@ -115,8 +121,31 @@ class TradeExecutorService:
                 account.credentials_encrypted,
                 account.paper_mode,
             )
+            if ta_id not in self._verified_accounts:
+                await self._verify_broker(ta_id, broker, account)
             self._broker_cache[ta_id] = broker
             return broker
+
+    async def _verify_broker(self, ta_id: str, broker: BrokerAdapter, account) -> None:
+        """Run a one-time health check on first use of a broker to catch auth issues early."""
+        base_url = getattr(broker, "base_url", "unknown")
+        mode = "PAPER" if account.paper_mode else "LIVE"
+        try:
+            acct_info = await broker.get_account()
+            self._verified_accounts.add(ta_id)
+            self._failed_accounts.pop(ta_id, None)
+            logger.info(
+                "Broker verified for account %s (%s, mode=%s, url=%s, buying_power=$%.2f)",
+                ta_id, account.display_name, mode, base_url,
+                acct_info.get("buying_power", 0),
+            )
+        except AlpacaAuthError as e:
+            error_msg = f"Broker auth FAILED ({mode} @ {base_url}): {e} — check API keys match the {mode.lower()} account"
+            self._failed_accounts[ta_id] = error_msg
+            logger.error("BROKER AUTH FAILED for account %s (%s): %s", ta_id, account.display_name, error_msg)
+        except Exception as e:
+            logger.warning("Broker health check inconclusive for %s: %s", ta_id, e)
+            self._verified_accounts.add(ta_id)
 
     async def _handle_trade(self, trade: dict, headers: dict) -> None:
         trade_id = trade.get("trade_id", "unknown")
@@ -127,6 +156,15 @@ class TradeExecutorService:
             await self._publish_result(
                 trade, "REJECTED",
                 error_message="No trading account found for this trade",
+                start_time=start_time,
+            )
+            return
+
+        ta_id = trade.get("trading_account_id", "")
+        if ta_id in self._failed_accounts:
+            await self._publish_result(
+                trade, "REJECTED",
+                error_message=self._failed_accounts[ta_id],
                 start_time=start_time,
             )
             return
@@ -181,6 +219,10 @@ class TradeExecutorService:
             await self._fill_tracker.track(order_id, trade, broker)
             logger.info("Executed trade %s: %s %d %s @ %.2f (buffered=%.2f, order=%s)",
                          trade_id, action, quantity, symbol, price, buffered_price, order_id)
+        except AlpacaAuthError as e:
+            logger.error("Auth failure for trade %s — rejecting immediately: %s", trade_id, e)
+            self._failed_accounts[ta_id] = str(e)
+            await self._publish_result(trade, "REJECTED", error_message=str(e), start_time=start_time)
         except CircuitOpenError:
             logger.error("Circuit breaker OPEN — trade %s deferred", trade_id)
             await self._publish_result(trade, "ERROR", error_message="BROKER_CIRCUIT_OPEN", start_time=start_time)

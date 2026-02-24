@@ -20,10 +20,12 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
         half_open_max_calls: int = 1,
+        excluded_exceptions: tuple = (),
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.half_open_max_calls = half_open_max_calls
+        self.excluded_exceptions = excluded_exceptions
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._last_failure_time = 0.0
@@ -52,6 +54,8 @@ class CircuitBreaker:
             result = await func(*args, **kwargs)
             self._on_success()
             return result
+        except self.excluded_exceptions:
+            raise
         except Exception:
             self._on_failure()
             raise
