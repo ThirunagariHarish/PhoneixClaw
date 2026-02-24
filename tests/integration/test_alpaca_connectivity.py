@@ -4,7 +4,6 @@ Covers all tickers from the failing trades CSV:
 SPX, AMD, IWM, VIX, GLD, SLV, AAPL
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -17,7 +16,6 @@ from shared.broker.alpaca_adapter import (
     AlpacaBrokerAdapter,
     AlpacaOrderError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Symbol formatting
@@ -181,7 +179,10 @@ class TestExecutorHealthCheck:
         broker = AsyncMock()
         broker.base_url = ALPACA_TRADE_BASE
         broker.is_paper = True
-        broker.get_account = AsyncMock(return_value={"buying_power": 100000, "cash": 100000, "equity": 100000, "portfolio_value": 100000})
+        broker.get_account = AsyncMock(return_value={
+            "buying_power": 100000, "cash": 100000,
+            "equity": 100000, "portfolio_value": 100000,
+        })
         broker.place_limit_order = AsyncMock(side_effect=AlpacaAuthError("Alpaca 401: unauthorized"))
         broker.format_option_symbol = MagicMock(return_value="SPXW260224C06895000")
 

@@ -15,41 +15,65 @@ _COMMON_OPTION_TICKERS = {
 }
 
 
-def strip_reply_context(text: str) -> str:
-    """Remove quoted reply-to text so only the author's new message is parsed.
+_INFORMAL_QTY_RE = r"(?:\s*(?:MOST|SOME|ALL|HALF|REST|OF|THE|MY|REMAINING))?"
 
-    Discord reply messages arrive as:
+_EMBEDDED_TRADE_RE = re.compile(
+    r"\b(?:bought|buy|bto|sold|sell|stc|sto|btc)\b", re.IGNORECASE,
+)
+
+
+def strip_reply_context(text: str) -> str:
+    """Remove quoted/embedded reply text so only the author's new message is parsed.
+
+    Handles two Discord reply formats:
+
+    Format A -- explicit "Reply to:" marker:
       LABEL : ↩️ Reply to:
-      LABEL : Bought SPX 6900C at 4.50 Roll from 6875
+      LABEL : Bought SPX 6900C at 4.50
       @here Sold most SPX 6900C at 5.80
 
-    We strip the "Reply to:" line AND the immediately following quoted line,
-    keeping only the author's actual new message.
+    Format B -- embedded bot reference (no "Reply to:" marker):
+      APP @INFRA TRADE ALERT SPX : Bought SPX 6890C at 1.20 EOD ...
+      @here Sold 50% at 2.50
     """
-    if "reply to" not in text.lower():
-        return text
-
-    lines = text.split("\n")
-    cleaned: list[str] = []
-    skip_next = 0
-    for line in lines:
-        stripped = line.strip()
-        if re.search(r"reply\s+to:?", stripped, re.IGNORECASE):
-            skip_next = 1
-            continue
-        if skip_next > 0:
-            if stripped.startswith(">") or stripped.startswith("**"):
+    # --- Format A: explicit "Reply to:" ---
+    if "reply to" in text.lower():
+        lines = text.split("\n")
+        cleaned: list[str] = []
+        skip_next = 0
+        for line in lines:
+            stripped = line.strip()
+            if re.search(r"reply\s+to:?", stripped, re.IGNORECASE):
+                skip_next = 1
                 continue
-            if not stripped.startswith("@") and not re.match(
-                r"^\s*(?:sold|sell|stc|sto|bto|btc|bought|buy)\b", stripped, re.IGNORECASE
-            ):
-                skip_next -= 1
-                continue
-            skip_next = 0
-        cleaned.append(line)
+            if skip_next > 0:
+                if stripped.startswith(">") or stripped.startswith("**"):
+                    continue
+                if not stripped.startswith("@") and not re.match(
+                    r"^\s*(?:sold|sell|stc|sto|bto|btc|bought|buy)\b",
+                    stripped, re.IGNORECASE,
+                ):
+                    skip_next -= 1
+                    continue
+                skip_next = 0
+            cleaned.append(line)
+        result = "\n".join(cleaned).strip()
+        return result if result else text
 
-    result = "\n".join(cleaned).strip()
-    return result if result else text
+    # --- Format B: embedded bot quote before @here/@everyone ---
+    at_marker = re.search(r"@(?:here|everyone)", text)
+    if at_marker:
+        before = text[:at_marker.start()]
+        after = text[at_marker.start():]
+        if _EMBEDDED_TRADE_RE.search(before):
+            after_has_action = re.search(
+                r"\b(?:sold|sell|done|closed?|out|exited?|runners?|trimmed?)\b",
+                after, re.IGNORECASE,
+            )
+            if after_has_action:
+                return after.strip()
+
+    return text
 
 
 def parse_trade_message(text: str) -> dict[str, Any]:
@@ -128,16 +152,14 @@ def parse_trade_message(text: str) -> dict[str, Any]:
             result["inferred_expiration"] = True
         return result
 
-    # Legacy verbose format: "Bought AAPL 190C at 2.50"
-    _INFORMAL_QTY = r"(?:\s*(?:MOST|SOME|ALL|HALF|REST|OF|THE|MY|REMAINING))?"
     buy_pattern = (
         r"(?:BOUGHT|BUY)\s+(?:(\d+(?:\.\d+)?)\s*(?:CONTRACTS?)?|(\d+)%)?"
-        + _INFORMAL_QTY +
+        + _INFORMAL_QTY_RE +
         r"\s*([A-Z]{1,5})\s+(\d+(?:\.\d+)?)([CP])\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)"
     )
     sell_pattern = (
         r"(?:SOLD|SELL)\s+(?:(\d+(?:\.\d+)?)\s*(?:CONTRACTS?)?|(\d+)%)?"
-        + _INFORMAL_QTY +
+        + _INFORMAL_QTY_RE +
         r"\s*([A-Z]{1,5})\s+(\d+(?:\.\d+)?)([CP])\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)"
     )
 
@@ -151,6 +173,11 @@ def parse_trade_message(text: str) -> dict[str, Any]:
         if action:
             actions.append(action)
 
+    if not actions:
+        shorthand = _parse_shorthand_sell(text_upper, expiration)
+        if shorthand:
+            actions.extend(shorthand)
+
     _apply_default_expiration(actions)
     result2: dict[str, Any] = {"actions": actions, "raw_message": text}
     if timeframe:
@@ -158,6 +185,74 @@ def parse_trade_message(text: str) -> dict[str, Any]:
     if inferred_expiration:
         result2["inferred_expiration"] = True
     return result2
+
+
+_SHORTHAND_SELL_RE = re.compile(
+    r"(?:SOLD|SELL)\s+"
+    r"(?:(\d+(?:\.\d+)?)\s*(?:CONTRACTS?)?|(\d+)%)?"
+    r"(?:\s*(?:MOST|SOME|ALL|HALF|REST|OF|THE|MY|REMAINING|RUNNERS?))?"
+    r"\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)",
+)
+
+_EXIT_LANGUAGE_RE = re.compile(
+    r"(?:RUNNERS?\s+)?(?:DONE|CLOSED?|OUT|EXITED?|TRIMMED?)"
+    r"\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)",
+)
+
+
+def _parse_shorthand_sell(
+    text_upper: str, expiration: str | None,
+) -> list[dict[str, Any]]:
+    """Match shorthand sells like 'Sold 50% at 2.50' or 'runners done at 8.80'.
+
+    These have a price but no ticker/strike. We emit a partial SELL action
+    with ticker='_CONTEXT' as a marker that the trade service can fill
+    from the referenced original message.
+    """
+    actions: list[dict[str, Any]] = []
+
+    m = _SHORTHAND_SELL_RE.search(text_upper)
+    if m:
+        abs_qty = m.group(1)
+        pct_qty = m.group(2)
+        price = float(m.group(3))
+        if pct_qty:
+            qty: int | str = f"{pct_qty}%"
+            is_pct = True
+        elif abs_qty:
+            qty = int(float(abs_qty))
+            is_pct = False
+        else:
+            qty = 1
+            is_pct = False
+        actions.append({
+            "action": "SELL",
+            "ticker": "_CONTEXT",
+            "strike": 0,
+            "option_type": "CALL",
+            "expiration": expiration,
+            "quantity": qty,
+            "price": price,
+            "is_percentage": is_pct,
+            "needs_context": True,
+        })
+        return actions
+
+    m = _EXIT_LANGUAGE_RE.search(text_upper)
+    if m:
+        price = float(m.group(1))
+        actions.append({
+            "action": "SELL",
+            "ticker": "_CONTEXT",
+            "strike": 0,
+            "option_type": "CALL",
+            "expiration": expiration,
+            "quantity": 1,
+            "price": price,
+            "is_percentage": False,
+            "needs_context": True,
+        })
+    return actions
 
 
 def _apply_default_expiration(actions: list[dict[str, Any]]) -> None:
