@@ -109,6 +109,40 @@ class DiscordIngestor:
                 await self._on_connected()
             except Exception:
                 logger.exception("on_connected callback failed")
+        asyncio.get_event_loop().create_task(self._poll_channels())
+
+    async def _poll_channels(self, interval: float = 10.0) -> None:
+        """Fallback: poll target channels via HTTP API since gateway events
+        may not fire reliably with discord.py-self user tokens."""
+        await asyncio.sleep(5)
+        last_seen: dict[int, str | None] = {ch: None for ch in self._target_channels}
+        logger.info("Channel poller started for %d channels (interval=%.0fs)", len(self._target_channels), interval)
+        while True:
+            try:
+                for ch_id in self._target_channels:
+                    channel = self._client.get_channel(ch_id)
+                    if channel is None:
+                        try:
+                            channel = await self._client.fetch_channel(ch_id)
+                        except Exception:
+                            logger.warning("Cannot fetch channel %d", ch_id)
+                            continue
+                    kwargs: dict = {"limit": 20}
+                    if last_seen[ch_id]:
+                        kwargs["after"] = discord.Object(id=int(last_seen[ch_id]))
+                    messages = []
+                    async for msg in channel.history(**kwargs):
+                        messages.append(msg)
+                    if messages:
+                        messages.sort(key=lambda m: m.id)
+                        last_seen[ch_id] = str(messages[-1].id)
+                        for msg in messages:
+                            await self._handle_message(msg)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Channel poller error")
+            await asyncio.sleep(interval)
 
     async def _handle_message(self, message: Message) -> None:
         try:
@@ -162,7 +196,7 @@ class DiscordIngestor:
                 "pipeline_id": self._pipeline_id,
                 "source": "discord",
                 "source_type": "discord",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": (message.created_at or datetime.now(timezone.utc)).isoformat(),
             }
 
             headers = [
