@@ -19,30 +19,33 @@ def strip_reply_context(text: str) -> str:
     """Remove quoted reply-to text so only the author's new message is parsed.
 
     Discord reply messages arrive as:
-      **LABEL :** ↩️ Reply to:
-      > LABEL : Bought SPX 6900C at 4.50
+      LABEL : ↩️ Reply to:
+      LABEL : Bought SPX 6900C at 4.50 Roll from 6875
       @here Sold most SPX 6900C at 5.80
 
-    We strip everything between "Reply to:" and the next actionable sentence
-    so the parser only sees the new content.
+    We strip the "Reply to:" line AND the immediately following quoted line,
+    keeping only the author's actual new message.
     """
     if "reply to" not in text.lower():
         return text
 
     lines = text.split("\n")
     cleaned: list[str] = []
-    skip = False
+    skip_next = 0
     for line in lines:
         stripped = line.strip()
         if re.search(r"reply\s+to:?", stripped, re.IGNORECASE):
-            skip = True
+            skip_next = 1
             continue
-        if skip:
-            if stripped.startswith(">") or stripped.startswith("**") and ":" in stripped and not re.search(
-                r"\b(?:sold|bought|sell|buy|bto|stc|sto|btc)\b", stripped, re.IGNORECASE
-            ):
+        if skip_next > 0:
+            if stripped.startswith(">") or stripped.startswith("**"):
                 continue
-            skip = False
+            if not stripped.startswith("@") and not re.match(
+                r"^\s*(?:sold|sell|stc|sto|bto|btc|bought|buy)\b", stripped, re.IGNORECASE
+            ):
+                skip_next -= 1
+                continue
+            skip_next = 0
         cleaned.append(line)
 
     result = "\n".join(cleaned).strip()
@@ -126,12 +129,15 @@ def parse_trade_message(text: str) -> dict[str, Any]:
         return result
 
     # Legacy verbose format: "Bought AAPL 190C at 2.50"
+    _INFORMAL_QTY = r"(?:\s*(?:MOST|SOME|ALL|HALF|REST|OF|THE|MY|REMAINING))?"
     buy_pattern = (
         r"(?:BOUGHT|BUY)\s+(?:(\d+(?:\.\d+)?)\s*(?:CONTRACTS?)?|(\d+)%)?"
+        + _INFORMAL_QTY +
         r"\s*([A-Z]{1,5})\s+(\d+(?:\.\d+)?)([CP])\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)"
     )
     sell_pattern = (
         r"(?:SOLD|SELL)\s+(?:(\d+(?:\.\d+)?)\s*(?:CONTRACTS?)?|(\d+)%)?"
+        + _INFORMAL_QTY +
         r"\s*([A-Z]{1,5})\s+(\d+(?:\.\d+)?)([CP])\s+(?:AT\s+)?\$?(\d+(?:\.\d+)?)"
     )
 
