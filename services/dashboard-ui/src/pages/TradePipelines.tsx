@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAuth } from '@/hooks/useAuth'
@@ -100,6 +101,7 @@ function channelDisplayName(ch: Channel): string {
 
 export default function TradePipelines() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const { isAdmin } = useAuth()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [step, setStep] = useState(1)
@@ -755,7 +757,11 @@ export default function TradePipelines() {
             const statusCfg = STATUS_CONFIG[p.status] || STATUS_CONFIG.STOPPED
 
             return (
-              <Card key={p.id} className="group relative overflow-hidden">
+              <Card
+                key={p.id}
+                className="group relative overflow-hidden cursor-pointer transition-shadow hover:shadow-md hover:ring-1 hover:ring-primary/20"
+                onClick={() => navigate(`/pipelines/${p.id}`)}
+              >
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="space-y-1 min-w-0 flex-1">
@@ -772,7 +778,7 @@ export default function TradePipelines() {
                         </Badge>
                       </div>
                     </div>
-                    <div className="flex gap-1 shrink-0">
+                    <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                       {p.enabled ? (
                         <Button
                           variant="ghost" size="icon" className="h-8 w-8"
@@ -838,9 +844,10 @@ export default function TradePipelines() {
                   <div className="flex items-center gap-3 text-xs text-muted-foreground pt-2 border-t">
                     <span>{p.messages_count} msgs</span>
                     <span>{p.trades_count} trades</span>
-                    <div className="flex gap-1 ml-auto">
+                    <div className="flex items-center gap-1 ml-auto">
                       {p.auto_approve && <Badge variant="outline" className="text-[10px]">Auto</Badge>}
                       {p.paper_mode && <Badge variant="outline" className="text-[10px]">Paper</Badge>}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary transition-colors ml-1" />
                     </div>
                   </div>
                 </CardContent>

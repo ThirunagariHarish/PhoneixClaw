@@ -485,6 +485,217 @@ async def get_pipeline(
     return _pipeline_response(pipeline)
 
 
+@router.get("/{pipeline_id}/trades")
+async def pipeline_trades(
+    pipeline_id: str,
+    request: Request,
+    status: str | None = None,
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get trades associated with this pipeline (matched via channel + account)."""
+    pipeline = await _get_pipeline(pipeline_id, request, session)
+    stmt = (
+        select(Trade)
+        .where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+        )
+    )
+    if status:
+        stmt = stmt.where(Trade.status == status)
+    stmt = stmt.order_by(desc(Trade.created_at)).limit(limit).offset(offset)
+    result = await session.execute(stmt)
+    trades = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "trade_id": str(t.trade_id),
+            "ticker": t.ticker,
+            "strike": float(t.strike),
+            "option_type": t.option_type,
+            "action": t.action,
+            "price": float(t.price),
+            "quantity": t.quantity,
+            "status": t.status,
+            "source": t.source,
+            "error_message": t.error_message,
+            "rejection_reason": t.rejection_reason,
+            "broker_order_id": t.broker_order_id,
+            "raw_message": t.raw_message,
+            "buffered_price": float(t.buffered_price) if t.buffered_price else None,
+            "fill_price": float(t.fill_price) if t.fill_price else None,
+            "realized_pnl": float(t.realized_pnl) if t.realized_pnl else None,
+            "execution_latency_ms": t.execution_latency_ms,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "processed_at": t.processed_at.isoformat() if t.processed_at else None,
+        }
+        for t in trades
+    ]
+
+
+@router.get("/{pipeline_id}/stats")
+async def pipeline_stats(
+    pipeline_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Aggregate stats for a single pipeline."""
+    pipeline = await _get_pipeline(pipeline_id, request, session)
+    base = select(func.count(Trade.id)).where(
+        Trade.user_id == pipeline.user_id,
+        Trade.channel_id == pipeline.channel_id,
+        Trade.trading_account_id == pipeline.trading_account_id,
+    )
+    total = (await session.execute(base)).scalar() or 0
+    executed = (await session.execute(base.where(Trade.status == "EXECUTED"))).scalar() or 0
+    rejected = (await session.execute(base.where(Trade.status == "REJECTED"))).scalar() or 0
+    errored = (await session.execute(base.where(Trade.status == "ERROR"))).scalar() or 0
+    pending = (await session.execute(base.where(Trade.status == "PENDING"))).scalar() or 0
+
+    pnl_result = await session.execute(
+        select(func.sum(Trade.realized_pnl)).where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+            Trade.realized_pnl.isnot(None),
+        )
+    )
+    total_pnl = float(pnl_result.scalar() or 0)
+
+    winning = (await session.execute(
+        select(func.count(Trade.id)).where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+            Trade.realized_pnl > 0,
+        )
+    )).scalar() or 0
+
+    losing = (await session.execute(
+        select(func.count(Trade.id)).where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+            Trade.realized_pnl < 0,
+        )
+    )).scalar() or 0
+
+    closed = winning + losing
+    win_rate = (winning / closed * 100) if closed > 0 else 0
+
+    avg_latency_result = await session.execute(
+        select(func.avg(Trade.execution_latency_ms)).where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+            Trade.execution_latency_ms.isnot(None),
+        )
+    )
+    avg_latency = avg_latency_result.scalar()
+
+    return {
+        "total": total,
+        "executed": executed,
+        "rejected": rejected,
+        "errored": errored,
+        "pending": pending,
+        "total_pnl": total_pnl,
+        "winning": winning,
+        "losing": losing,
+        "win_rate": round(win_rate, 1),
+        "avg_execution_latency_ms": round(float(avg_latency)) if avg_latency else None,
+        "messages_count": pipeline.messages_count or 0,
+    }
+
+
+@router.get("/{pipeline_id}/performance")
+async def pipeline_performance(
+    pipeline_id: str,
+    request: Request,
+    days: int = Query(30, le=90),
+    session: AsyncSession = Depends(get_session),
+):
+    """Time-series performance data for charting."""
+    from sqlalchemy import cast, Date as SQLDate
+    pipeline = await _get_pipeline(pipeline_id, request, session)
+
+    stmt = (
+        select(
+            cast(Trade.created_at, SQLDate).label("date"),
+            func.count(Trade.id).label("trades"),
+            func.sum(Trade.realized_pnl).label("pnl"),
+            func.count(Trade.id).filter(Trade.status == "EXECUTED").label("executed"),
+        )
+        .where(
+            Trade.user_id == pipeline.user_id,
+            Trade.channel_id == pipeline.channel_id,
+            Trade.trading_account_id == pipeline.trading_account_id,
+        )
+        .group_by(cast(Trade.created_at, SQLDate))
+        .order_by(cast(Trade.created_at, SQLDate))
+        .limit(days)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    cumulative_pnl = 0.0
+    data = []
+    for row in rows:
+        day_pnl = float(row.pnl or 0)
+        cumulative_pnl += day_pnl
+        data.append({
+            "date": row.date.isoformat(),
+            "trades": row.trades,
+            "pnl": round(day_pnl, 2),
+            "cumulative_pnl": round(cumulative_pnl, 2),
+            "executed": row.executed,
+        })
+    return data
+
+
+@router.get("/{pipeline_id}/messages")
+async def pipeline_messages(
+    pipeline_id: str,
+    request: Request,
+    limit: int = Query(20, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+):
+    """Recent raw messages for this pipeline's channel."""
+    pipeline = await _get_pipeline(pipeline_id, request, session)
+    await session.refresh(pipeline, ["channel"])
+
+    channel_identifier = pipeline.channel.channel_identifier if pipeline.channel else None
+    if not channel_identifier:
+        return []
+
+    stmt = (
+        select(RawMessage)
+        .where(
+            RawMessage.user_id == pipeline.user_id,
+            RawMessage.data_source_id == pipeline.data_source_id,
+        )
+        .order_by(desc(RawMessage.created_at))
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
+    messages = result.scalars().all()
+    return [
+        {
+            "id": str(m.id),
+            "content": m.content,
+            "author": m.author,
+            "channel_name": m.channel_name,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in messages
+    ]
+
+
 @router.put("/{pipeline_id}", response_model=PipelineResponse)
 async def update_pipeline(
     pipeline_id: str,

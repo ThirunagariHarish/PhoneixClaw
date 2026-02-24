@@ -12,6 +12,7 @@ import Analytics from './pages/Analytics'
 import Positions from './pages/Positions'
 import Backtesting from './pages/Backtesting'
 import TradePipelines from './pages/TradePipelines'
+import PipelineDetail from './pages/PipelineDetail'
 import System from './pages/System'
 import Admin from './pages/Admin'
 import AccessManagement from './pages/AccessManagement'
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="positions" element={<Positions />} />
           <Route path="backtest" element={<Backtesting />} />
           <Route path="pipelines" element={<TradePipelines />} />
+          <Route path="pipelines/:pipelineId" element={<PipelineDetail />} />
           <Route path="messages" element={<RawMessages />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="system" element={<System />} />
