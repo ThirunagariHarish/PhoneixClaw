@@ -267,10 +267,15 @@ class TestExecutorHealthCheck:
     async def test_failed_account_rejects_subsequent_trades(self):
         from services.trade_executor.src.executor import TradeExecutorService
 
+        error_msg = "Broker auth FAILED (PAPER): check API keys"
         service = TradeExecutorService()
-        service._failed_accounts = {"bad-account": "Broker auth FAILED (PAPER): check API keys"}
-        service._broker_cache = {"bad-account": AsyncMock()}
+        service._failed_accounts = {
+            "bad-account:paper": error_msg,
+        }
+        service._broker_cache = {"bad-account:paper": AsyncMock()}
         service.producer = AsyncMock()
+
+        mock_broker = service._broker_cache["bad-account:paper"]
 
         trade = {
             "trade_id": "test-789",
@@ -286,10 +291,17 @@ class TestExecutorHealthCheck:
             "source": "discord",
         }
 
+        async def mock_resolve(t):
+            t["_broker_failed"] = error_msg
+            t["_broker_cache_key"] = "bad-account:paper"
+            return mock_broker
+
         with patch.object(service, "_publish_result", new_callable=AsyncMock) as mock_publish, \
-             patch.object(service, "_resolve_broker", return_value=service._broker_cache["bad-account"]):
+             patch.object(service, "_resolve_broker", side_effect=mock_resolve):
             await service._handle_trade(trade, {})
 
             mock_publish.assert_called_once()
             assert mock_publish.call_args[0][1] == "REJECTED"
-            assert "auth FAILED" in (mock_publish.call_args[1].get("error_message", "") or "")
+            assert "auth FAILED" in (
+                mock_publish.call_args[1].get("error_message", "") or ""
+            )

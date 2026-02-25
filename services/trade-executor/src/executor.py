@@ -14,7 +14,7 @@ from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.dlq import DeadLetterQueue
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
-from shared.models.trade import AccountSourceMapping, TradingAccount
+from shared.models.trade import AccountSourceMapping, TradePipeline, TradingAccount
 from shared.retry import RetryExhaustedError, retry_async
 
 logger = logging.getLogger(__name__)
@@ -109,43 +109,83 @@ class TradeExecutorService:
         if not ta_id:
             return None
 
-        if ta_id in self._broker_cache:
-            return self._broker_cache[ta_id]
-
         async with AsyncSessionLocal() as session:
             account = await session.get(TradingAccount, uuid.UUID(ta_id))
             if not account:
                 return None
+
+            paper_mode = account.paper_mode
+
+            channel_id = trade.get("channel_id")
+            if channel_id:
+                try:
+                    from sqlalchemy import select
+                    result = await session.execute(
+                        select(TradePipeline).where(
+                            TradePipeline.trading_account_id == uuid.UUID(ta_id),
+                            TradePipeline.channel_id == uuid.UUID(channel_id),
+                        )
+                    )
+                    pipeline = result.scalar_one_or_none()
+                    if pipeline and pipeline.paper_mode:
+                        paper_mode = True
+                        logger.info(
+                            "Pipeline %s overrides paper_mode=True for account %s",
+                            pipeline.id, ta_id,
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+            cache_key = f"{ta_id}:{'paper' if paper_mode else 'live'}"
+
+            if cache_key in self._failed_accounts:
+                trade["_broker_failed"] = self._failed_accounts[cache_key]
+                trade["_broker_cache_key"] = cache_key
+                return self._broker_cache.get(cache_key)
+
+            if cache_key in self._broker_cache:
+                trade["_broker_cache_key"] = cache_key
+                return self._broker_cache[cache_key]
+
             broker = create_broker_adapter(
                 account.broker_type,
                 account.credentials_encrypted,
-                account.paper_mode,
+                paper_mode,
             )
-            if ta_id not in self._verified_accounts:
-                await self._verify_broker(ta_id, broker, account)
-            self._broker_cache[ta_id] = broker
+            if cache_key not in self._verified_accounts:
+                await self._verify_broker(cache_key, broker, account, paper_mode)
+            if cache_key in self._failed_accounts:
+                trade["_broker_failed"] = self._failed_accounts[cache_key]
+            trade["_broker_cache_key"] = cache_key
+            self._broker_cache[cache_key] = broker
             return broker
 
-    async def _verify_broker(self, ta_id: str, broker: BrokerAdapter, account) -> None:
+    async def _verify_broker(
+        self, cache_key: str, broker: BrokerAdapter, account, paper_mode: bool | None = None,
+    ) -> None:
         """Run a one-time health check on first use of a broker to catch auth issues early."""
+        effective_paper = paper_mode if paper_mode is not None else account.paper_mode
         base_url = getattr(broker, "base_url", "unknown")
-        mode = "PAPER" if account.paper_mode else "LIVE"
+        mode = "PAPER" if effective_paper else "LIVE"
         try:
             acct_info = await broker.get_account()
-            self._verified_accounts.add(ta_id)
-            self._failed_accounts.pop(ta_id, None)
+            self._verified_accounts.add(cache_key)
+            self._failed_accounts.pop(cache_key, None)
             logger.info(
                 "Broker verified for account %s (%s, mode=%s, url=%s, buying_power=$%.2f)",
-                ta_id, account.display_name, mode, base_url,
+                cache_key, account.display_name, mode, base_url,
                 acct_info.get("buying_power", 0),
             )
         except AlpacaAuthError as e:
-            error_msg = f"Broker auth FAILED ({mode} @ {base_url}): {e} — check API keys match the {mode.lower()} account"
-            self._failed_accounts[ta_id] = error_msg
-            logger.error("BROKER AUTH FAILED for account %s (%s): %s", ta_id, account.display_name, error_msg)
+            error_msg = (
+                f"Broker auth FAILED ({mode} @ {base_url}): {e}"
+                f" — check API keys match the {mode.lower()} account"
+            )
+            self._failed_accounts[cache_key] = error_msg
+            logger.error("BROKER AUTH FAILED for account %s (%s): %s", cache_key, account.display_name, error_msg)
         except Exception as e:
-            logger.warning("Broker health check inconclusive for %s: %s", ta_id, e)
-            self._verified_accounts.add(ta_id)
+            logger.warning("Broker health check inconclusive for %s: %s", cache_key, e)
+            self._verified_accounts.add(cache_key)
 
     async def _handle_trade(self, trade: dict, headers: dict) -> None:
         trade_id = trade.get("trade_id", "unknown")
@@ -160,11 +200,10 @@ class TradeExecutorService:
             )
             return
 
-        ta_id = trade.get("trading_account_id", "")
-        if ta_id in self._failed_accounts:
+        if trade.get("_broker_failed"):
             await self._publish_result(
                 trade, "REJECTED",
-                error_message=self._failed_accounts[ta_id],
+                error_message=trade["_broker_failed"],
                 start_time=start_time,
             )
             return
@@ -221,7 +260,8 @@ class TradeExecutorService:
                          trade_id, action, quantity, symbol, price, buffered_price, order_id)
         except AlpacaAuthError as e:
             logger.error("Auth failure for trade %s — rejecting immediately: %s", trade_id, e)
-            self._failed_accounts[ta_id] = str(e)
+            fail_key = trade.get("_broker_cache_key", trade.get("trading_account_id", ""))
+            self._failed_accounts[fail_key] = str(e)
             await self._publish_result(trade, "REJECTED", error_message=str(e), start_time=start_time)
         except CircuitOpenError:
             logger.error("Circuit breaker OPEN — trade %s deferred", trade_id)
