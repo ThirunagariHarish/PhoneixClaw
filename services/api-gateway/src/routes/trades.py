@@ -6,7 +6,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
-from shared.models.trade import Trade
+from shared.models.trade import Trade, TradingAccount
 
 router = APIRouter(prefix="/api/v1/trades", tags=["trades"])
 
@@ -113,17 +113,30 @@ async def approve_trade(
     if not trade:
         raise HTTPException(status_code=404, detail="Pending trade not found")
 
-    trade.status = "APPROVED"
+    trade.status = "IN_PROGRESS"
     trade.approved_by = "dashboard"
     trade.approved_at = datetime.now(timezone.utc)
+
+    if not trade.trading_account_id:
+        acc_result = await session.execute(
+            select(TradingAccount).where(
+                TradingAccount.user_id == uuid.UUID(user_id),
+                TradingAccount.enabled.is_(True),
+            ).limit(1)
+        )
+        account = acc_result.scalar_one_or_none()
+        if account:
+            trade.trading_account_id = account.id
+
     await session.commit()
 
     from services.api_gateway.src.routes.chat import _kafka_producer
     if _kafka_producer and _kafka_producer.is_started:
+        ta_id = str(trade.trading_account_id) if trade.trading_account_id else None
         approved_trade = {
             "trade_id": str(trade.trade_id),
             "user_id": user_id,
-            "trading_account_id": str(trade.trading_account_id) if trade.trading_account_id else None,
+            "trading_account_id": ta_id,
             "ticker": trade.ticker,
             "strike": float(trade.strike),
             "option_type": trade.option_type,
@@ -133,7 +146,7 @@ async def approve_trade(
             "price": float(trade.price),
             "source": trade.source,
             "raw_message": trade.raw_message,
-            "status": "APPROVED",
+            "status": "IN_PROGRESS",
             "approved_by": "dashboard",
         }
         await _kafka_producer.send("approved-trades", value=approved_trade, key=str(trade.trade_id))

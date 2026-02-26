@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -9,6 +9,10 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -16,7 +20,7 @@ import {
   ArrowLeft, TrendingUp, TrendingDown, Activity, BarChart3,
   Clock, CheckCircle2, XCircle, AlertTriangle, Loader2,
   RefreshCw, Database, Hash, Wallet, Target, Zap,
-  MessageSquare, Download, ChevronUp, ChevronDown,
+  MessageSquare, Download, ChevronUp, ChevronDown, Settings,
 } from 'lucide-react'
 import { exportToCSV } from '@/lib/csv-export'
 
@@ -25,6 +29,7 @@ interface Pipeline {
   name: string
   data_source_id: string
   data_source_name: string | null
+  source_type: string | null
   channel_id: string
   channel_name: string | null
   channel_identifier: string | null
@@ -40,6 +45,13 @@ interface Pipeline {
   trades_count: number
   created_at: string
   updated_at: string
+}
+
+interface Account {
+  id: string
+  display_name: string
+  broker_type: string
+  paper_mode: boolean
 }
 
 interface PipelineTrade {
@@ -125,8 +137,8 @@ function statusBadge(status: string, errorMessage?: string | null, rejectionReas
         return <Badge variant="destructive">Error</Badge>
       case 'REJECTED':
         return <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/30">Rejected</Badge>
-      case 'APPROVED':
-        return <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30">Approved</Badge>
+      case 'IN_PROGRESS':
+        return <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30">In Progress</Badge>
       case 'PENDING':
         return <Badge variant="outline">Pending</Badge>
       default:
@@ -154,7 +166,14 @@ function statusBadge(status: string, errorMessage?: string | null, rejectionReas
 export default function PipelineDetail() {
   const { pipelineId } = useParams<{ pipelineId: string }>()
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>('30d')
+  const [editName, setEditName] = useState('')
+  const [editAccount, setEditAccount] = useState('')
+  const [editAutoApprove, setEditAutoApprove] = useState(true)
+  const [editPaperMode, setEditPaperMode] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
   const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90
 
@@ -163,6 +182,45 @@ export default function PipelineDetail() {
     queryFn: () => axios.get(`/api/v1/pipelines/${pipelineId}`).then(r => r.data),
     refetchInterval: 10_000,
   })
+
+  const { data: accounts } = useQuery<Account[]>({
+    queryKey: ['accounts'],
+    queryFn: () => axios.get('/api/v1/accounts').then(r => r.data),
+  })
+
+  if (pipeline && !settingsLoaded) {
+    setEditName(pipeline.name)
+    setEditAccount(pipeline.trading_account_id)
+    setEditAutoApprove(pipeline.auto_approve)
+    setEditPaperMode(pipeline.paper_mode)
+    setSettingsLoaded(true)
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: (data: { name?: string; trading_account_id?: string; auto_approve?: boolean; paper_mode?: boolean }) =>
+      axios.put(`/api/v1/pipelines/${pipelineId}`, data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline', pipelineId] })
+      setSaveMsg('Settings saved')
+      setTimeout(() => setSaveMsg(null), 2500)
+    },
+    onError: () => setSaveMsg('Failed to save'),
+  })
+
+  const handleSaveSettings = () => {
+    if (!pipeline) return
+    const payload: Record<string, unknown> = {}
+    if (editName !== pipeline.name) payload.name = editName
+    if (editAccount !== pipeline.trading_account_id) payload.trading_account_id = editAccount
+    if (editAutoApprove !== pipeline.auto_approve) payload.auto_approve = editAutoApprove
+    if (editPaperMode !== pipeline.paper_mode) payload.paper_mode = editPaperMode
+    if (Object.keys(payload).length === 0) {
+      setSaveMsg('No changes')
+      setTimeout(() => setSaveMsg(null), 2000)
+      return
+    }
+    updateMutation.mutate(payload as Parameters<typeof updateMutation.mutate>[0])
+  }
 
   const { data: stats } = useQuery<PipelineStats>({
     queryKey: ['pipeline-stats', pipelineId],
@@ -446,7 +504,6 @@ export default function PipelineDetail() {
         </Card>
       </div>
 
-      {/* Tabs: Trades / Messages */}
       <Tabs defaultValue="trades" className="space-y-4">
         <TabsList>
           <TabsTrigger value="trades" className="gap-1.5">
@@ -454,6 +511,9 @@ export default function PipelineDetail() {
           </TabsTrigger>
           <TabsTrigger value="messages" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" /> Messages
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="gap-1.5">
+            <Settings className="h-3.5 w-3.5" /> Settings
           </TabsTrigger>
         </TabsList>
 
@@ -574,6 +634,77 @@ export default function PipelineDetail() {
                   <p className="text-sm">No messages received yet</p>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="settings">
+          <Card>
+            <CardHeader className="py-4">
+              <CardTitle className="text-base">Pipeline Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6 max-w-lg">
+              <div className="space-y-2">
+                <Label htmlFor="pipeline-name">Pipeline Name</Label>
+                <Input
+                  id="pipeline-name"
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="Pipeline name"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="trading-account">Trading Account</Label>
+                <Select value={editAccount} onValueChange={setEditAccount}>
+                  <SelectTrigger id="trading-account">
+                    <SelectValue placeholder="Select account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(accounts ?? []).map(a => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.display_name} ({a.broker_type}{a.paper_mode ? ' - Paper' : ''})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="auto-approve">Auto-Approve</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Automatically execute parsed trade signals</p>
+                </div>
+                <Switch
+                  id="auto-approve"
+                  checked={editAutoApprove}
+                  onCheckedChange={setEditAutoApprove}
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="paper-mode">Paper Mode</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Simulate trades without real orders</p>
+                </div>
+                <Switch
+                  id="paper-mode"
+                  checked={editPaperMode}
+                  onCheckedChange={setEditPaperMode}
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <Button onClick={handleSaveSettings} disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                  Save Changes
+                </Button>
+                {saveMsg && (
+                  <span className={`text-sm ${saveMsg === 'Settings saved' ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                    {saveMsg}
+                  </span>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

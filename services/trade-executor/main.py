@@ -18,14 +18,16 @@ logger = logging.getLogger(SERVICE_NAME)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 _healthy = False
+_dry_run_mode = False
 
 
 async def _run_executor(service):
-    global _healthy
+    global _healthy, _dry_run_mode
     for attempt in itertools.count(1):
         try:
             await service.start()
             _healthy = True
+            _dry_run_mode = service._dry_run
             logger.info("Trade executor connected to Kafka (attempt %d)", attempt)
             await service.run()
             break
@@ -67,8 +69,21 @@ create_metrics_route(app)
 @app.get("/health")
 async def health():
     if _healthy:
-        return {"status": "ready", "service": SERVICE_NAME}
-    return JSONResponse(status_code=503, content={"status": "starting", "service": SERVICE_NAME})
+        return {
+            "status": "ready",
+            "service": SERVICE_NAME,
+            "kafka_connected": True,
+            "dry_run_mode": _dry_run_mode,
+        }
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "starting",
+            "service": SERVICE_NAME,
+            "kafka_connected": False,
+            "dry_run_mode": _dry_run_mode,
+        },
+    )
 
 
 if __name__ == "__main__":

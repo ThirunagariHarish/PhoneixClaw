@@ -2,12 +2,14 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
 from shared.config.base_config import config
 from shared.feature_flags import feature_flags
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.producer import KafkaProducerWrapper
 from shared.models.database import AsyncSessionLocal
-from shared.models.trade import Trade
+from shared.models.trade import AccountSourceMapping, Channel, Trade, TradingAccount
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class TradeGatewayService:
                 raw_message=trade.get("raw_message"),
                 status=status,
                 approved_by=trade.get("approved_by"),
-                approved_at=datetime.now(timezone.utc) if status == "APPROVED" else None,
+                approved_at=datetime.now(timezone.utc) if status == "IN_PROGRESS" else None,
             )
             async with AsyncSessionLocal() as session:
                 session.add(record)
@@ -69,6 +71,63 @@ class TradeGatewayService:
             logger.info("Persisted trade %s (status=%s)", trade.get("trade_id"), status)
         except Exception:
             logger.exception("Failed to persist trade %s to DB", trade.get("trade_id"))
+
+    async def _resolve_trading_account(self, trade: dict) -> str | None:
+        """Resolve trading_account_id from trade. Returns str UUID or None."""
+        ta_id = trade.get("trading_account_id")
+        if ta_id:
+            return str(ta_id) if not isinstance(ta_id, str) else ta_id
+
+        user_id = trade.get("user_id")
+        if not user_id:
+            return None
+
+        channel_id_raw = trade.get("channel_id")
+        ch_uuid: uuid.UUID | None = None
+        if channel_id_raw:
+            try:
+                ch_uuid = uuid.UUID(channel_id_raw)
+            except (ValueError, TypeError):
+                pass
+            if ch_uuid is None:
+                async with AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        select(Channel).where(
+                            Channel.channel_identifier == str(channel_id_raw)
+                        ).limit(1)
+                    )
+                    ch = result.scalar_one_or_none()
+                    if ch:
+                        ch_uuid = ch.id
+
+        if ch_uuid:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(AccountSourceMapping).where(
+                        AccountSourceMapping.channel_id == ch_uuid,
+                        AccountSourceMapping.enabled.is_(True),
+                    )
+                )
+                mapping = result.scalar_one_or_none()
+                if mapping:
+                    return str(mapping.trading_account_id)
+
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(TradingAccount).where(
+                    TradingAccount.user_id == user_uuid,
+                    TradingAccount.enabled.is_(True),
+                ).limit(1)
+            )
+            account = result.scalar_one_or_none()
+            if account:
+                return str(account.id)
+        return None
 
     async def _handle_trade(self, trade: dict, headers: dict) -> None:
         trade_id = trade.get("trade_id", "unknown")
@@ -84,7 +143,7 @@ class TradeGatewayService:
             trade["paper_mode"] = True
 
         if effective_mode == "auto":
-            trade["status"] = "APPROVED"
+            trade["status"] = "IN_PROGRESS"
             trade["approved_by"] = "auto-gateway"
             trade["approved_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("Auto-approved trade %s: %s %s", trade_id, trade.get("action"), trade.get("ticker"))
@@ -94,13 +153,16 @@ class TradeGatewayService:
             logger.info("Trade %s pending manual approval (flags: manual_approval=%s)", trade_id, override_manual)
             return
 
-        await self._persist_trade(trade, "APPROVED")
+        ta_id = await self._resolve_trading_account(trade)
+        if ta_id:
+            trade["trading_account_id"] = ta_id
+
+        await self._persist_trade(trade, "IN_PROGRESS")
 
         msg_headers = []
         user_id = trade.get("user_id", "")
         if user_id:
             msg_headers.append(("user_id", user_id.encode("utf-8")))
-        ta_id = trade.get("trading_account_id", "")
         if ta_id:
             msg_headers.append(("trading_account_id", ta_id.encode("utf-8")))
 

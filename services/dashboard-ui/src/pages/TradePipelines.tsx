@@ -20,7 +20,7 @@ import {
   Plus, Loader2, Play, Square, Trash2, RefreshCw, Workflow,
   Database, Hash, Wallet, AlertCircle, CheckCircle2, XCircle,
   ChevronRight, Search, Server, ChevronLeft, Activity, FlaskConical,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, MessageSquare, Pencil,
 } from 'lucide-react'
 
 interface Source {
@@ -54,6 +54,7 @@ interface Pipeline {
   name: string
   data_source_id: string
   data_source_name: string | null
+  source_type: string | null
   channel_id: string
   channel_name: string | null
   channel_identifier: string | null
@@ -111,15 +112,25 @@ export default function TradePipelines() {
   const [channelSearch, setChannelSearch] = useState('')
   const [diagOpen, setDiagOpen] = useState(false)
   const [testingPipeline, setTestingPipeline] = useState<string | null>(null)
+  const [editPipeline, setEditPipeline] = useState<Pipeline | null>(null)
+  const [editForm, setEditForm] = useState({
+    name: '',
+    trading_account_id: '',
+    auto_approve: true,
+    paper_mode: false,
+  })
 
   const [form, setForm] = useState({
     name: '',
+    source_type: '' as '' | 'discord' | 'chat',
     data_source_id: '',
     channel_id: '',
     trading_account_id: '',
     auto_approve: true,
     paper_mode: false,
   })
+
+  const isChatSource = form.source_type === 'chat'
 
   useEffect(() => {
     if (error) {
@@ -197,6 +208,30 @@ export default function TradePipelines() {
     },
   })
 
+  const createChatMutation = useMutation({
+    mutationFn: (data: { name: string; trading_account_id: string; auto_approve: boolean; paper_mode: boolean }) =>
+      axios.post('/api/v1/pipelines/chat', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+      resetDialog()
+    },
+    onError: (err: any) => {
+      setError(err?.response?.data?.detail || 'Failed to create chat pipeline')
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      axios.put(`/api/v1/pipelines/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] })
+      setEditPipeline(null)
+    },
+    onError: (err: any) => {
+      setError(err?.response?.data?.detail || 'Failed to update pipeline')
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => axios.delete(`/api/v1/pipelines/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pipelines'] }),
@@ -233,13 +268,26 @@ export default function TradePipelines() {
   const resetDialog = () => {
     setDialogOpen(false)
     setStep(1)
-    setForm({ name: '', data_source_id: '', channel_id: '', trading_account_id: '', auto_approve: true, paper_mode: false })
+    setForm({ name: '', source_type: '', data_source_id: '', channel_id: '', trading_account_id: '', auto_approve: true, paper_mode: false })
     setSelectedGuild('')
     setChannelSearch('')
     setError(null)
   }
 
   const handleCreate = () => {
+    if (isChatSource) {
+      if (!form.name || !form.trading_account_id) {
+        setError('Please fill in all fields')
+        return
+      }
+      createChatMutation.mutate({
+        name: form.name,
+        trading_account_id: form.trading_account_id,
+        auto_approve: form.auto_approve,
+        paper_mode: form.paper_mode,
+      })
+      return
+    }
     if (!form.name || !form.data_source_id || !form.channel_id || !form.trading_account_id) {
       setError('Please fill in all fields')
       return
@@ -248,25 +296,35 @@ export default function TradePipelines() {
   }
 
   const canAdvance = () => {
-    if (step === 1) return !!form.data_source_id
+    if (step === 1) return isChatSource || !!form.data_source_id
     if (step === 2) return !!selectedGuild
     if (step === 3) return !!form.channel_id
     return false
   }
 
   const handleNext = () => {
-    if (step === 1 && form.data_source_id) {
-      const src = sources?.find(s => s.id === form.data_source_id)
-      if (src?.server_id) {
-        setSelectedGuild(src.server_id)
-        setStep(3)
+    if (step === 1) {
+      if (isChatSource) {
+        setStep(4)
         return
+      }
+      if (form.data_source_id) {
+        const src = sources?.find(s => s.id === form.data_source_id)
+        if (src?.server_id) {
+          setSelectedGuild(src.server_id)
+          setStep(3)
+          return
+        }
       }
     }
     setStep(s => s + 1)
   }
 
   const handleBack = () => {
+    if (step === 4 && isChatSource) {
+      setStep(1)
+      return
+    }
     if (step === 3) {
       setForm(f => ({ ...f, channel_id: '' }))
       setChannelSearch('')
@@ -280,6 +338,30 @@ export default function TradePipelines() {
       setSelectedGuild('')
     }
     setStep(s => s - 1)
+  }
+
+  const openEditDialog = (p: Pipeline) => {
+    setEditPipeline(p)
+    setEditForm({
+      name: p.name,
+      trading_account_id: p.trading_account_id,
+      auto_approve: p.auto_approve,
+      paper_mode: p.paper_mode,
+    })
+  }
+
+  const handleSaveEdit = () => {
+    if (!editPipeline) return
+    const payload: Record<string, unknown> = {}
+    if (editForm.name !== editPipeline.name) payload.name = editForm.name
+    if (editForm.trading_account_id !== editPipeline.trading_account_id) payload.trading_account_id = editForm.trading_account_id
+    if (editForm.auto_approve !== editPipeline.auto_approve) payload.auto_approve = editForm.auto_approve
+    if (editForm.paper_mode !== editPipeline.paper_mode) payload.paper_mode = editForm.paper_mode
+    if (Object.keys(payload).length === 0) {
+      setEditPipeline(null)
+      return
+    }
+    updateMutation.mutate({ id: editPipeline.id, data: payload })
   }
 
   const selectedChannel = channels?.find(c => c.id === form.channel_id)
@@ -307,7 +389,9 @@ export default function TradePipelines() {
               <DialogHeader>
                 <DialogTitle>Create Trade Pipeline</DialogTitle>
                 <DialogDescription>
-                  Step {step} of 4: {STEP_LABELS[step - 1]}
+                  {isChatSource && step === 4
+                    ? 'Step 2 of 2: Configure pipeline'
+                    : `Step ${step} of 4: ${STEP_LABELS[step - 1]}`}
                 </DialogDescription>
               </DialogHeader>
 
@@ -319,20 +403,55 @@ export default function TradePipelines() {
               )}
 
               {/* Progress bar */}
-              <div className="flex gap-1.5">
-                {[1, 2, 3, 4].map(s => (
-                  <div key={s} className="flex-1 flex flex-col items-center gap-1">
-                    <div className={`w-full h-1.5 rounded-full transition-colors duration-300 ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
-                    <span className={`text-[10px] transition-colors ${s === step ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
-                      {s === 1 ? 'Source' : s === 2 ? 'Server' : s === 3 ? 'Channel' : 'Config'}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {isChatSource ? (
+                <div className="flex gap-1.5">
+                  {[{ s: 1, label: 'Source' }, { s: 4, label: 'Config' }].map(({ s, label }) => (
+                    <div key={s} className="flex-1 flex flex-col items-center gap-1">
+                      <div className={`w-full h-1.5 rounded-full transition-colors duration-300 ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
+                      <span className={`text-[10px] transition-colors ${s === step ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
+                        {label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4].map(s => (
+                    <div key={s} className="flex-1 flex flex-col items-center gap-1">
+                      <div className={`w-full h-1.5 rounded-full transition-colors duration-300 ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
+                      <span className={`text-[10px] transition-colors ${s === step ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
+                        {s === 1 ? 'Source' : s === 2 ? 'Server' : s === 3 ? 'Channel' : 'Config'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Step 1: Data Source */}
               {step === 1 && (
                 <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Chat</Label>
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, source_type: 'chat', data_source_id: '', channel_id: '' }))}
+                      className={`w-full flex items-center gap-3 rounded-lg border p-3.5 text-left transition-all ${
+                        isChatSource
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                          : 'border-border hover:border-primary/40 hover:bg-accent/50'
+                      }`}
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                        <MessageSquare className="h-5 w-5 text-blue-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">Chat Widget</p>
+                        <p className="text-xs text-muted-foreground">Send trade signals directly from the dashboard</p>
+                      </div>
+                      <Badge variant="default" className="text-[10px] shrink-0">CONNECTED</Badge>
+                    </button>
+                  </div>
+
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Discord Connection</Label>
                     {sources?.filter(s => s.source_type === 'discord').length ? (
@@ -341,9 +460,9 @@ export default function TradePipelines() {
                           <button
                             key={s.id}
                             type="button"
-                            onClick={() => setForm(f => ({ ...f, data_source_id: s.id, channel_id: '' }))}
+                            onClick={() => setForm(f => ({ ...f, source_type: 'discord', data_source_id: s.id, channel_id: '' }))}
                             className={`w-full flex items-center gap-3 rounded-lg border p-3.5 text-left transition-all ${
-                              form.data_source_id === s.id
+                              form.data_source_id === s.id && form.source_type === 'discord'
                                 ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
                                 : 'border-border hover:border-primary/40 hover:bg-accent/50'
                             }`}
@@ -507,7 +626,20 @@ export default function TradePipelines() {
               {/* Step 4: Configure */}
               {step === 4 && (
                 <div className="space-y-4 py-2">
-                  {selectedSource && selectedChannel && (
+                  {isChatSource ? (
+                    <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
+                        <span className="text-muted-foreground">Source:</span>
+                        <span className="font-medium">Chat Widget</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-muted-foreground">Channel:</span>
+                        <span className="font-medium">Dashboard Chat</span>
+                      </div>
+                    </div>
+                  ) : selectedSource && selectedChannel && (
                     <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
                       <div className="flex items-center gap-2">
                         <Database className="h-3.5 w-3.5 text-muted-foreground" />
@@ -530,7 +662,7 @@ export default function TradePipelines() {
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Pipeline Name</Label>
                     <Input
-                      placeholder={selectedChannel ? `${channelDisplayName(selectedChannel)} Pipeline` : 'My Pipeline'}
+                      placeholder={isChatSource ? 'Chat Trade Pipeline' : selectedChannel ? `${channelDisplayName(selectedChannel)} Pipeline` : 'My Pipeline'}
                       value={form.name}
                       onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                     />
@@ -589,8 +721,8 @@ export default function TradePipelines() {
                     Next <ChevronRight className="ml-1 h-4 w-4" />
                   </Button>
                 ) : (
-                  <Button onClick={handleCreate} disabled={createMutation.isPending}>
-                    {createMutation.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                  <Button onClick={handleCreate} disabled={createMutation.isPending || createChatMutation.isPending}>
+                    {(createMutation.isPending || createChatMutation.isPending) && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
                     Create Pipeline
                   </Button>
                 )}
@@ -809,6 +941,13 @@ export default function TradePipelines() {
                         </Button>
                       )}
                       <Button
+                        variant="ghost" size="icon" className="h-8 w-8"
+                        onClick={() => openEditDialog(p)}
+                        title="Edit pipeline settings"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
                         variant="ghost" size="icon" className="h-8 w-8 text-destructive"
                         onClick={() => {
                           if (window.confirm('Delete this pipeline?')) deleteMutation.mutate(p.id)
@@ -845,6 +984,7 @@ export default function TradePipelines() {
                     <span>{p.messages_count} msgs</span>
                     <span>{p.trades_count} trades</span>
                     <div className="flex items-center gap-1 ml-auto">
+                      {p.source_type === 'chat' && <Badge variant="outline" className="text-[10px] border-blue-500/30 text-blue-600">Chat</Badge>}
                       {p.auto_approve && <Badge variant="outline" className="text-[10px]">Auto</Badge>}
                       {p.paper_mode && <Badge variant="outline" className="text-[10px]">Paper</Badge>}
                       <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary transition-colors ml-1" />
@@ -856,6 +996,76 @@ export default function TradePipelines() {
           })}
         </div>
       )}
+
+      {/* Edit Pipeline Dialog */}
+      <Dialog open={!!editPipeline} onOpenChange={v => { if (!v) setEditPipeline(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Pipeline</DialogTitle>
+            <DialogDescription>
+              Update the configuration for this pipeline.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Pipeline Name</Label>
+              <Input
+                value={editForm.name}
+                onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="Pipeline name"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Trading Account</Label>
+              <Select
+                value={editForm.trading_account_id}
+                onValueChange={v => setEditForm(f => ({ ...f, trading_account_id: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Select a trading account" /></SelectTrigger>
+                <SelectContent>
+                  {accounts?.map(a => (
+                    <SelectItem key={a.id} value={a.id}>
+                      <div className="flex items-center gap-2">
+                        <Wallet className="h-4 w-4 text-muted-foreground" />
+                        {a.display_name}
+                        {a.paper_mode && <Badge variant="outline" className="text-[10px]">Paper</Badge>}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <p className="text-sm font-medium">Auto-Approve Trades</p>
+                  <p className="text-xs text-muted-foreground">Execute parsed trades without manual review</p>
+                </div>
+                <Switch checked={editForm.auto_approve} onCheckedChange={v => setEditForm(f => ({ ...f, auto_approve: v }))} />
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <p className="text-sm font-medium">Paper Trading</p>
+                  <p className="text-xs text-muted-foreground">Simulate trades without real money</p>
+                </div>
+                <Switch checked={editForm.paper_mode} onCheckedChange={v => setEditForm(f => ({ ...f, paper_mode: v }))} />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPipeline(null)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
+              {updateMutation.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

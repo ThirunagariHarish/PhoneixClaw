@@ -20,7 +20,7 @@ class ManualApprovalManager:
     def approve(self, trade_id: str, approved_by: str = "manual") -> dict | None:
         trade = self._pending.pop(trade_id, None)
         if trade:
-            trade["status"] = "APPROVED"
+            trade["status"] = "IN_PROGRESS"
             trade["approved_by"] = approved_by
             trade["approved_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("Trade %s approved by %s", trade_id, approved_by)

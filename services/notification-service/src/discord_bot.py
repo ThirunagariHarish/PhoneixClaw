@@ -94,7 +94,7 @@ class TradingBot(commands.Bot):
 
                 approved = 0
                 for t in trades:
-                    t.status = "APPROVED"
+                    t.status = "IN_PROGRESS"
                     t.approved_by = str(ctx.author)
                     t.approved_at = datetime.now(timezone.utc)
                     approved += 1
@@ -113,7 +113,7 @@ class TradingBot(commands.Bot):
                             "price": float(t.price),
                             "source": t.source,
                             "raw_message": t.raw_message,
-                            "status": "APPROVED",
+                            "status": "IN_PROGRESS",
                             "approved_by": str(ctx.author),
                         }
                         await self._kafka_producer.send(

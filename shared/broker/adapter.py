@@ -25,6 +25,10 @@ class BrokerAdapter(Protocol):
         """Get all open positions from the broker."""
         ...
 
+    async def close_position(self, symbol: str) -> bool:
+        """Close (liquidate) an open position by symbol. Returns True if closed."""
+        ...
+
     async def get_quote(self, symbol: str) -> dict:
         """Get current quote. Returns {bid, ask, last, timestamp}."""
         ...

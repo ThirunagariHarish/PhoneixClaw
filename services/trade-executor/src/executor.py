@@ -265,8 +265,30 @@ class TradeExecutorService:
         trade_id = trade.get("trade_id", "unknown")
         start_time = time.monotonic()
 
+        logger.info(
+            ">>> Executor received trade %s: %s %s @ %s (user=%s, account=%s, dry_run=%s)",
+            trade_id, trade.get("action"), trade.get("ticker"),
+            trade.get("price"), trade.get("user_id"),
+            trade.get("trading_account_id"), self._dry_run,
+        )
+
+        # Merge headers into trade for broker resolution (gateway sends user_id/ta_id in headers)
+        if headers:
+            raw_uid = headers.get("user_id") or headers.get(b"user_id")
+            if raw_uid and not trade.get("user_id"):
+                trade["user_id"] = raw_uid.decode("utf-8") if isinstance(raw_uid, bytes) else raw_uid
+            raw_ta = headers.get("trading_account_id") or headers.get(b"trading_account_id")
+            if raw_ta and not trade.get("trading_account_id"):
+                trade["trading_account_id"] = (
+                    raw_ta.decode("utf-8") if isinstance(raw_ta, bytes) else raw_ta
+                )
+
         broker = await self._resolve_broker(trade)
         if not broker:
+            logger.warning(
+                "No trading account for trade %s: user_id=%s, channel_id=%s",
+                trade_id, trade.get("user_id"), trade.get("channel_id"),
+            )
             await self._publish_result(
                 trade, "REJECTED",
                 error_message="No trading account found for this trade",
@@ -284,6 +306,7 @@ class TradeExecutorService:
 
         is_valid, error = trade_validator.validate(trade)
         if not is_valid:
+            logger.warning("Validation failed for trade %s: %s", trade_id, error)
             await self._publish_result(trade, "REJECTED", error_message=error, start_time=start_time)
             return
 
@@ -303,6 +326,7 @@ class TradeExecutorService:
             quantity = int(quantity_str)
 
         if not expiration:
+            logger.warning("Trade %s rejected: missing expiration", trade_id)
             await self._publish_result(trade, "REJECTED", error_message="Missing expiration", start_time=start_time)
             return
 

@@ -1,7 +1,13 @@
+import asyncio
 import logging
+import re
 from datetime import datetime
 
 import httpx
+from alpaca.common.exceptions import APIError
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import LimitOrderRequest
 
 from shared.config.base_config import config
 
@@ -16,6 +22,32 @@ _INDEX_SYMBOL_MAP: dict[str, str] = {
     "NDX": "NDXP",
 }
 
+_OCC_REVERSE_MAP: dict[str, str] = {v: k for k, v in _INDEX_SYMBOL_MAP.items()}
+
+
+def parse_occ_symbol(symbol: str) -> dict | None:
+    """Parse OCC option symbol (e.g. SPY260224C00580000) to ticker, strike, option_type, expiration.
+    Returns None for stocks or invalid format."""
+    m = re.match(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$", symbol.upper())
+    if not m:
+        return None
+    root, yymmdd, cp, strike_str = m.groups()
+    yy, mm, dd = int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:6])
+    year = 2000 + yy if yy < 50 else 1900 + yy
+    try:
+        exp_date = datetime(year, mm, dd)
+    except ValueError:
+        return None
+    ticker = _OCC_REVERSE_MAP.get(root, root)
+    strike = int(strike_str) / 1000.0
+    option_type = "CALL" if cp == "C" else "PUT"
+    return {
+        "ticker": ticker,
+        "strike": strike,
+        "option_type": option_type,
+        "expiration": exp_date.strftime("%Y-%m-%d"),
+    }
+
 
 class AlpacaOrderError(Exception):
     """Raised when Alpaca rejects an order, carrying the human-readable detail."""
@@ -26,7 +58,7 @@ class AlpacaAuthError(AlpacaOrderError):
 
 
 class AlpacaBrokerAdapter:
-    """BrokerAdapter implementation for Alpaca using async httpx."""
+    """BrokerAdapter implementation for Alpaca using the official alpaca-py SDK."""
 
     def __init__(
         self,
@@ -36,22 +68,28 @@ class AlpacaBrokerAdapter:
     ) -> None:
         self._api_key = api_key or config.broker.api_key
         self._secret_key = secret_key or config.broker.secret_key
-        _paper = paper if paper is not None else config.broker.paper
-        self._base_url = ALPACA_TRADE_BASE if _paper else ALPACA_LIVE_BASE
-        self._paper = _paper
-        self._client = httpx.AsyncClient(
-            base_url=self._base_url,
-            headers={
-                "APCA-API-KEY-ID": self._api_key,
-                "APCA-API-SECRET-KEY": self._secret_key,
-            },
-            timeout=10.0,
+        self._paper = paper if paper is not None else config.broker.paper
+        self._base_url = (
+            "https://paper-api.alpaca.markets" if self._paper
+            else "https://api.alpaca.markets"
         )
-        self._mode_label = "PAPER" if _paper else "LIVE"
-        logger.info("Alpaca broker adapter initialized (mode=%s, url=%s)", self._mode_label, self._base_url)
+        self._mode_label = "PAPER" if self._paper else "LIVE"
+
+        if not self._api_key or not self._secret_key:
+            raise AlpacaAuthError("Alpaca API credentials not configured")
+
+        self._client = TradingClient(
+            api_key=self._api_key,
+            secret_key=self._secret_key,
+            paper=self._paper,
+        )
+        logger.info(
+            "Alpaca broker adapter initialized (mode=%s, sdk=alpaca-py)",
+            self._mode_label,
+        )
 
     def _raise_with_detail(self, resp: httpx.Response, *, symbol: str = "") -> None:
-        """Raise with Alpaca's JSON error body and endpoint context."""
+        """Raise with HTTP response detail (used by get_quote and tests)."""
         if resp.status_code < 400:
             return
         detail = ""
@@ -67,7 +105,19 @@ class AlpacaBrokerAdapter:
             raise AlpacaAuthError(msg)
         raise AlpacaOrderError(msg)
 
-    def format_option_symbol(self, ticker: str, expiration: str, option_type: str, strike: float) -> str:
+    def _handle_api_error(self, e: APIError, *, symbol: str = "") -> None:
+        """Convert Alpaca SDK APIError into our custom exceptions."""
+        prefix = f"[{symbol}] " if symbol else ""
+        status = getattr(e, "status_code", None) or 0
+        msg = f"{prefix}Alpaca {status} ({self._mode_label}): {e}"
+        logger.error("Alpaca API error: %s", msg)
+        if status in (401, 403):
+            raise AlpacaAuthError(msg) from e
+        raise AlpacaOrderError(msg) from e
+
+    def format_option_symbol(
+        self, ticker: str, expiration: str, option_type: str, strike: float
+    ) -> str:
         root = _INDEX_SYMBOL_MAP.get(ticker.upper(), ticker.upper())
         exp_date = datetime.strptime(expiration, "%Y-%m-%d")
         opt_char = "C" if option_type == "CALL" else "P"
@@ -77,69 +127,118 @@ class AlpacaBrokerAdapter:
             logger.debug("Symbol mapped: %s -> %s (OCC: %s)", ticker, root, symbol)
         return symbol
 
-    async def place_limit_order(self, symbol: str, qty: int, side: str, price: float) -> str:
-        payload = {
-            "symbol": symbol,
-            "qty": str(qty),
-            "side": side.lower(),
-            "type": "limit",
-            "limit_price": str(price),
-            "time_in_force": "day",
-        }
-        resp = await self._client.post("/v2/orders", json=payload)
-        self._raise_with_detail(resp, symbol=symbol)
-        data = resp.json()
-        logger.info("Order placed (%s): %s %d %s @ %.2f (ID: %s)", self._mode_label, side, qty, symbol, price, data["id"])
-        return data["id"]
+    async def place_limit_order(
+        self, symbol: str, qty: int, side: str, price: float
+    ) -> str:
+        order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+        order_request = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=order_side,
+            limit_price=price,
+            time_in_force=TimeInForce.DAY,
+        )
+        try:
+            order = await asyncio.to_thread(
+                self._client.submit_order, order_request
+            )
+            logger.info(
+                "Order placed (%s): %s %d %s @ %.2f (ID: %s)",
+                self._mode_label, side, qty, symbol, price, order.id,
+            )
+            return str(order.id)
+        except APIError as e:
+            self._handle_api_error(e, symbol=symbol)
+            return ""  # unreachable, _handle_api_error always raises
 
     async def place_bracket_order(
-        self, symbol: str, qty: int, side: str, price: float, take_profit: float, stop_loss: float
+        self,
+        symbol: str,
+        qty: int,
+        side: str,
+        price: float,
+        take_profit: float,
+        stop_loss: float,
     ) -> str:
-        payload = {
-            "symbol": symbol,
-            "qty": str(qty),
-            "side": side.lower(),
-            "type": "limit",
-            "limit_price": str(price),
-            "time_in_force": "day",
-            "order_class": "bracket",
-            "take_profit": {"limit_price": str(take_profit)},
-            "stop_loss": {"stop_price": str(stop_loss)},
-        }
-        resp = await self._client.post("/v2/orders", json=payload)
-        self._raise_with_detail(resp, symbol=symbol)
-        return resp.json()["id"]
+        order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+        order_request = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=order_side,
+            limit_price=price,
+            time_in_force=TimeInForce.DAY,
+            order_class="bracket",
+            take_profit={"limit_price": take_profit},
+            stop_loss={"stop_price": stop_loss},
+        )
+        try:
+            order = await asyncio.to_thread(
+                self._client.submit_order, order_request
+            )
+            logger.info(
+                "Bracket order placed (%s): %s %d %s @ %.2f (ID: %s)",
+                self._mode_label, side, qty, symbol, price, order.id,
+            )
+            return str(order.id)
+        except APIError as e:
+            self._handle_api_error(e, symbol=symbol)
+            return ""
 
     async def cancel_order(self, order_id: str) -> bool:
-        resp = await self._client.delete(f"/v2/orders/{order_id}")
-        return resp.status_code in (200, 204)
+        try:
+            await asyncio.to_thread(self._client.cancel_order_by_id, order_id)
+            return True
+        except APIError:
+            return False
 
     async def get_order_status(self, order_id: str) -> dict:
-        resp = await self._client.get(f"/v2/orders/{order_id}")
-        self._raise_with_detail(resp, symbol=order_id)
-        data = resp.json()
-        return {
-            "status": data["status"],
-            "filled_qty": int(data.get("filled_qty") or 0),
-            "fill_price": float(data.get("filled_avg_price") or 0),
-        }
+        try:
+            order = await asyncio.to_thread(
+                self._client.get_order_by_id, order_id
+            )
+            return {
+                "status": str(order.status.value) if order.status else "unknown",
+                "filled_qty": int(order.filled_qty or 0),
+                "fill_price": float(order.filled_avg_price or 0),
+            }
+        except APIError as e:
+            self._handle_api_error(e, symbol=order_id)
+            return {}
 
     async def get_positions(self) -> list[dict]:
-        resp = await self._client.get("/v2/positions")
-        self._raise_with_detail(resp)
-        return [
-            {
-                "symbol": p["symbol"],
-                "qty": int(p["qty"]),
-                "avg_entry_price": float(p["avg_entry_price"]),
-                "market_value": float(p["market_value"]),
-                "current_price": float(p["current_price"]),
-                "unrealized_pl": float(p["unrealized_pl"]),
-            }
-            for p in resp.json()
-        ]
+        try:
+            positions = await asyncio.to_thread(
+                self._client.get_all_positions
+            )
+            return [
+                {
+                    "symbol": pos.symbol,
+                    "qty": int(pos.qty),
+                    "avg_entry_price": float(pos.avg_entry_price),
+                    "market_value": float(pos.market_value),
+                    "current_price": float(pos.current_price),
+                    "unrealized_pl": float(pos.unrealized_pl),
+                }
+                for pos in positions
+            ]
+        except APIError as e:
+            self._handle_api_error(e)
+            return []
+
+    async def close_position(self, symbol: str) -> bool:
+        """Close (liquidate) an open position by symbol."""
+        try:
+            await asyncio.to_thread(
+                self._client.close_position, symbol
+            )
+            logger.info("Position closed (%s): %s", self._mode_label, symbol)
+            return True
+        except APIError as e:
+            self._handle_api_error(e, symbol=symbol)
+            return False
 
     async def get_quote(self, symbol: str) -> dict:
+        """Get latest quote. Uses httpx for the data API (not covered by trading SDK)."""
         async with httpx.AsyncClient(
             base_url=ALPACA_DATA_BASE,
             headers={
@@ -151,21 +250,27 @@ class AlpacaBrokerAdapter:
             resp = await client.get(f"/v2/stocks/{symbol}/quotes/latest")
             resp.raise_for_status()
             q = resp.json()["quote"]
-            return {"bid": float(q["bp"]), "ask": float(q["ap"]), "last": float(q["ap"])}
+            return {
+                "bid": float(q["bp"]),
+                "ask": float(q["ap"]),
+                "last": float(q["ap"]),
+            }
 
     async def get_account(self) -> dict:
-        resp = await self._client.get("/v2/account")
-        self._raise_with_detail(resp)
-        data = resp.json()
-        return {
-            "buying_power": float(data["buying_power"]),
-            "cash": float(data["cash"]),
-            "equity": float(data["equity"]),
-            "portfolio_value": float(data["portfolio_value"]),
-        }
+        try:
+            account = await asyncio.to_thread(self._client.get_account)
+            return {
+                "buying_power": float(account.buying_power),
+                "cash": float(account.cash),
+                "equity": float(account.equity),
+                "portfolio_value": float(account.portfolio_value),
+            }
+        except APIError as e:
+            self._handle_api_error(e)
+            return {}
 
     async def close(self) -> None:
-        await self._client.aclose()
+        pass  # SDK client doesn't require explicit cleanup
 
     @property
     def base_url(self) -> str:

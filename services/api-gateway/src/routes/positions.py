@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -5,8 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.broker.alpaca_adapter import parse_occ_symbol
+from shared.broker.factory import create_broker_adapter
 from shared.models.database import get_session
-from shared.models.trade import Position
+from shared.models.trade import Position, TradingAccount
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/positions", tags=["positions"])
 
@@ -20,6 +25,47 @@ async def list_positions(
     session: AsyncSession = Depends(get_session),
 ):
     user_id = request.state.user_id
+
+    # Open positions: fetch from Alpaca for each user account
+    if status == "OPEN" or status is None:
+        alpaca_positions: list[dict] = []
+        acct_stmt = select(TradingAccount).where(
+            TradingAccount.user_id == uuid.UUID(user_id),
+            TradingAccount.enabled,
+            TradingAccount.broker_type == "alpaca",
+        )
+        acct_result = await session.execute(acct_stmt)
+        accounts = acct_result.scalars().all()
+
+        for account in accounts:
+            try:
+                adapter = create_broker_adapter(
+                    account.broker_type, account.credentials_encrypted, account.paper_mode
+                )
+                try:
+                    raw = await adapter.get_positions()
+                    for p in raw:
+                        parsed = _alpaca_pos_to_response(p, str(account.id))
+                        if parsed:
+                            alpaca_positions.append(parsed)
+                finally:
+                    await adapter.close()
+            except Exception as e:
+                logger.warning("Failed to fetch Alpaca positions for account %s: %s", account.id, e)
+
+        if status == "OPEN":
+            return alpaca_positions[:limit]
+        # status is None: return open from Alpaca, then closed from DB
+        db_stmt = select(Position).where(
+            Position.user_id == uuid.UUID(user_id),
+            Position.status == "CLOSED",
+        )
+        db_stmt = db_stmt.order_by(desc(Position.closed_at)).limit(limit).offset(0)
+        db_result = await session.execute(db_stmt)
+        db_positions = db_result.scalars().all()
+        return [_pos_response(p) for p in alpaca_positions] + [_pos_response(p) for p in db_positions]
+
+    # Closed only: from DB
     stmt = select(Position).where(Position.user_id == uuid.UUID(user_id))
     if status:
         stmt = stmt.where(Position.status == status)
@@ -29,15 +75,63 @@ async def list_positions(
     return [_pos_response(p) for p in positions]
 
 
+def _alpaca_pos_to_response(p: dict, account_id: str) -> dict | None:
+    """Convert Alpaca position dict to API response format."""
+    symbol = p["symbol"]
+    qty = p["qty"]
+    avg_entry = p["avg_entry_price"]
+    total_cost = avg_entry * abs(qty)
+    parsed = parse_occ_symbol(symbol)
+    if parsed:
+        ticker = parsed["ticker"]
+        strike = parsed["strike"]
+        option_type = parsed["option_type"]
+        expiration = parsed["expiration"]
+    else:
+        ticker = symbol
+        strike = 0.0
+        option_type = ""
+        expiration = None
+    return {
+        "id": f"alpaca:{account_id}:{symbol}",
+        "ticker": ticker,
+        "strike": strike,
+        "option_type": option_type,
+        "expiration": expiration,
+        "quantity": abs(qty),
+        "avg_entry_price": avg_entry,
+        "total_cost": total_cost,
+        "profit_target": 0.30,
+        "stop_loss": 0.20,
+        "high_water_mark": None,
+        "broker_symbol": symbol,
+        "status": "OPEN",
+        "opened_at": None,
+        "closed_at": None,
+        "close_reason": None,
+        "realized_pnl": None,
+        "account_id": account_id,
+        "unrealized_pl": p.get("unrealized_pl"),
+        "current_price": p.get("current_price"),
+    }
+
+
 @router.get("/{position_id}")
 async def get_position(
-    position_id: int,
+    position_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
+    """Get a single position. Only DB positions are supported (Alpaca positions are listed only)."""
     user_id = request.state.user_id
+    if position_id.startswith("alpaca:"):
+        raise HTTPException(status_code=404, detail="Use list positions for Alpaca positions")
+    try:
+        pid = int(position_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Position not found")
     result = await session.execute(
-        select(Position).where(Position.id == position_id, Position.user_id == uuid.UUID(user_id))
+        select(Position).where(Position.id == pid, Position.user_id == uuid.UUID(user_id))
     )
     pos = result.scalar_one_or_none()
     if not pos:
@@ -47,15 +141,47 @@ async def get_position(
 
 @router.post("/{position_id}/close")
 async def close_position(
-    position_id: int,
+    position_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    """Manually close a position by publishing an exit signal."""
+    """Close a position. Alpaca: closes via broker. DB: publishes exit signal."""
     user_id = request.state.user_id
+
+    # Alpaca position: close directly via broker
+    if position_id.startswith("alpaca:"):
+        parts = position_id.split(":", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=400, detail="Invalid Alpaca position id")
+        _, account_id, symbol = parts
+        result = await session.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == uuid.UUID(account_id),
+                TradingAccount.user_id == uuid.UUID(user_id),
+            )
+        )
+        account = result.scalar_one_or_none()
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        adapter = create_broker_adapter(
+            account.broker_type, account.credentials_encrypted, account.paper_mode
+        )
+        try:
+            ok = await adapter.close_position(symbol)
+            if ok:
+                return {"status": "closed", "position_id": position_id}
+            raise HTTPException(status_code=500, detail="Failed to close position")
+        finally:
+            await adapter.close()
+
+    # DB position: publish exit signal
+    try:
+        pid = int(position_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Position not found")
     result = await session.execute(
         select(Position).where(
-            Position.id == position_id,
+            Position.id == pid,
             Position.user_id == uuid.UUID(user_id),
             Position.status == "OPEN",
         )
@@ -84,13 +210,13 @@ async def close_position(
         await _kafka_producer.send(
             "exit-signals", value=exit_signal, key=str(position_id)
         )
-        return {"status": "closing", "position_id": position_id}
+        return {"status": "closing", "position_id": pid}
 
     pos.status = "CLOSED"
     pos.close_reason = "MANUAL"
     pos.closed_at = datetime.now(timezone.utc)
     await session.commit()
-    return {"status": "closed", "position_id": position_id}
+    return {"status": "closed", "position_id": pid}
 
 
 def _pos_response(p: Position) -> dict:

@@ -8,7 +8,7 @@ import { Loader2, TrendingUp, TrendingDown, DollarSign, XCircle, Download } from
 import { exportToCSV } from '@/lib/csv-export'
 
 interface Position {
-  id: number
+  id: number | string
   ticker: string
   strike: number
   option_type: string
@@ -25,6 +25,9 @@ interface Position {
   closed_at: string | null
   close_reason: string | null
   realized_pnl: number | null
+  account_id?: string
+  unrealized_pl?: number
+  current_price?: number
 }
 
 export default function Positions() {
@@ -42,15 +45,18 @@ export default function Positions() {
   })
 
   const closeMut = useMutation({
-    mutationFn: (id: number) => axios.post(`/api/v1/positions/${id}/close`),
+    mutationFn: (id: number | string) => axios.post(`/api/v1/positions/${id}/close`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['positions'] }),
   })
 
-  const handleClose = (id: number, ticker: string) => {
+  const handleClose = (id: number | string, ticker: string) => {
     if (window.confirm(`Close position for ${ticker}? This action cannot be undone.`)) {
       closeMut.mutate(id)
     }
   }
+
+  const formatSymbol = (p: Position) =>
+    p.option_type ? `${p.ticker} $${p.strike}${p.option_type === 'CALL' ? 'C' : 'P'}` : p.ticker
 
   const totalPnl = (closedPositions ?? []).reduce((s, p) => s + (p.realized_pnl ?? 0), 0)
   const winCount = (closedPositions ?? []).filter(p => (p.realized_pnl ?? 0) > 0).length
@@ -121,7 +127,7 @@ export default function Positions() {
               onClick={() => {
                 const headers = ['Symbol', 'Type', 'Qty', 'Entry', 'PT%', 'SL%', 'Opened']
                 const rows = openPositions.map(p => [
-                  `${p.ticker} $${p.strike}${p.option_type === 'CALL' ? 'C' : 'P'}`,
+                  formatSymbol(p),
                   p.option_type,
                   String(p.quantity),
                   p.avg_entry_price.toFixed(2),
@@ -156,21 +162,33 @@ export default function Positions() {
               </TableHeader>
               <TableBody>
                 {openPositions.map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">
-                      {p.ticker} ${p.strike}{p.option_type === 'CALL' ? 'C' : 'P'}
-                    </TableCell>
+                  <TableRow key={String(p.id)}>
+                    <TableCell className="font-medium">{formatSymbol(p)}</TableCell>
                     <TableCell>
-                      <Badge variant={p.option_type === 'CALL' ? 'default' : 'secondary'}>
-                        {p.option_type}
-                      </Badge>
+                      {p.option_type ? (
+                        <Badge variant={p.option_type === 'CALL' ? 'default' : 'secondary'}>
+                          {p.option_type}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Stock</Badge>
+                      )}
                     </TableCell>
                     <TableCell>{p.quantity}</TableCell>
                     <TableCell>${p.avg_entry_price.toFixed(2)}</TableCell>
                     <TableCell className="text-xs">
-                      <span className="text-green-500">+{(p.profit_target * 100).toFixed(0)}%</span>
-                      {' / '}
-                      <span className="text-red-500">-{(p.stop_loss * 100).toFixed(0)}%</span>
+                      {p.option_type ? (
+                        <>
+                          <span className="text-green-500">+{(p.profit_target * 100).toFixed(0)}%</span>
+                          {' / '}
+                          <span className="text-red-500">-{(p.stop_loss * 100).toFixed(0)}%</span>
+                        </>
+                      ) : (
+                        p.unrealized_pl != null ? (
+                          <span className={p.unrealized_pl >= 0 ? 'text-green-500' : 'text-red-500'}>
+                            ${p.unrealized_pl.toFixed(2)}
+                          </span>
+                        ) : '—'
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">
                       {p.opened_at ? new Date(p.opened_at).toLocaleString() : '—'}
@@ -179,7 +197,7 @@ export default function Positions() {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => handleClose(p.id, `${p.ticker} $${p.strike}`)}
+                        onClick={() => handleClose(p.id, formatSymbol(p))}
                         disabled={closeMut.isPending}
                       >
                         <XCircle className="h-4 w-4 mr-1" /> Close
@@ -206,7 +224,7 @@ export default function Positions() {
               onClick={() => {
                 const headers = ['Symbol', 'Type', 'Qty', 'Entry', 'Reason', 'P&L', 'Closed']
                 const rows = closedPositions.map(p => [
-                  `${p.ticker} $${p.strike}${p.option_type === 'CALL' ? 'C' : 'P'}`,
+                  p.option_type ? `${p.ticker} $${p.strike}${p.option_type === 'CALL' ? 'C' : 'P'}` : p.ticker,
                   p.option_type,
                   String(p.quantity),
                   p.avg_entry_price.toFixed(2),
@@ -241,14 +259,18 @@ export default function Positions() {
               </TableHeader>
               <TableBody>
                 {closedPositions.map(p => (
-                  <TableRow key={p.id}>
+                  <TableRow key={String(p.id)}>
                     <TableCell className="font-medium">
-                      {p.ticker} ${p.strike}{p.option_type === 'CALL' ? 'C' : 'P'}
+                      {p.option_type ? `${p.ticker} $${p.strike}${p.option_type === 'CALL' ? 'C' : 'P'}` : p.ticker}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={p.option_type === 'CALL' ? 'default' : 'secondary'}>
-                        {p.option_type}
-                      </Badge>
+                      {p.option_type ? (
+                        <Badge variant={p.option_type === 'CALL' ? 'default' : 'secondary'}>
+                          {p.option_type}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Stock</Badge>
+                      )}
                     </TableCell>
                     <TableCell>{p.quantity}</TableCell>
                     <TableCell>${p.avg_entry_price.toFixed(2)}</TableCell>

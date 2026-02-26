@@ -21,7 +21,7 @@ class TestTradeGateway:
         }
         await gw._handle_trade(trade, {})
 
-        assert trade["status"] == "APPROVED"
+        assert trade["status"] == "IN_PROGRESS"
         assert trade["approved_by"] == "auto-gateway"
         gw.producer.send.assert_awaited_once()
 

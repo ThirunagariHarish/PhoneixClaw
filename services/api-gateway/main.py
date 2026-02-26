@@ -55,6 +55,11 @@ async def _run_migrations():
         "ALTER TABLE channels ADD COLUMN IF NOT EXISTS guild_name VARCHAR(200)",
         "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS server_id VARCHAR(100)",
         "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS server_name VARCHAR(200)",
+        "UPDATE trades SET status = 'IN_PROGRESS' WHERE status = 'APPROVED'",
+        "DELETE FROM chat_messages WHERE created_at < '2026-02-21'",
+        "DELETE FROM trades WHERE created_at < '2026-02-21'",
+        "DELETE FROM positions WHERE opened_at < '2026-02-21'",
+        "DELETE FROM raw_messages WHERE created_at < '2026-02-21'",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

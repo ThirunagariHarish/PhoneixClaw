@@ -15,6 +15,7 @@ from shared.broker.alpaca_adapter import (
     AlpacaAuthError,
     AlpacaBrokerAdapter,
     AlpacaOrderError,
+    parse_occ_symbol,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,23 @@ class TestFormatOptionSymbol:
     def test_strike_with_decimals(self, adapter):
         symbol = adapter.format_option_symbol("SPY", "2026-02-24", "CALL", 580.5)
         assert symbol == "SPY260224C00580500"
+
+
+class TestParseOccSymbol:
+    """Verify OCC symbol parsing for Alpaca positions."""
+
+    def test_parse_option_symbol(self):
+        result = parse_occ_symbol("SPY260224C00580000")
+        assert result == {"ticker": "SPY", "strike": 580.0, "option_type": "CALL", "expiration": "2026-02-24"}
+
+    def test_parse_spxw_maps_to_spx(self):
+        result = parse_occ_symbol("SPXW260224C06895000")
+        assert result["ticker"] == "SPX"
+        assert result["strike"] == 6895.0
+
+    def test_parse_stock_returns_none(self):
+        assert parse_occ_symbol("SPY") is None
+        assert parse_occ_symbol("AAPL") is None
 
 
 # ---------------------------------------------------------------------------

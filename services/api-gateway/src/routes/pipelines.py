@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.crypto.credentials import encrypt_credentials
 from shared.models.database import get_session
 from shared.models.trade import (
     AccountSourceMapping,
@@ -36,8 +37,16 @@ class PipelineCreate(BaseModel):
 
 class PipelineUpdate(BaseModel):
     name: str | None = None
+    trading_account_id: str | None = None
     auto_approve: bool | None = None
     paper_mode: bool | None = None
+
+
+class ChatPipelineCreate(BaseModel):
+    name: str
+    trading_account_id: str
+    auto_approve: bool = True
+    paper_mode: bool = False
 
 
 class PipelineResponse(BaseModel):
@@ -45,6 +54,7 @@ class PipelineResponse(BaseModel):
     name: str
     data_source_id: str
     data_source_name: str | None = None
+    source_type: str | None = None
     channel_id: str
     channel_name: str | None = None
     channel_identifier: str | None = None
@@ -68,6 +78,7 @@ def _pipeline_response(p: TradePipeline) -> PipelineResponse:
         name=p.name,
         data_source_id=str(p.data_source_id),
         data_source_name=p.data_source.display_name if p.data_source else None,
+        source_type=p.data_source.source_type if p.data_source else None,
         channel_id=str(p.channel_id),
         channel_name=p.channel.display_name if p.channel else None,
         channel_identifier=p.channel.channel_identifier if p.channel else None,
@@ -196,6 +207,99 @@ async def create_pipeline(
             enabled=True,
         )
         session.add(mapping)
+
+    await session.commit()
+    await session.refresh(pipeline, ["data_source", "channel", "trading_account"])
+    return _pipeline_response(pipeline)
+
+
+@router.post("/chat", response_model=PipelineResponse, status_code=201)
+async def create_chat_pipeline(
+    req: ChatPipelineCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = request.state.user_id
+    uid = uuid.UUID(user_id)
+    ta_id = _safe_uuid(req.trading_account_id, "trading_account_id")
+
+    account = await session.get(TradingAccount, ta_id)
+    is_admin = getattr(request.state, "is_admin", False)
+    if not account or (not is_admin and account.user_id != uid):
+        raise HTTPException(status_code=404, detail="Trading account not found")
+
+    existing_ds = await session.execute(
+        select(DataSource).where(
+            DataSource.user_id == uid,
+            DataSource.source_type == "chat",
+        ).limit(1)
+    )
+    ds = existing_ds.scalar_one_or_none()
+    if not ds:
+        ds = DataSource(
+            user_id=uid,
+            source_type="chat",
+            display_name="Chat Widget",
+            auth_type="none",
+            credentials_encrypted=encrypt_credentials({}),
+            connection_status="CONNECTED",
+        )
+        session.add(ds)
+        await session.flush()
+
+    existing_ch = await session.execute(
+        select(Channel).where(
+            Channel.data_source_id == ds.id,
+            Channel.channel_identifier == "chat-widget",
+        ).limit(1)
+    )
+    ch = existing_ch.scalar_one_or_none()
+    if not ch:
+        ch = Channel(
+            data_source_id=ds.id,
+            channel_identifier="chat-widget",
+            display_name="Chat Widget",
+        )
+        session.add(ch)
+        await session.flush()
+
+    dup = await session.execute(
+        select(TradePipeline).where(
+            TradePipeline.channel_id == ch.id,
+            TradePipeline.trading_account_id == ta_id,
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail="A chat pipeline already exists for this trading account",
+        )
+
+    pipeline = TradePipeline(
+        user_id=uid,
+        name=req.name,
+        data_source_id=ds.id,
+        channel_id=ch.id,
+        trading_account_id=ta_id,
+        auto_approve=req.auto_approve,
+        paper_mode=req.paper_mode,
+        enabled=True,
+        status="CONNECTED",
+    )
+    session.add(pipeline)
+
+    mapping_exists = await session.execute(
+        select(AccountSourceMapping).where(
+            AccountSourceMapping.channel_id == ch.id,
+            AccountSourceMapping.trading_account_id == ta_id,
+        )
+    )
+    if not mapping_exists.scalar_one_or_none():
+        session.add(AccountSourceMapping(
+            trading_account_id=ta_id,
+            channel_id=ch.id,
+            enabled=True,
+        ))
 
     await session.commit()
     await session.refresh(pipeline, ["data_source", "channel", "trading_account"])
@@ -444,18 +548,18 @@ async def test_trade_pipeline(
                 stages["error_message"] = trade.error_message
             if trade.rejection_reason:
                 stages["rejection_reason"] = trade.rejection_reason
-            if trade.status in ("EXECUTED", "APPROVED", "PENDING", "REJECTED", "ERROR"):
+            if trade.status in ("EXECUTED", "IN_PROGRESS", "PENDING", "REJECTED", "ERROR"):
                 stages["trade_gateway"] = "ok"
             break
     else:
         stages["trade_parser"] = "FAILED: no trade record after 15s"
         return {"success": False, "stage": "trade_parser", **stages}
 
-    if trade and trade.status in ("APPROVED", "PENDING"):
+    if trade and trade.status in ("IN_PROGRESS", "PENDING"):
         for i in range(40):
             await asyncio.sleep(0.5)
             await session.refresh(trade)
-            if trade.status not in ("APPROVED", "PENDING"):
+            if trade.status not in ("IN_PROGRESS", "PENDING"):
                 stages["trade_executor"] = f"ok ({round((i + 1) * 0.5, 1)}s)"
                 stages["trade_status"] = trade.status
                 if trade.broker_order_id:
@@ -711,6 +815,35 @@ async def update_pipeline(
         pipeline.auto_approve = req.auto_approve
     if req.paper_mode is not None:
         pipeline.paper_mode = req.paper_mode
+
+    if req.trading_account_id is not None:
+        new_ta_uuid = _safe_uuid(req.trading_account_id, "trading_account_id")
+        ta = await session.get(TradingAccount, new_ta_uuid)
+        if not ta or str(ta.user_id) != request.state.user_id:
+            raise HTTPException(status_code=400, detail="Trading account not found")
+        pipeline.trading_account_id = new_ta_uuid
+
+        old_mapping = await session.execute(
+            select(AccountSourceMapping).where(
+                AccountSourceMapping.channel_id == pipeline.channel_id,
+                AccountSourceMapping.trading_account_id != new_ta_uuid,
+            )
+        )
+        for m in old_mapping.scalars().all():
+            await session.delete(m)
+
+        existing = await session.execute(
+            select(AccountSourceMapping).where(
+                AccountSourceMapping.channel_id == pipeline.channel_id,
+                AccountSourceMapping.trading_account_id == new_ta_uuid,
+            )
+        )
+        if not existing.scalar_one_or_none():
+            session.add(AccountSourceMapping(
+                trading_account_id=new_ta_uuid,
+                channel_id=pipeline.channel_id,
+            ))
+
     pipeline.updated_at = datetime.now(timezone.utc)
 
     await session.commit()

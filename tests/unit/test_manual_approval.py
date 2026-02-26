@@ -21,7 +21,7 @@ class TestManualApproval:
         manager.add_pending("t1", {"ticker": "SPX"})
         trade = manager.approve("t1", "admin")
         assert trade is not None
-        assert trade["status"] == "APPROVED"
+        assert trade["status"] == "IN_PROGRESS"
         assert trade["approved_by"] == "admin"
         assert manager.pending_count == 0
 

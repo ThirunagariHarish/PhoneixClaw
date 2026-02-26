@@ -8,8 +8,18 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config.base_config import config
+from shared.crypto.credentials import encrypt_credentials
 from shared.models.database import get_session
-from shared.models.trade import ChatMessage, RawMessage, Trade, TradingAccount
+from shared.models.trade import (
+    AccountSourceMapping,
+    Channel,
+    ChatMessage,
+    DataSource,
+    RawMessage,
+    Trade,
+    TradePipeline,
+    TradingAccount,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +43,78 @@ class ChatMessageResponse(BaseModel):
     role: str
     trade_id: str | None
     created_at: str
+
+
+async def _ensure_chat_pipeline(
+    user_id: str, session: AsyncSession
+) -> TradePipeline | None:
+    """Lazily create a Chat data source, channel, and pipeline for the user."""
+    user_uuid = uuid.UUID(user_id)
+
+    result = await session.execute(
+        select(TradePipeline)
+        .join(DataSource, TradePipeline.data_source_id == DataSource.id)
+        .where(
+            TradePipeline.user_id == user_uuid,
+            DataSource.source_type == "chat",
+        )
+        .limit(1)
+    )
+    pipeline = result.scalar_one_or_none()
+    if pipeline:
+        return pipeline
+
+    acc_result = await session.execute(
+        select(TradingAccount)
+        .where(TradingAccount.user_id == user_uuid, TradingAccount.enabled.is_(True))
+        .limit(1)
+    )
+    ta = acc_result.scalar_one_or_none()
+    if not ta:
+        logger.warning("No trading account for user %s; skipping chat pipeline creation", user_id)
+        return None
+
+    ds = DataSource(
+        user_id=user_uuid,
+        source_type="chat",
+        display_name="Chat Widget",
+        auth_type="none",
+        credentials_encrypted=encrypt_credentials({}),
+        connection_status="CONNECTED",
+    )
+    session.add(ds)
+    await session.flush()
+
+    ch = Channel(
+        data_source_id=ds.id,
+        channel_identifier="chat-widget",
+        display_name="Chat Widget",
+    )
+    session.add(ch)
+    await session.flush()
+
+    mapping = AccountSourceMapping(
+        trading_account_id=ta.id,
+        channel_id=ch.id,
+    )
+    session.add(mapping)
+
+    pipeline = TradePipeline(
+        user_id=user_uuid,
+        name="Chat Trade",
+        data_source_id=ds.id,
+        channel_id=ch.id,
+        trading_account_id=ta.id,
+        enabled=True,
+        status="CONNECTED",
+        auto_approve=True,
+        paper_mode=False,
+    )
+    session.add(pipeline)
+    await session.flush()
+
+    logger.info("Created default Chat Trade pipeline %s for user %s", pipeline.id, user_id)
+    return pipeline
 
 
 @router.post("/send")
@@ -73,22 +155,29 @@ async def send_chat_message(
         actions = result.get("actions", [])
 
         if actions:
-            approval_mode = config.gateway.approval_mode
-            is_auto = approval_mode == "auto"
-            status = "APPROVED" if is_auto else "PENDING"
+            pipeline = await _ensure_chat_pipeline(user_id, session)
+
+            if pipeline:
+                ta_id = pipeline.trading_account_id
+                is_auto = pipeline.auto_approve
+                channel_id = pipeline.channel_id
+            else:
+                acc_result = await session.execute(
+                    select(TradingAccount)
+                    .where(
+                        TradingAccount.user_id == uuid.UUID(user_id),
+                        TradingAccount.enabled.is_(True),
+                    )
+                    .limit(1)
+                )
+                ta = acc_result.scalar_one_or_none()
+                ta_id = ta.id if ta else None
+                is_auto = config.gateway.approval_mode == "auto"
+                channel_id = None
+
+            status = "IN_PROGRESS" if is_auto else "PENDING"
             approved_by = "auto-chat" if is_auto else None
             approved_at = datetime.now(timezone.utc) if is_auto else None
-
-            result_acc = await session.execute(
-                select(TradingAccount)
-                .where(
-                    TradingAccount.user_id == uuid.UUID(user_id),
-                    TradingAccount.enabled.is_(True),
-                )
-                .limit(1)
-            )
-            ta = result_acc.scalar_one_or_none()
-            ta_id = ta.id if ta else None
 
             for action in actions:
                 trade_id = uuid.uuid4()
@@ -106,6 +195,7 @@ async def send_chat_message(
                     trade_id=trade_id,
                     user_id=uuid.UUID(user_id),
                     trading_account_id=ta_id,
+                    channel_id=channel_id,
                     ticker=action.get("ticker", ""),
                     strike=action.get("strike", 0),
                     option_type=action.get("option_type", "CALL"),
@@ -123,6 +213,10 @@ async def send_chat_message(
                 )
                 session.add(trade)
                 parsed_trade_ids.append(str(trade_id))
+
+            if pipeline:
+                pipeline.trades_count = (pipeline.trades_count or 0) + len(actions)
+                pipeline.last_message_at = datetime.now(timezone.utc)
 
             await session.commit()
 
@@ -147,7 +241,7 @@ async def send_chat_message(
                                 "trade_id": trade_id_str,
                                 "user_id": user_id,
                                 "trading_account_id": str(ta_id) if ta_id else None,
-                                "channel_id": "chat-widget",
+                                "channel_id": str(channel_id) if channel_id else "chat-widget",
                                 "ticker": act.get("ticker", ""),
                                 "strike": act.get("strike", 0),
                                 "option_type": act.get("option_type", "CALL"),

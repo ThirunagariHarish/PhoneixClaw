@@ -36,8 +36,8 @@ const statusBadge = (status: string, errorMessage?: string | null, rejectionReas
         return <Badge variant="destructive">Error</Badge>
       case 'REJECTED':
         return <Badge variant="warning">Rejected</Badge>
-      case 'APPROVED':
-        return <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30">Approved</Badge>
+      case 'IN_PROGRESS':
+        return <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30">In Progress</Badge>
       case 'PENDING':
         return <Badge variant="outline">Pending</Badge>
       default:
@@ -63,11 +63,23 @@ const statusBadge = (status: string, errorMessage?: string | null, rejectionReas
 }
 
 const kpiCards = [
-  { key: 'total', label: 'Total Trades', icon: TrendingUp, color: 'text-primary' },
-  { key: 'executed', label: 'Executed', icon: CheckCircle2, color: 'text-emerald-500' },
-  { key: 'approved', label: 'Approved', icon: Clock, color: 'text-blue-500' },
-  { key: 'rejected', label: 'Rejected', icon: AlertTriangle, color: 'text-amber-500' },
-  { key: 'errored', label: 'Errors', icon: XCircle, color: 'text-red-500' },
+  { key: 'total', label: 'Total Trades', icon: TrendingUp, color: 'text-primary', tooltip: null },
+  {
+    key: 'executed',
+    label: 'Executed',
+    icon: CheckCircle2,
+    color: 'text-emerald-500',
+    tooltip: 'Order placed in Alpaca',
+  },
+  {
+    key: 'inProgress',
+    label: 'In Progress',
+    icon: Clock,
+    color: 'text-blue-500',
+    tooltip: 'In queue or executing; awaiting order placement',
+  },
+  { key: 'rejected', label: 'Rejected', icon: AlertTriangle, color: 'text-amber-500', tooltip: null },
+  { key: 'errored', label: 'Errors', icon: XCircle, color: 'text-red-500', tooltip: null },
 ] as const
 
 export default function Dashboard() {
@@ -101,7 +113,7 @@ export default function Dashboard() {
   const stats = {
     total: trades?.length || 0,
     executed: trades?.filter((t) => t.status === 'EXECUTED').length || 0,
-    approved: trades?.filter((t) => t.status === 'APPROVED').length || 0,
+    inProgress: trades?.filter((t) => t.status === 'IN_PROGRESS').length || 0,
     rejected: trades?.filter((t) => t.status === 'REJECTED').length || 0,
     errored: trades?.filter((t) => t.status === 'ERROR').length || 0,
   }
@@ -120,21 +132,35 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        {kpiCards.map(({ key, label, icon: Icon, color }) => (
-          <Card key={key}>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{label}</p>
-                  <p className="text-3xl font-bold mt-1">{stats[key]}</p>
+        {kpiCards.map(({ key, label, icon: Icon, color, tooltip }) => {
+          const card = (
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                    <p className="text-3xl font-bold mt-1">{stats[key]}</p>
+                  </div>
+                  <div className={`${color} opacity-80`}>
+                    <Icon className="h-8 w-8" />
+                  </div>
                 </div>
-                <div className={`${color} opacity-80`}>
-                  <Icon className="h-8 w-8" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          )
+          return tooltip ? (
+            <Tooltip key={key}>
+              <TooltipTrigger asChild>
+                <div className="cursor-help min-w-0">{card}</div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-sm">{tooltip}</p>
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <div key={key}>{card}</div>
+          )
+        })}
       </div>
 
       {tradesLoading && (
