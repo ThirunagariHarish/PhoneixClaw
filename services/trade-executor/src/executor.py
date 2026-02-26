@@ -10,6 +10,7 @@ from shared.broker.adapter import BrokerAdapter
 from shared.broker.alpaca_adapter import AlpacaAuthError
 from shared.broker.circuit_breaker import CircuitBreaker, CircuitOpenError
 from shared.broker.factory import create_broker_adapter
+from shared.broker.symbol_converter import convert_index_to_etf
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.dlq import DeadLetterQueue
 from shared.kafka_utils.producer import KafkaProducerWrapper
@@ -123,6 +124,7 @@ class TradeExecutorService:
             if not account:
                 return None
 
+            trade["_broker_type"] = account.broker_type
             paper_mode = account.paper_mode
             pipeline_ch_uuid = ch_uuid
 
@@ -312,6 +314,18 @@ class TradeExecutorService:
         expiration = trade.get("expiration")
         option_type = trade["option_type"]
         strike = float(trade["strike"])
+
+        converted = convert_index_to_etf(
+            trade.get("_broker_type", ""), ticker, strike, option_type,
+            expiration or "", quantity=int(str(trade.get("quantity", "1")).replace("%", "") or "1"),
+        )
+        if converted:
+            trade["original_ticker"] = ticker
+            trade["original_strike"] = strike
+            ticker = converted["ticker"]
+            strike = converted["strike"]
+            trade["ticker"] = ticker
+            trade["strike"] = strike
 
         buffered_price, buffer_pct = calculate_buffered_price(price, action, ticker)
 
