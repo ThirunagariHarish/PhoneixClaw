@@ -58,6 +58,8 @@ services:
     build:
       context: .
       dockerfile: services/auth-service/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     ports:
       - "8001:8001"
     environment: &common-env
@@ -76,6 +78,8 @@ services:
     build:
       context: .
       dockerfile: services/api-gateway/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     ports:
       - "8011:8011"
     environment: *common-env
@@ -89,6 +93,8 @@ services:
     build:
       context: .
       dockerfile: services/trade-parser/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment:
       <<: *common-env
       NLP_PARSER_URL: http://nlp-parser:8020
@@ -102,6 +108,8 @@ services:
     build:
       context: .
       dockerfile: services/trade-gateway/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -113,6 +121,8 @@ services:
     build:
       context: .
       dockerfile: services/trade-executor/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -124,6 +134,8 @@ services:
     build:
       context: .
       dockerfile: services/position-monitor/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -135,6 +147,8 @@ services:
     build:
       context: .
       dockerfile: services/notification-service/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -146,6 +160,8 @@ services:
     build:
       context: .
       dockerfile: services/source-orchestrator/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -157,6 +173,8 @@ services:
     build:
       context: .
       dockerfile: services/audit-writer/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -168,6 +186,8 @@ services:
     build:
       context: services/nlp-parser
       dockerfile: Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     deploy:
       resources:
         limits:
@@ -177,6 +197,8 @@ services:
     build:
       context: .
       dockerfile: services/sentiment-analyzer/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -188,6 +210,8 @@ services:
     build:
       context: .
       dockerfile: services/news-aggregator/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -199,6 +223,8 @@ services:
     build:
       context: .
       dockerfile: services/option-chain-analyzer/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -210,6 +236,8 @@ services:
     build:
       context: .
       dockerfile: services/ai-trade-recommender/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -221,6 +249,8 @@ services:
     build:
       context: .
       dockerfile: services/strategy-agent/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     environment: *common-env
     depends_on:
       postgres:
@@ -232,6 +262,8 @@ services:
     build:
       context: services/dashboard-ui
       dockerfile: Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     ports:
       - "3000:80"
     depends_on:

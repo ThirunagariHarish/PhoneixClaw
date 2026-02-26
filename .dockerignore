@@ -11,3 +11,12 @@ __pycache__
 node_modules
 .env
 *.egg-info
+services/dashboard-ui/node_modules
+services/dashboard-ui/dist
+services/nlp-parser/.cache
+docker-compose*.yml
+Dockerfile*
+*.log
+.vscode
+.cursor
+.idea

@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM python:3.13-slim AS builder
 WORKDIR /app
-COPY services/option-chain-analyzer/requirements.txt .
+COPY shared/requirements-base.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    pip install --no-compile -r requirements-base.txt
 
 FROM python:3.13-slim
 WORKDIR /app

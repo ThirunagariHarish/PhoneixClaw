@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAuth } from '@/hooks/useAuth'
@@ -20,6 +20,7 @@ import {
 import {
   Plus, MoreVertical, Trash2, Database, Loader2, Plug,
   Play, Square, RefreshCw, Server, ChevronRight, ChevronLeft,
+  Hash, CheckSquare, Square as SquareIcon,
 } from 'lucide-react'
 
 interface Source {
@@ -43,6 +44,16 @@ interface GuildInfo {
   channel_count: number
 }
 
+interface ChannelInfo {
+  channel_id: string
+  channel_name: string
+  guild_id: string
+  guild_name: string
+  category: string | null
+}
+
+const STEP_LABELS = ['Credentials', 'Server', 'Channels']
+
 const AUTH_HELP: Record<string, string> = {
   user_token:
     'Use your personal Discord token. Open Discord in browser, press F12, go to Network tab, copy the "Authorization" header.',
@@ -62,6 +73,9 @@ export default function DataSources() {
   const [form, setForm] = useState({ ...emptyForm })
   const [servers, setServers] = useState<GuildInfo[]>([])
   const [discovering, setDiscovering] = useState(false)
+  const [channels, setChannels] = useState<ChannelInfo[]>([])
+  const [selectedChannels, setSelectedChannels] = useState<Set<string>>(new Set())
+  const [discoveringChannels, setDiscoveringChannels] = useState(false)
 
   const { data: sources } = useQuery<Source[]>({
     queryKey: ['sources'],
@@ -77,7 +91,10 @@ export default function DataSources() {
       qc.invalidateQueries({ queryKey: ['sources'] })
       resetDialog()
     },
-    onError: () => setError('Failed to create source. Please check your credentials.'),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg || 'Failed to create source. Please check your credentials.')
+    },
   })
 
   const deleteMutation = useMutation({
@@ -111,7 +128,7 @@ export default function DataSources() {
 
   useEffect(() => {
     if (error) {
-      const t = setTimeout(() => setError(null), 5000)
+      const t = setTimeout(() => setError(null), 8000)
       return () => clearTimeout(t)
     }
   }, [error])
@@ -141,7 +158,10 @@ export default function DataSources() {
     setStep(1)
     setForm({ ...emptyForm })
     setServers([])
+    setChannels([])
+    setSelectedChannels(new Set())
     setDiscovering(false)
+    setDiscoveringChannels(false)
     setError(null)
   }
 
@@ -156,17 +176,80 @@ export default function DataSources() {
       })
       setServers(res.data.servers || [])
       setStep(2)
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to discover servers. Check your token.'
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Failed to discover servers. Check your token.'
       setError(msg)
     }
     setDiscovering(false)
+  }
+
+  const handleDiscoverChannels = async () => {
+    if (!form.server_id) return
+    setDiscoveringChannels(true)
+    setError(null)
+    try {
+      const res = await axios.post('/api/v1/sources/discover-channels', {
+        token: form.token,
+        auth_type: form.auth_type,
+        server_id: form.server_id,
+      })
+      const discovered: ChannelInfo[] = res.data.channels || []
+      setChannels(discovered)
+      setSelectedChannels(new Set(discovered.map(c => c.channel_id)))
+      setStep(3)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Failed to discover channels.'
+      setError(msg)
+    }
+    setDiscoveringChannels(false)
+  }
+
+  const channelsByCategory = useMemo(() => {
+    const groups: Record<string, ChannelInfo[]> = {}
+    for (const ch of channels) {
+      const cat = ch.category || 'Uncategorized'
+      if (!groups[cat]) groups[cat] = []
+      groups[cat].push(ch)
+    }
+    return Object.entries(groups).sort(([a], [b]) => {
+      if (a === 'Uncategorized') return 1
+      if (b === 'Uncategorized') return -1
+      return a.localeCompare(b)
+    })
+  }, [channels])
+
+  const toggleChannel = (id: string) => {
+    setSelectedChannels(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAllChannels = () => {
+    if (selectedChannels.size === channels.length) {
+      setSelectedChannels(new Set())
+    } else {
+      setSelectedChannels(new Set(channels.map(c => c.channel_id)))
+    }
   }
 
   function handleSubmit() {
     const credentials: Record<string, string> = {}
     if (form.auth_type === 'bot') credentials.bot_token = form.token
     else credentials.user_token = form.token
+
+    const selected = channels
+      .filter(c => selectedChannels.has(c.channel_id))
+      .map(c => ({
+        channel_id: c.channel_id,
+        channel_name: c.channel_name,
+        guild_id: c.guild_id,
+        guild_name: c.guild_name,
+      }))
 
     createMutation.mutate({
       source_type: form.source_type,
@@ -176,6 +259,7 @@ export default function DataSources() {
       server_id: form.server_id || null,
       server_name: form.server_name || null,
       data_purpose: form.data_purpose,
+      selected_channels: selected,
     })
   }
 
@@ -187,6 +271,12 @@ export default function DataSources() {
     }
     return colors[type] || 'bg-muted text-muted-foreground'
   }
+
+  const stepDescription = step === 1
+    ? 'Step 1: Enter your Discord credentials'
+    : step === 2
+      ? 'Step 2: Select a Discord server'
+      : 'Step 3: Choose channels to monitor'
 
   return (
     <div className="space-y-6">
@@ -201,9 +291,7 @@ export default function DataSources() {
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Add Data Source</DialogTitle>
-              <DialogDescription>
-                {step === 1 ? 'Step 1: Enter your Discord credentials' : 'Step 2: Select a Discord server'}
-              </DialogDescription>
+              <DialogDescription>{stepDescription}</DialogDescription>
             </DialogHeader>
 
             {error && (
@@ -213,14 +301,17 @@ export default function DataSources() {
             )}
 
             <div className="flex gap-1.5 mb-2">
-              {[1, 2].map(s => (
-                <div key={s} className="flex-1 flex flex-col items-center gap-1">
-                  <div className={`w-full h-1.5 rounded-full transition-colors ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
-                  <span className={`text-[10px] ${s === step ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
-                    {s === 1 ? 'Credentials' : 'Server'}
-                  </span>
-                </div>
-              ))}
+              {STEP_LABELS.map((label, i) => {
+                const s = i + 1
+                return (
+                  <div key={s} className="flex-1 flex flex-col items-center gap-1">
+                    <div className={`w-full h-1.5 rounded-full transition-colors ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
+                    <span className={`text-[10px] ${s === step ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
+                      {label}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
 
             {step === 1 && (
@@ -339,14 +430,67 @@ export default function DataSources() {
               </div>
             )}
 
+            {step === 3 && (
+              <div className="space-y-3 py-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {selectedChannels.size} of {channels.length} channel{channels.length !== 1 ? 's' : ''} selected
+                  </p>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={toggleAllChannels}>
+                    {selectedChannels.size === channels.length ? 'Deselect All' : 'Select All'}
+                  </Button>
+                </div>
+                {channels.length > 0 ? (
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {channelsByCategory.map(([category, chs]) => (
+                      <div key={category}>
+                        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5 px-1">
+                          {category}
+                        </p>
+                        <div className="space-y-1">
+                          {chs.map(ch => {
+                            const isSelected = selectedChannels.has(ch.channel_id)
+                            return (
+                              <button
+                                key={ch.channel_id}
+                                type="button"
+                                onClick={() => toggleChannel(ch.channel_id)}
+                                className={`w-full flex items-center gap-2.5 rounded-md border px-3 py-2 text-left text-sm transition-all ${
+                                  isSelected
+                                    ? 'border-primary/40 bg-primary/5'
+                                    : 'border-transparent hover:bg-accent/50'
+                                }`}
+                              >
+                                {isSelected
+                                  ? <CheckSquare className="h-4 w-4 text-primary shrink-0" />
+                                  : <SquareIcon className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+                                }
+                                <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                <span className="truncate">{ch.channel_name}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-8 text-center">
+                    <Hash className="h-8 w-8 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">No channels found in this server.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <DialogFooter className="gap-2">
-              {step === 2 && (
-                <Button variant="outline" onClick={() => setStep(1)}>
+              {step > 1 && (
+                <Button variant="outline" onClick={() => setStep(step - 1)}>
                   <ChevronLeft className="mr-1 h-4 w-4" /> Back
                 </Button>
               )}
               <div className="flex-1" />
-              {step === 1 ? (
+              {step === 1 && (
                 <Button
                   onClick={handleDiscoverServers}
                   disabled={!form.display_name || !form.token || discovering}
@@ -355,8 +499,19 @@ export default function DataSources() {
                   {discovering ? 'Discovering...' : 'Next'}
                   {!discovering && <ChevronRight className="ml-1 h-4 w-4" />}
                 </Button>
-              ) : (
-                <Button onClick={handleSubmit} disabled={!form.server_id || createMutation.isPending}>
+              )}
+              {step === 2 && (
+                <Button
+                  onClick={handleDiscoverChannels}
+                  disabled={!form.server_id || discoveringChannels}
+                >
+                  {discoveringChannels ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                  {discoveringChannels ? 'Loading channels...' : 'Next'}
+                  {!discoveringChannels && <ChevronRight className="ml-1 h-4 w-4" />}
+                </Button>
+              )}
+              {step === 3 && (
+                <Button onClick={handleSubmit} disabled={selectedChannels.size === 0 || createMutation.isPending}>
                   {createMutation.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
                   Create Source
                 </Button>

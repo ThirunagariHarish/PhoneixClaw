@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/sources", tags=["sources"])
 
+class SelectedChannel(BaseModel):
+    channel_id: str
+    channel_name: str
+    guild_id: str | None = None
+    guild_name: str | None = None
+    category: str | None = None
+
 class SourceCreate(BaseModel):
     source_type: str
     display_name: str
@@ -24,6 +31,7 @@ class SourceCreate(BaseModel):
     server_id: str | None = None
     server_name: str | None = None
     data_purpose: str = "trades"
+    selected_channels: list[SelectedChannel] = []
 
 class SourceResponse(BaseModel):
     id: str
@@ -42,6 +50,11 @@ class SourceResponse(BaseModel):
 class DiscoverServersRequest(BaseModel):
     token: str
     auth_type: str = "user_token"
+
+class DiscoverChannelsRequest(BaseModel):
+    token: str
+    auth_type: str = "user_token"
+    server_id: str | None = None
 
 class ChannelCreate(BaseModel):
     channel_identifier: str
@@ -126,6 +139,22 @@ async def discover_servers_endpoint(req: DiscoverServersRequest, request: Reques
     return {"servers": servers}
 
 
+@router.post("/discover-channels")
+async def discover_channels_endpoint(req: DiscoverChannelsRequest, request: Request):
+    """Discover Discord channels accessible with the given token, optionally filtered by server."""
+    from shared.discord_utils.channel_discovery import discover_channels
+    try:
+        channels = await discover_channels(req.token, auth_type=req.auth_type)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Channel discovery failed")
+        raise HTTPException(status_code=502, detail=f"Discovery failed: {str(exc)[:200]}")
+    if req.server_id:
+        channels = [c for c in channels if c.get("guild_id") == req.server_id]
+    return {"channels": channels}
+
+
 @router.post("", response_model=SourceResponse, status_code=201)
 async def create_source(req: SourceCreate, request: Request, session: AsyncSession = Depends(get_session)):
     user_id = request.state.user_id
@@ -140,8 +169,25 @@ async def create_source(req: SourceCreate, request: Request, session: AsyncSessi
     session.add(source)
     await session.commit()
     await session.refresh(source)
-    await _ensure_channels_from_credentials(source, req.credentials, session)
-    await session.commit()
+
+    if req.selected_channels:
+        for sc in req.selected_channels:
+            guild_name = sc.guild_name or ""
+            display = f"{guild_name} / #{sc.channel_name}" if guild_name else f"#{sc.channel_name}"
+            ch = Channel(
+                data_source_id=source.id,
+                channel_identifier=sc.channel_id,
+                display_name=display[:100],
+                guild_id=sc.guild_id,
+                guild_name=guild_name[:200] if guild_name else None,
+            )
+            session.add(ch)
+        await session.commit()
+        logger.info("Created %d channels for new source %s", len(req.selected_channels), source.id)
+    else:
+        await _ensure_channels_from_credentials(source, req.credentials, session)
+        await session.commit()
+
     return _source_response(source)
 
 @router.delete("/{source_id}", status_code=204)
