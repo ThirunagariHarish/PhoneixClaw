@@ -939,6 +939,10 @@ async def list_ai_decisions(
     count_stmt = select(func.count(AITradeDecision.id)).where(
         AITradeDecision.user_id == uuid.UUID(user_id)
     )
+    if ticker:
+        count_stmt = count_stmt.where(AITradeDecision.ticker == ticker.upper())
+    if decision:
+        count_stmt = count_stmt.where(AITradeDecision.decision == decision)
     total = (await session.execute(count_stmt)).scalar() or 0
 
     return {

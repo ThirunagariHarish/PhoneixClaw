@@ -8,7 +8,7 @@ import msgpack
 
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.producer import KafkaProducerWrapper
-from shared.market.calendar import MarketCalendar
+from shared.market.calendar import MarketCalendar, MarketHoursMode
 from shared.models.database import async_session_factory
 from shared.models.trade import AITradeDecision
 
@@ -77,8 +77,9 @@ class AITradeRecommenderService:
                 logger.exception("Error processing %s signal", trigger_type)
 
     async def _process_signal(self, signal: dict, trigger_type: str):
-        if not self._calendar.should_trade():
-            logger.debug("Market closed, skipping signal")
+        mode = MarketHoursMode(signal.get("market_hours_mode", "extended"))
+        if not self._calendar.should_trade(mode):
+            logger.debug("Market closed (mode=%s), skipping signal", mode.value)
             return
 
         tickers = signal.get("tickers") if trigger_type == "news" else [signal.get("ticker")]
@@ -96,7 +97,6 @@ class AITradeRecommenderService:
                     if await redis.get(dedup_key):
                         logger.debug("Dedup: skipping %s %s", ticker, direction)
                         continue
-                    await redis.setex(dedup_key, DEDUP_TTL, "1")
                 except Exception:
                     pass
 
@@ -129,6 +129,11 @@ class AITradeRecommenderService:
                     await self._producer.send("parsed-trades", msgpack.packb(trade_msg))
                     decision_data["decision"] = "executed"
                     decision_data["trade_params"] = trade_msg
+                    if redis:
+                        try:
+                            await redis.setex(dedup_key, DEDUP_TTL, "1")
+                        except Exception:
+                            pass
                 except Exception:
                     logger.exception("Failed to publish trade for %s", ticker)
                     decision_data["decision"] = "error"
