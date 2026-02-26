@@ -93,9 +93,9 @@ class TradeExecutorService:
                     select(AccountSourceMapping).where(
                         AccountSourceMapping.channel_id == ch_uuid,
                         AccountSourceMapping.enabled.is_(True),
-                    )
+                    ).limit(1)
                 )
-                mapping = result.scalar_one_or_none()
+                mapping = result.scalars().first()
                 if mapping:
                     ta_id = str(mapping.trading_account_id)
                     trade["trading_account_id"] = ta_id

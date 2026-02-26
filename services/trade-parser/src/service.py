@@ -94,10 +94,12 @@ class TradeParserService:
                             nlp_result.get("method", "unknown"))
 
         if not actions:
-            logger.debug("No trade actions found in message: %s", raw_text[:100])
+            logger.info("No trade actions found in message (len=%d): %s", len(raw_text), raw_text[:200])
             return
 
         for action in actions:
+            if not action.get("option_type"):
+                action["option_type"] = "CALL"
             trade_id = str(uuid.uuid4())
             parsed_trade = {
                 "trade_id": trade_id,
@@ -121,6 +123,7 @@ class TradeParserService:
                 key=trade_id,
                 headers=msg_headers or None,
             )
-            logger.info("Parsed trade: %s %s %s %sC @ %.2f (trade_id=%s)",
+            opt_char = (action["option_type"] or "?")[0]
+            logger.info("Parsed trade: %s %s %s %s @ %.2f (trade_id=%s)",
                          action["action"], action["ticker"], action["strike"],
-                         action["option_type"][0], action["price"], trade_id)
+                         opt_char, action["price"], trade_id)

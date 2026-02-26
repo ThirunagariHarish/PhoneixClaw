@@ -106,9 +106,9 @@ class TradeGatewayService:
                     select(AccountSourceMapping).where(
                         AccountSourceMapping.channel_id == ch_uuid,
                         AccountSourceMapping.enabled.is_(True),
-                    )
+                    ).limit(1)
                 )
-                mapping = result.scalar_one_or_none()
+                mapping = result.scalars().first()
                 if mapping:
                     return str(mapping.trading_account_id)
 
