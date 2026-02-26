@@ -32,7 +32,8 @@ class TradeValidator:
         if not trade.get("expiration"):
             return False, "Expiration date is required for options"
 
-        quantity_str = str(trade.get("quantity", "1"))
+        raw_qty = trade.get("quantity")
+        quantity_str = str(raw_qty) if raw_qty is not None else "1"
         is_percentage = "%" in quantity_str
 
         if not is_percentage:

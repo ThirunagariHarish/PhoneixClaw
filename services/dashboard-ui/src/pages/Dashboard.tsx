@@ -29,6 +29,8 @@ interface Trade {
   source_author?: string | null
   option_type?: string
   expiration?: string
+  account_name?: string | null
+  pipeline_name?: string | null
 }
 
 const STATUS_DESCRIPTIONS: Record<string, string> = {
@@ -136,6 +138,7 @@ export default function Dashboard() {
         t.ticker, t.action, t.status, t.option_type,
         t.strike?.toString(), t.price?.toFixed(2),
         t.error_message, t.rejection_reason, t.raw_message,
+        t.source, t.account_name, t.pipeline_name,
         t.created_at ? new Date(t.created_at).toLocaleString() : '',
       ].filter(Boolean).join(' ').toLowerCase()
       return searchable.includes(q)
@@ -244,13 +247,16 @@ export default function Dashboard() {
                 size="sm"
                 className="h-8 gap-1 text-xs shrink-0"
                 onClick={() => {
-                  const headers = ['Ticker', 'Action', 'Strike', 'Type', 'Price', 'Status', 'Error', 'Time']
+                  const headers = ['Ticker', 'Action', 'Strike', 'Type', 'Price', 'Source', 'Account', 'Pipeline', 'Status', 'Error', 'Time']
                   const rows = (filteredTrades).map(t => [
                     t.ticker,
                     t.action,
                     String(t.strike),
                     t.option_type === 'PUT' ? 'Put' : t.option_type === 'CALL' ? 'Call' : '',
                     t.price?.toFixed(2) ?? '',
+                    t.source || '',
+                    t.account_name || '',
+                    t.pipeline_name || '',
                     t.status,
                     t.rejection_reason || t.error_message || '',
                     t.created_at ? new Date(t.created_at).toLocaleString() : '',
@@ -272,6 +278,9 @@ export default function Dashboard() {
                 <TableHead>Strike</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Price</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Account</TableHead>
+                <TableHead>Pipeline</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Time</TableHead>
                 <TableHead className="w-12"></TableHead>
@@ -291,6 +300,17 @@ export default function Dashboard() {
                     {t.option_type === 'PUT' ? 'Put' : t.option_type === 'CALL' ? 'Call' : '—'}
                   </TableCell>
                   <TableCell>${t.price?.toFixed(2)}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-xs capitalize">
+                      {t.source || '—'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs max-w-[120px] truncate" title={t.account_name || undefined}>
+                    {t.account_name || '—'}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs max-w-[120px] truncate" title={t.pipeline_name || undefined}>
+                    {t.pipeline_name || '—'}
+                  </TableCell>
                   <TableCell>{statusBadge(t.status, t.error_message, t.rejection_reason)}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {t.created_at ? new Date(t.created_at).toLocaleString() : '—'}
@@ -310,7 +330,7 @@ export default function Dashboard() {
               ))}
               {filteredTrades.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                     {searchQuery ? 'No trades match your search.' : 'No trades yet. Connect a data source to get started.'}
                   </TableCell>
                 </TableRow>
@@ -345,6 +365,18 @@ export default function Dashboard() {
                     </>
                   )}
                 </div>
+                {viewTrade.account_name && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Account:</span>
+                    <span className="font-medium">{viewTrade.account_name}</span>
+                  </div>
+                )}
+                {viewTrade.pipeline_name && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Pipeline:</span>
+                    <span className="font-medium">{viewTrade.pipeline_name}</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Time:</span>
                   <span>{viewTrade.created_at ? new Date(viewTrade.created_at).toLocaleString() : '—'}</span>

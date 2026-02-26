@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -12,6 +12,16 @@ from shared.models.database import AsyncSessionLocal
 from shared.models.trade import AccountSourceMapping, Channel, Trade, TradingAccount
 
 logger = logging.getLogger(__name__)
+
+DEDUP_WINDOW_MINUTES = 5
+
+
+def _is_uuid(val: str) -> bool:
+    try:
+        uuid.UUID(str(val))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 class TradeGatewayService:
@@ -32,6 +42,38 @@ class TradeGatewayService:
     async def run(self) -> None:
         await self.consumer.consume(self._handle_trade)
 
+    async def _is_duplicate(self, trade: dict) -> bool:
+        """Check if a very similar trade was already created within the dedup window."""
+        user_id = trade.get("user_id")
+        if not user_id:
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=DEDUP_WINDOW_MINUTES)
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Trade.trade_id).where(
+                        Trade.user_id == uuid.UUID(user_id),
+                        Trade.ticker == (trade.get("ticker") or ""),
+                        Trade.strike == (trade.get("strike") or 0),
+                        Trade.option_type == (trade.get("option_type") or "CALL"),
+                        Trade.action == (trade.get("action") or "BUY"),
+                        Trade.price == (trade.get("price") or 0),
+                        Trade.created_at >= cutoff,
+                    ).limit(1)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    logger.info(
+                        "Duplicate trade skipped %s: %s %s %s @ %s (matches existing %s)",
+                        trade.get("trade_id"), trade.get("action"),
+                        trade.get("ticker"), trade.get("strike"),
+                        trade.get("price"), existing,
+                    )
+                    return True
+        except Exception:
+            logger.exception("Dedup check failed for trade %s", trade.get("trade_id"))
+        return False
+
     async def _persist_trade(self, trade: dict, status: str) -> None:
         """Insert a Trade row so the dashboard can show it immediately."""
         try:
@@ -39,6 +81,7 @@ class TradeGatewayService:
             if not user_id:
                 return
             ta_id = trade.get("trading_account_id")
+            ch_id = trade.get("channel_id")
             expiration = None
             if trade.get("expiration"):
                 try:
@@ -50,6 +93,7 @@ class TradeGatewayService:
                 trade_id=uuid.UUID(trade["trade_id"]),
                 user_id=uuid.UUID(user_id),
                 trading_account_id=uuid.UUID(ta_id) if ta_id else None,
+                channel_id=uuid.UUID(ch_id) if ch_id and _is_uuid(ch_id) else None,
                 ticker=trade.get("ticker", ""),
                 strike=trade.get("strike") or 0,
                 option_type=trade.get("option_type") or "CALL",
@@ -68,19 +112,17 @@ class TradeGatewayService:
             async with AsyncSessionLocal() as session:
                 session.add(record)
                 await session.commit()
-            logger.info("Persisted trade %s (status=%s)", trade.get("trade_id"), status)
+            logger.info("Persisted trade %s (status=%s, channel=%s)", trade.get("trade_id"), status, ch_id)
         except Exception:
             logger.exception("Failed to persist trade %s to DB", trade.get("trade_id"))
 
     async def _resolve_trading_account(self, trade: dict) -> str | None:
-        """Resolve trading_account_id from trade. Returns str UUID or None."""
+        """Resolve trading_account_id from trade. Also resolves channel_id to a UUID."""
         ta_id = trade.get("trading_account_id")
-        if ta_id:
-            return str(ta_id) if not isinstance(ta_id, str) else ta_id
 
         user_id = trade.get("user_id")
         if not user_id:
-            return None
+            return str(ta_id) if ta_id else None
 
         channel_id_raw = trade.get("channel_id")
         ch_uuid: uuid.UUID | None = None
@@ -99,6 +141,12 @@ class TradeGatewayService:
                     ch = result.scalar_one_or_none()
                     if ch:
                         ch_uuid = ch.id
+
+        if ch_uuid:
+            trade["channel_id"] = str(ch_uuid)
+
+        if ta_id:
+            return str(ta_id) if not isinstance(ta_id, str) else ta_id
 
         if ch_uuid:
             async with AsyncSessionLocal() as session:
@@ -142,6 +190,13 @@ class TradeGatewayService:
         if feature_flags.is_enabled("paper_trading_only", user_id):
             trade["paper_mode"] = True
 
+        ta_id = await self._resolve_trading_account(trade)
+        if ta_id:
+            trade["trading_account_id"] = ta_id
+
+        if await self._is_duplicate(trade):
+            return
+
         if effective_mode == "auto":
             trade["status"] = "IN_PROGRESS"
             trade["approved_by"] = "auto-gateway"
@@ -152,10 +207,6 @@ class TradeGatewayService:
             await self._persist_trade(trade, "PENDING")
             logger.info("Trade %s pending manual approval (flags: manual_approval=%s)", trade_id, override_manual)
             return
-
-        ta_id = await self._resolve_trading_account(trade)
-        if ta_id:
-            trade["trading_account_id"] = ta_id
 
         await self._persist_trade(trade, "IN_PROGRESS")
 

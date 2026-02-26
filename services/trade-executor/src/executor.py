@@ -455,6 +455,14 @@ class TradeExecutorService:
             from shared.models.trade import Trade
 
             async with AsyncSessionLocal() as session:
+                ch_id = trade.get("channel_id")
+                ch_uuid = None
+                if ch_id:
+                    try:
+                        ch_uuid = uuid.UUID(ch_id)
+                    except (ValueError, TypeError):
+                        pass
+
                 stmt = (
                     update(Trade)
                     .where(Trade.trade_id == uuid.UUID(trade_id_str))
@@ -472,6 +480,7 @@ class TradeExecutorService:
                             if trade.get("trading_account_id")
                             else None
                         ),
+                        channel_id=ch_uuid,
                     )
                 )
                 result = await session.execute(stmt)
@@ -502,6 +511,14 @@ class TradeExecutorService:
             except (ValueError, TypeError):
                 pass
 
+        ch_id = trade.get("channel_id")
+        ch_uuid = None
+        if ch_id:
+            try:
+                ch_uuid = uuid.UUID(ch_id)
+            except (ValueError, TypeError):
+                pass
+
         record = Trade(
             trade_id=uuid.UUID(trade["trade_id"]),
             user_id=uuid.UUID(user_id),
@@ -510,13 +527,14 @@ class TradeExecutorService:
                 if trade.get("trading_account_id")
                 else None
             ),
+            channel_id=ch_uuid,
             ticker=trade.get("ticker", ""),
-            strike=trade.get("strike", 0),
-            option_type=trade.get("option_type", "CALL"),
+            strike=trade.get("strike") or 0,
+            option_type=trade.get("option_type") or "CALL",
             expiration=expiration,
             action=trade.get("action", "BUY"),
-            quantity=str(trade.get("quantity", "1")),
-            price=trade.get("price", 0),
+            quantity=str(trade.get("quantity") or "1"),
+            price=trade.get("price") or 0,
             source=trade.get("source", "chat"),
             raw_message=trade.get("raw_message"),
             status=status,

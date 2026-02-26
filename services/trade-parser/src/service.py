@@ -86,7 +86,7 @@ class TradeParserService:
                     "option_type": nlp_result.get("option_type", "CALL"),
                     "expiration": nlp_result.get("expiration"),
                     "price": nlp_result["price"],
-                    "quantity": nlp_result.get("quantity", 1),
+                    "quantity": nlp_result.get("quantity") or 1,
                     "is_percentage": False,
                 }]
                 logger.info("NLP parsed trade from: %s (confidence=%.2f, method=%s)",

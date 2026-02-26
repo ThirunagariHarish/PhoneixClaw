@@ -598,14 +598,13 @@ async def pipeline_trades(
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
-    """Get trades associated with this pipeline (matched via channel + account)."""
+    """Get trades associated with this pipeline (matched via channel)."""
     pipeline = await _get_pipeline(pipeline_id, request, session)
     stmt = (
         select(Trade)
         .where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
         )
     )
     if status:
@@ -651,7 +650,6 @@ async def pipeline_stats(
     base = select(func.count(Trade.id)).where(
         Trade.user_id == pipeline.user_id,
         Trade.channel_id == pipeline.channel_id,
-        Trade.trading_account_id == pipeline.trading_account_id,
     )
     total = (await session.execute(base)).scalar() or 0
     executed = (await session.execute(base.where(Trade.status == "EXECUTED"))).scalar() or 0
@@ -663,7 +661,6 @@ async def pipeline_stats(
         select(func.sum(Trade.realized_pnl)).where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
             Trade.realized_pnl.isnot(None),
         )
     )
@@ -673,7 +670,6 @@ async def pipeline_stats(
         select(func.count(Trade.id)).where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
             Trade.realized_pnl > 0,
         )
     )).scalar() or 0
@@ -682,7 +678,6 @@ async def pipeline_stats(
         select(func.count(Trade.id)).where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
             Trade.realized_pnl < 0,
         )
     )).scalar() or 0
@@ -694,7 +689,6 @@ async def pipeline_stats(
         select(func.avg(Trade.execution_latency_ms)).where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
             Trade.execution_latency_ms.isnot(None),
         )
     )
@@ -736,7 +730,6 @@ async def pipeline_performance(
         .where(
             Trade.user_id == pipeline.user_id,
             Trade.channel_id == pipeline.channel_id,
-            Trade.trading_account_id == pipeline.trading_account_id,
         )
         .group_by(cast(Trade.created_at, SQLDate))
         .order_by(cast(Trade.created_at, SQLDate))

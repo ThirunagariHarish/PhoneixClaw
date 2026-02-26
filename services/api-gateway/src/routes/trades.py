@@ -4,14 +4,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from shared.models.database import get_session
-from shared.models.trade import Trade, TradingAccount
+from shared.models.trade import Trade, TradePipeline, TradingAccount
 
 router = APIRouter(prefix="/api/v1/trades", tags=["trades"])
 
 
-def _trade_response(t: Trade) -> dict:
+def _trade_response(t: Trade, account_name: str | None = None, pipeline_name: str | None = None) -> dict:
     return {
         "id": t.id,
         "trade_id": str(t.trade_id),
@@ -36,6 +37,8 @@ def _trade_response(t: Trade) -> dict:
         "fill_price": float(t.fill_price) if t.fill_price else None,
         "realized_pnl": float(t.realized_pnl) if t.realized_pnl else None,
         "execution_latency_ms": t.execution_latency_ms,
+        "account_name": account_name,
+        "pipeline_name": pipeline_name,
     }
 
 
@@ -48,12 +51,28 @@ async def list_trades(
     session: AsyncSession = Depends(get_session),
 ):
     user_id = request.state.user_id
-    stmt = select(Trade).where(Trade.user_id == uuid.UUID(user_id))
+    user_uuid = uuid.UUID(user_id)
+
+    PipelineAlias = aliased(TradePipeline)
+    AccountAlias = aliased(TradingAccount)
+
+    stmt = (
+        select(Trade, AccountAlias.display_name, PipelineAlias.name)
+        .outerjoin(AccountAlias, Trade.trading_account_id == AccountAlias.id)
+        .outerjoin(
+            PipelineAlias,
+            (Trade.channel_id == PipelineAlias.channel_id) & (Trade.user_id == PipelineAlias.user_id),
+        )
+        .where(Trade.user_id == user_uuid)
+    )
     if status:
         stmt = stmt.where(Trade.status == status)
     stmt = stmt.order_by(desc(Trade.created_at)).limit(limit).offset(offset)
     result = await session.execute(stmt)
-    return [_trade_response(t) for t in result.scalars().all()]
+    return [
+        _trade_response(row[0], account_name=row[1], pipeline_name=row[2])
+        for row in result.all()
+    ]
 
 
 @router.get("/stats")
