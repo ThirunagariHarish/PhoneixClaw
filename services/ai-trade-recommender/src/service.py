@@ -114,7 +114,7 @@ class AITradeRecommenderService:
                 top_contract = analysis["contracts"][0]
                 trade_msg = {
                     "ticker": ticker,
-                    "action": "BTO" if direction in ("bullish", "very_bullish") else "BTO",
+                    "action": "BTO" if direction in ("bullish", "very_bullish") else "STO",
                     "asset_type": "option",
                     "contract_type": top_contract.get("option_type", "call"),
                     "strike": top_contract.get("strike"),
@@ -177,7 +177,7 @@ class AITradeRecommenderService:
             async with async_session_factory() as session:
                 log = AITradeDecision(
                     id=uuid.uuid4(),
-                    user_id=uuid.UUID(user_id) if user_id else uuid.uuid4(),
+                    user_id=uuid.UUID(user_id) if user_id else None,
                     trigger_type=data.get("trigger_type", "unknown"),
                     trigger_data=data.get("trigger_data", {}),
                     ticker=data.get("ticker"),

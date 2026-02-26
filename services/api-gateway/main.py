@@ -257,6 +257,7 @@ async def _run_migrations():
             (gen_random_uuid(), 'Strategy Agent', 'strategy', 'custom', 'strategy-agent', '1.0', 'Natural language strategy parser and backtester', '{}'::jsonb, 'available', 'unknown'),
             (gen_random_uuid(), 'spaCy NER', 'nlp', 'spacy', 'en_core_web_sm', '3.x', 'Named entity recognition for ticker and financial entity extraction', '{}'::jsonb, 'available', 'unknown')
         ON CONFLICT (name) DO NOTHING""",
+        "ALTER TABLE ai_trade_decisions ALTER COLUMN user_id DROP NOT NULL",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

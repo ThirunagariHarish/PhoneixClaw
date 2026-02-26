@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import cast, desc, func, select
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.crypto.credentials import encrypt_credentials
@@ -69,16 +70,21 @@ async def list_headlines(
     if source:
         stmt = stmt.where(NewsHeadline.source_api == source)
 
+    if ticker:
+        ticker_upper = ticker.upper()
+        ticker_filter = NewsHeadline.tickers.op("@>")(cast([ticker_upper], PG_JSONB))
+        stmt = stmt.where(ticker_filter)
+
+    count_stmt = select(func.count(NewsHeadline.id)).where(NewsHeadline.created_at >= cutoff)
+    if source:
+        count_stmt = count_stmt.where(NewsHeadline.source_api == source)
+    if ticker:
+        count_stmt = count_stmt.where(NewsHeadline.tickers.op("@>")(cast([ticker_upper], PG_JSONB)))
+    total = (await session.execute(count_stmt)).scalar() or 0
+
     stmt = stmt.offset(offset).limit(limit)
     result = await session.execute(stmt)
     rows = result.scalars().all()
-
-    if ticker:
-        ticker_upper = ticker.upper()
-        rows = [r for r in rows if ticker_upper in (r.tickers or [])]
-
-    count_stmt = select(func.count(NewsHeadline.id)).where(NewsHeadline.created_at >= cutoff)
-    total = (await session.execute(count_stmt)).scalar() or 0
 
     headlines = [
         HeadlineResponse(

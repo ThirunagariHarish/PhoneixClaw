@@ -752,7 +752,7 @@ class AITradeDecision(Base):
     __tablename__ = "ai_trade_decisions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     pipeline_id = Column(UUID(as_uuid=True), nullable=True)
     trigger_type = Column(String(30), nullable=False)  # sentiment, news, strategy
     trigger_data = Column(JSONB, nullable=False, default=dict)
