@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
@@ -48,3 +48,18 @@ async def unread_count(request: Request, session: AsyncSession = Depends(get_ses
         )
     )
     return {"unread_count": result.scalar() or 0}
+
+
+@router.patch("/mark-read")
+async def mark_all_read(request: Request, session: AsyncSession = Depends(get_session)):
+    user_id = request.state.user_id
+    await session.execute(
+        update(NotificationLog)
+        .where(
+            NotificationLog.user_id == uuid.UUID(user_id),
+            NotificationLog.read.is_(False),
+        )
+        .values(read=True)
+    )
+    await session.commit()
+    return {"status": "ok"}

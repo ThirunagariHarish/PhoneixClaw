@@ -80,16 +80,21 @@ async def lifespan(app: FastAPI):
 
     service.register_handler("log", _log_handler)
 
+    from services.notification_service.src.daily_report import run_daily_report_scheduler
+
     task = asyncio.create_task(_run_notification_service(service))
+    report_task = asyncio.create_task(run_daily_report_scheduler())
     shutdown.register(lambda: service.stop())
-    logger.info("%s ready", SERVICE_NAME)
+    logger.info("%s ready (daily report scheduler started)", SERVICE_NAME)
     yield
     await shutdown.run_cleanup()
+    report_task.cancel()
     task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for t in (task, report_task):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title=SERVICE_NAME, lifespan=lifespan)

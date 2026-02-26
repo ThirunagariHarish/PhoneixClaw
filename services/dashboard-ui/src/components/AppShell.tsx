@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from './ThemeProvider'
 import { Button } from './ui/button'
@@ -7,6 +9,7 @@ import { Avatar, AvatarFallback } from './ui/avatar'
 import { Separator } from './ui/separator'
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from './ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { ScrollArea } from './ui/scroll-area'
 import {
   LayoutDashboard,
@@ -27,8 +30,18 @@ import {
   LineChart,
   Workflow,
   KanbanSquare,
+  Bell,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+interface Notification {
+  id: number
+  type: string
+  title: string
+  body: string
+  read: boolean
+  created_at: string | null
+}
 
 const baseNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -205,13 +218,38 @@ function getDisplayName(name: string | null | undefined, email: string | null | 
 export default function AppShell() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [bellOpen, setBellOpen] = useState(false)
   const { logout, isAdmin, user } = useAuth()
+  const qc = useQueryClient()
   const location = useLocation()
   const pageTitle = pageTitles[location.pathname]
     || (location.pathname.startsWith('/board/') ? 'Task Detail' : 'PhoenixTrade')
   const navItems = isAdmin ? [...baseNavItems, ...adminNavItems] : baseNavItems
   const displayName = getDisplayName(user?.name, user?.email)
   const initials = getInitials(user?.name, user?.email)
+
+  const { data: unreadData } = useQuery<{ unread_count: number }>({
+    queryKey: ['notifications-unread'],
+    queryFn: () => axios.get('/api/v1/notifications/unread-count').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  const { data: notifications } = useQuery<Notification[]>({
+    queryKey: ['notifications'],
+    queryFn: () => axios.get('/api/v1/notifications?limit=20').then(r => r.data),
+    enabled: bellOpen,
+  })
+
+  useEffect(() => {
+    if (bellOpen && notifications?.some(n => !n.read)) {
+      axios.patch('/api/v1/notifications/mark-read').then(() => {
+        qc.invalidateQueries({ queryKey: ['notifications-unread'] })
+        qc.invalidateQueries({ queryKey: ['notifications'] })
+      }).catch(() => {})
+    }
+  }, [bellOpen, notifications, qc])
+
+  const unreadCount = unreadData?.unread_count ?? 0
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -250,6 +288,48 @@ export default function AppShell() {
           </Sheet>
 
           <h1 className="text-lg font-semibold">{pageTitle}</h1>
+
+          <div className="ml-auto">
+            <Popover open={bellOpen} onOpenChange={setBellOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative h-9 w-9">
+                  <Bell className="h-5 w-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 p-0">
+                <div className="border-b px-4 py-3">
+                  <p className="text-sm font-semibold">Notifications</p>
+                </div>
+                <ScrollArea className="max-h-80">
+                  {notifications && notifications.length > 0 ? (
+                    <div className="divide-y">
+                      {notifications.map(n => (
+                        <div key={n.id} className={cn('px-4 py-3 text-sm', !n.read && 'bg-primary/5')}>
+                          <p className="font-medium text-xs">{n.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>
+                          {n.created_at && (
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {new Date(n.created_at).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                      <Bell className="h-6 w-6 opacity-30 mb-2" />
+                      <p className="text-xs">No notifications yet</p>
+                    </div>
+                  )}
+                </ScrollArea>
+              </PopoverContent>
+            </Popover>
+          </div>
         </header>
 
         {/* Page content */}

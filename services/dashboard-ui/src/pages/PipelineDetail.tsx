@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
-  CartesianGrid,
+  CartesianGrid, ReferenceDot,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -259,6 +259,22 @@ export default function PipelineDetail() {
     return (last?.cumulative_pnl ?? 0) >= 0 ? '#10b981' : '#ef4444'
   }, [performance])
 
+  const tradeMarkers = useMemo(() => {
+    if (!trades || !performance || performance.length === 0) return []
+    const pnlByDate = new Map(performance.map(p => [p.date, p.cumulative_pnl]))
+    return trades
+      .filter(t => t.status === 'EXECUTED' && (t.processed_at || t.created_at))
+      .map(t => {
+        const ts = t.processed_at || t.created_at!
+        const date = ts.slice(0, 10)
+        const cumulativePnl = pnlByDate.get(date)
+        if (cumulativePnl === undefined) return null
+        const isBuy = t.action === 'BUY' || t.action === 'BTO'
+        return { date, cumulative_pnl: cumulativePnl, isBuy, ticker: t.ticker, action: t.action, price: t.price }
+      })
+      .filter(Boolean) as { date: string; cumulative_pnl: number; isBuy: boolean; ticker: string; action: string; price: number }[]
+  }, [trades, performance])
+
   const statusInfo = STATUS_MAP[pipeline?.status ?? 'STOPPED'] ?? STATUS_MAP.STOPPED
 
   if (pipelineLoading) {
@@ -419,6 +435,25 @@ export default function PipelineDetail() {
                     dot={false}
                     activeDot={{ r: 5, fill: chartColor, stroke: 'hsl(var(--card))', strokeWidth: 2 }}
                   />
+                  {tradeMarkers.map((m, i) => (
+                    <ReferenceDot
+                      key={`marker-${i}`}
+                      x={m.date}
+                      y={m.cumulative_pnl}
+                      r={6}
+                      fill={m.isBuy ? '#10b981' : '#ef4444'}
+                      stroke="hsl(var(--card))"
+                      strokeWidth={2}
+                      shape={(props: any) => {
+                        const { cx, cy } = props
+                        const size = 7
+                        const points = m.isBuy
+                          ? `${cx},${cy - size} ${cx - size},${cy + size} ${cx + size},${cy + size}`
+                          : `${cx - size},${cy - size} ${cx + size},${cy - size} ${cx},${cy + size}`
+                        return <polygon points={points} fill={m.isBuy ? '#10b981' : '#ef4444'} stroke="hsl(var(--card))" strokeWidth={2} />
+                      }}
+                    />
+                  ))}
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -429,6 +464,18 @@ export default function PipelineDetail() {
               </div>
             )}
           </div>
+          {tradeMarkers.length > 0 && (
+            <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground justify-end">
+              <div className="flex items-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="6,1 1,11 11,11" fill="#10b981" /></svg>
+                <span>Bought</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="1,1 11,1 6,11" fill="#ef4444" /></svg>
+                <span>Sold</span>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

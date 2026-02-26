@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { AxiosError } from 'axios'
 import { useAuth } from '../hooks/useAuth'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -22,8 +23,20 @@ export default function Login() {
     try {
       await login(email, password)
       navigate('/')
-    } catch {
-      setError('Invalid credentials')
+    } catch (err) {
+      if (err instanceof AxiosError) {
+        if (err.response?.status === 401) {
+          setError('Invalid credentials')
+        } else if (err.response?.status === 409) {
+          setError(err.response.data?.detail || 'Account conflict')
+        } else if (!err.response) {
+          setError('Service unavailable. Please try again later.')
+        } else {
+          setError(`Login failed (${err.response.status}). Please try again.`)
+        }
+      } else {
+        setError('Login failed. Please try again.')
+      }
     } finally {
       setLoading(false)
     }

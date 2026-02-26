@@ -358,11 +358,12 @@ export default function SprintBoard() {
     const activeId = String(active.id)
     const overId = String(over.id)
 
-    const activeTaskData = tasks.find(t => t.id === activeId)
+    const currentTasks = qc.getQueryData<BoardTask[]>(['board-tasks']) ?? tasks
+    const activeTaskData = currentTasks.find(t => t.id === activeId)
     if (!activeTaskData) return
 
     const isOverColumn = COLUMNS.some(c => c.id === overId)
-    const overTaskData = tasks.find(t => t.id === overId)
+    const overTaskData = currentTasks.find(t => t.id === overId)
 
     const targetStatus = isOverColumn ? overId : overTaskData?.status
     if (!targetStatus || targetStatus === activeTaskData.status) return

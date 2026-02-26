@@ -82,6 +82,16 @@ class GatewayConfig:
 
 
 @dataclass
+class SmtpConfig:
+    host: str = os.getenv("SMTP_HOST", "")
+    port: int = int(os.getenv("SMTP_PORT", "587"))
+    user: str = os.getenv("SMTP_USER", "")
+    password: str = os.getenv("SMTP_PASSWORD", "")
+    from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
+    use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+
+
+@dataclass
 class AppConfig:
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -93,6 +103,7 @@ class AppConfig:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
+    smtp: SmtpConfig = field(default_factory=SmtpConfig)
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
 

@@ -29,7 +29,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Plus, Wallet, MoreVertical, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Wallet, MoreVertical, Trash2, Loader2, Pencil } from 'lucide-react'
 
 interface Account {
   id: string
@@ -46,6 +46,8 @@ export default function TradingAccounts() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({ ...emptyForm })
   const [error, setError] = useState<string | null>(null)
+  const [editAccount, setEditAccount] = useState<Account | null>(null)
+  const [editForm, setEditForm] = useState({ display_name: '', paper_mode: false, enabled: true })
 
   const { data: accounts, isLoading: accountsLoading, isError: accountsError, refetch } = useQuery<Account[]>({
     queryKey: ['accounts'],
@@ -82,6 +84,31 @@ export default function TradingAccounts() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); setError(null) },
     onError: () => setError('Failed to update trading mode.'),
   })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      axios.patch(`/api/v1/accounts/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setEditAccount(null)
+      setError(null)
+    },
+    onError: () => setError('Failed to update account.'),
+  })
+
+  function openEditDialog(a: Account) {
+    setEditAccount(a)
+    setEditForm({ display_name: a.display_name, paper_mode: a.paper_mode, enabled: true })
+  }
+
+  function handleSaveEdit() {
+    if (!editAccount) return
+    const payload: Record<string, unknown> = {}
+    if (editForm.display_name !== editAccount.display_name) payload.display_name = editForm.display_name
+    if (editForm.paper_mode !== editAccount.paper_mode) payload.paper_mode = editForm.paper_mode
+    if (Object.keys(payload).length === 0) { setEditAccount(null); return }
+    updateMutation.mutate({ id: editAccount.id, data: payload })
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -236,6 +263,9 @@ export default function TradingAccounts() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => openEditDialog(a)}>
+                      <Pencil className="mr-2 h-4 w-4" /> Edit
+                    </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onClick={() => {
@@ -267,6 +297,42 @@ export default function TradingAccounts() {
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!editAccount} onOpenChange={v => { if (!v) setEditAccount(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Trading Account</DialogTitle>
+            <DialogDescription>Update the settings for this account.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-name">Display Name</Label>
+              <Input
+                id="edit-name"
+                value={editForm.display_name}
+                onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))}
+                placeholder="Account name"
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border p-3">
+              <div>
+                <Label>Paper Trading</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {editForm.paper_mode ? 'Using simulated money — no real trades' : 'Live mode — real money at risk'}
+                </p>
+              </div>
+              <Switch checked={editForm.paper_mode} onCheckedChange={v => setEditForm(f => ({ ...f, paper_mode: v }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditAccount(null)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
+              {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

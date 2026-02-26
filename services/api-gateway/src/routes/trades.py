@@ -27,6 +27,7 @@ def _trade_response(t: Trade) -> dict:
         "rejection_reason": t.rejection_reason,
         "broker_order_id": t.broker_order_id,
         "raw_message": t.raw_message,
+        "source_author": t.source_author,
         "approved_by": t.approved_by,
         "approved_at": t.approved_at.isoformat() if t.approved_at else None,
         "created_at": t.created_at.isoformat() if t.created_at else None,

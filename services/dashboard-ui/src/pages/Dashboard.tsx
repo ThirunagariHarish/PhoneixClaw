@@ -8,7 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { TrendingUp, CheckCircle2, XCircle, AlertTriangle, Loader2, Download, Search, Clock } from 'lucide-react'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import { TrendingUp, CheckCircle2, XCircle, AlertTriangle, Loader2, Download, Search, Clock, Eye } from 'lucide-react'
 import { exportToCSV } from '@/lib/csv-export'
 
 interface Trade {
@@ -22,6 +25,8 @@ interface Trade {
   error_message?: string | null
   rejection_reason?: string | null
   raw_message?: string | null
+  source?: string | null
+  source_author?: string | null
   option_type?: string
   expiration?: string
 }
@@ -84,6 +89,7 @@ const kpiCards = [
 
 export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('')
+  const [viewTrade, setViewTrade] = useState<Trade | null>(null)
   const { data: trades, isLoading: tradesLoading, isError: tradesError, refetch: refetchTrades } = useQuery<Trade[]>({
     queryKey: ['trades'],
     queryFn: () => axios.get('/api/v1/trades?limit=50').then((r) => r.data),
@@ -242,6 +248,7 @@ export default function Dashboard() {
                 <TableHead>Price</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Time</TableHead>
+                <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -262,11 +269,22 @@ export default function Dashboard() {
                   <TableCell className="text-muted-foreground">
                     {t.created_at ? new Date(t.created_at).toLocaleString() : '—'}
                   </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setViewTrade(t)}
+                      title="View raw message"
+                    >
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
               {filteredTrades.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     {searchQuery ? 'No trades match your search.' : 'No trades yet. Connect a data source to get started.'}
                   </TableCell>
                 </TableRow>
@@ -275,6 +293,47 @@ export default function Dashboard() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!viewTrade} onOpenChange={v => { if (!v) setViewTrade(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Raw Message</DialogTitle>
+          </DialogHeader>
+          {viewTrade && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Ticker:</span>
+                  <span className="font-medium">{viewTrade.ticker}</span>
+                  <span className={viewTrade.action === 'BUY' || viewTrade.action === 'BTO' ? 'text-emerald-500 font-medium' : 'text-red-500 font-medium'}>
+                    {viewTrade.action}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Source:</span>
+                  <span className="font-medium capitalize">{viewTrade.source || 'Unknown'}</span>
+                  {viewTrade.source_author && (
+                    <>
+                      <span className="text-muted-foreground">by</span>
+                      <span className="font-medium">{viewTrade.source_author}</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Time:</span>
+                  <span>{viewTrade.created_at ? new Date(viewTrade.created_at).toLocaleString() : '—'}</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-muted-foreground">Original Message</p>
+                <div className="rounded-lg border bg-muted/20 p-4 text-sm font-mono whitespace-pre-wrap break-words min-h-[60px]">
+                  {viewTrade.raw_message || <span className="text-muted-foreground italic">No raw message available</span>}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
