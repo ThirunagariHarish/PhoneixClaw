@@ -54,27 +54,6 @@ services:
       timeout: 3s
       retries: 10
 
-  init:
-    build:
-      context: .
-      dockerfile: services/api-gateway/Dockerfile
-    command: >
-      sh -c "
-        echo 'Waiting for Postgres...' &&
-        sleep 5 &&
-        python -c 'import asyncio; from shared.models.database import init_db; asyncio.run(init_db())' &&
-        echo 'Database initialized'
-      "
-    environment:
-      DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-
   auth-service:
     build:
       context: .
@@ -88,8 +67,10 @@ services:
       JWT_SECRET_KEY: dev-secret-key
       CREDENTIAL_ENCRYPTION_KEY: ZGV2LWVuY3J5cHRpb24ta2V5LTEyMzQ1Njc4OTA=
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   api-gateway:
     build:
@@ -99,8 +80,10 @@ services:
       - "8011:8011"
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   trade-parser:
     build:
@@ -110,8 +93,10 @@ services:
       <<: *common-env
       NLP_PARSER_URL: http://nlp-parser:8020
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   trade-gateway:
     build:
@@ -119,8 +104,10 @@ services:
       dockerfile: services/trade-gateway/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   trade-executor:
     build:
@@ -128,8 +115,10 @@ services:
       dockerfile: services/trade-executor/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   position-monitor:
     build:
@@ -137,8 +126,10 @@ services:
       dockerfile: services/position-monitor/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   notification-service:
     build:
@@ -146,8 +137,10 @@ services:
       dockerfile: services/notification-service/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   source-orchestrator:
     build:
@@ -155,8 +148,10 @@ services:
       dockerfile: services/source-orchestrator/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   audit-writer:
     build:
@@ -164,8 +159,10 @@ services:
       dockerfile: services/audit-writer/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   nlp-parser:
     build:
@@ -182,8 +179,10 @@ services:
       dockerfile: services/sentiment-analyzer/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   news-aggregator:
     build:
@@ -191,8 +190,10 @@ services:
       dockerfile: services/news-aggregator/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   option-chain-analyzer:
     build:
@@ -200,8 +201,10 @@ services:
       dockerfile: services/option-chain-analyzer/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   ai-trade-recommender:
     build:
@@ -209,8 +212,10 @@ services:
       dockerfile: services/ai-trade-recommender/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   strategy-agent:
     build:
@@ -218,8 +223,10 @@ services:
       dockerfile: services/strategy-agent/Dockerfile
     environment: *common-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   dashboard-ui:
     build:

@@ -77,33 +77,6 @@ services:
           memory: 64M
     restart: unless-stopped
 
-  # ─── DB Init (runs once then exits) ──────────────────────────────────
-  init:
-    build:
-      context: .
-      dockerfile: services/api-gateway/Dockerfile
-    command: >
-      sh -c "
-        echo 'Waiting for Postgres…' &&
-        sleep 5 &&
-        python -c 'import asyncio; from shared.models.database import init_db; asyncio.run(init_db())' &&
-        echo 'Database tables created'
-      "
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-phoenixtrader}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-phoenixtrader}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
-      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    labels:
-      - "coolify.exclude_from_hc=true"
-    restart: "no"
-
   # ─── Core Services ───────────────────────────────────────────────────
   auth-service:
     build:
@@ -120,8 +93,10 @@ services:
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -139,8 +114,10 @@ services:
       APPROVAL_MODE: ${APPROVAL_MODE:-auto}
       APPROVAL_TIMEOUT_SECONDS: ${APPROVAL_TIMEOUT_SECONDS:-300}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -157,8 +134,10 @@ services:
       <<: *app-env
       NLP_PARSER_URL: http://nlp-parser:8020
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -176,8 +155,10 @@ services:
       APPROVAL_MODE: ${APPROVAL_MODE:-auto}
       APPROVAL_TIMEOUT_SECONDS: ${APPROVAL_TIMEOUT_SECONDS:-300}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -200,8 +181,10 @@ services:
       ENABLE_TRADING: ${ENABLE_TRADING:-true}
       DRY_RUN_MODE: ${DRY_RUN_MODE:-false}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -222,8 +205,10 @@ services:
       TRAILING_STOP_ENABLED: ${TRAILING_STOP_ENABLED:-false}
       TRAILING_STOP_OFFSET: ${TRAILING_STOP_OFFSET:-0.10}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -240,8 +225,10 @@ services:
       <<: *app-env
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -259,8 +246,10 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_TARGET_CHANNELS: ${DISCORD_TARGET_CHANNELS:-}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -275,8 +264,10 @@ services:
       dockerfile: services/audit-writer/Dockerfile
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -317,8 +308,10 @@ services:
         CACHEBUST: ${CACHEBUST:-1}
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -336,8 +329,10 @@ services:
         CACHEBUST: ${CACHEBUST:-1}
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -355,8 +350,10 @@ services:
         CACHEBUST: ${CACHEBUST:-1}
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -374,8 +371,10 @@ services:
         CACHEBUST: ${CACHEBUST:-1}
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -393,8 +392,10 @@ services:
         CACHEBUST: ${CACHEBUST:-1}
     environment: *app-env
     depends_on:
-      init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     deploy:
       resources:
         limits:
