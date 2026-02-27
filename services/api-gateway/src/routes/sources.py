@@ -158,10 +158,19 @@ async def discover_channels_endpoint(req: DiscoverChannelsRequest, request: Requ
 @router.post("", response_model=SourceResponse, status_code=201)
 async def create_source(req: SourceCreate, request: Request, session: AsyncSession = Depends(get_session)):
     user_id = request.state.user_id
+    try:
+        encrypted = encrypt_credentials(req.credentials)
+    except ValueError as exc:
+        logger.error("Credential encryption failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Server misconfiguration: CREDENTIAL_ENCRYPTION_KEY is not set. "
+                   "Please set it in the environment before adding sources.",
+        )
     source = DataSource(
         user_id=uuid.UUID(user_id), source_type=req.source_type,
         display_name=req.display_name, auth_type=req.auth_type,
-        credentials_encrypted=encrypt_credentials(req.credentials),
+        credentials_encrypted=encrypted,
         server_id=req.server_id,
         server_name=req.server_name,
         data_purpose=req.data_purpose or "trades",
