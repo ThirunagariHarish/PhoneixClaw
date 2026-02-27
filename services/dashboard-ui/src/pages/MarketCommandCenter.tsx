@@ -42,6 +42,26 @@ import SectorRotationWidget from '@/components/market-widgets/SectorRotationWidg
 import OptionsExpiryWidget from '@/components/market-widgets/OptionsExpiryWidget'
 import TradingChecklistWidget from '@/components/market-widgets/TradingChecklistWidget'
 import QuickNotesWidget from '@/components/market-widgets/QuickNotesWidget'
+import TickerTapeWidget from '@/components/market-widgets/TickerTapeWidget'
+import TopStoriesWidget from '@/components/market-widgets/TopStoriesWidget'
+import FundamentalDataWidget from '@/components/market-widgets/FundamentalDataWidget'
+import CompanyProfileWidget from '@/components/market-widgets/CompanyProfileWidget'
+import CryptoHeatmapWidget from '@/components/market-widgets/CryptoHeatmapWidget'
+import ETFHeatmapWidget from '@/components/market-widgets/ETFHeatmapWidget'
+import GammaExposureWidget from '@/components/market-widgets/GammaExposureWidget'
+import MarketInternalsWidget from '@/components/market-widgets/MarketInternalsWidget'
+import VixTermStructureWidget from '@/components/market-widgets/VixTermStructureWidget'
+import PremarketGapWidget from '@/components/market-widgets/PremarketGapWidget'
+import SpxKeyLevelsWidget from '@/components/market-widgets/SpxKeyLevelsWidget'
+import OptionsFlowWidget from '@/components/market-widgets/OptionsFlowWidget'
+import CorrelationMatrixWidget from '@/components/market-widgets/CorrelationMatrixWidget'
+import VolatilityDashboardWidget from '@/components/market-widgets/VolatilityDashboardWidget'
+import PremarketMoversWidget from '@/components/market-widgets/PremarketMoversWidget'
+import DayTradePnlWidget from '@/components/market-widgets/DayTradePnlWidget'
+import PositionSizeCalcWidget from '@/components/market-widgets/PositionSizeCalcWidget'
+import RiskRewardWidget from '@/components/market-widgets/RiskRewardWidget'
+import TradingSessionWidget from '@/components/market-widgets/TradingSessionWidget'
+import KeyboardShortcutsWidget from '@/components/market-widgets/KeyboardShortcutsWidget'
 
 const WIDGET_COMPONENTS: Record<string, React.ComponentType> = {
   'fear-greed': FearGreedWidget,
@@ -81,6 +101,26 @@ const WIDGET_COMPONENTS: Record<string, React.ComponentType> = {
   'options-expiry': OptionsExpiryWidget,
   'trading-checklist': TradingChecklistWidget,
   'quick-notes': QuickNotesWidget,
+  'ticker-tape': TickerTapeWidget,
+  'top-stories': TopStoriesWidget,
+  'fundamental-data': FundamentalDataWidget,
+  'company-profile': CompanyProfileWidget,
+  'crypto-heatmap': CryptoHeatmapWidget,
+  'etf-heatmap': ETFHeatmapWidget,
+  'gex': GammaExposureWidget,
+  'market-internals': MarketInternalsWidget,
+  'vix-term': VixTermStructureWidget,
+  'premarket-gaps': PremarketGapWidget,
+  'spx-levels': SpxKeyLevelsWidget,
+  'options-flow': OptionsFlowWidget,
+  'correlations': CorrelationMatrixWidget,
+  'volatility': VolatilityDashboardWidget,
+  'premarket-movers': PremarketMoversWidget,
+  'day-pnl': DayTradePnlWidget,
+  'position-calc': PositionSizeCalcWidget,
+  'risk-reward': RiskRewardWidget,
+  'session-timer': TradingSessionWidget,
+  'keyboard-shortcuts': KeyboardShortcutsWidget,
 }
 
 const STORAGE_KEY = 'market-dashboard-layout'
