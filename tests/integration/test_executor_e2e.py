@@ -6,6 +6,7 @@ Verifies: header merge, broker resolution, validation, and execution path.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from services.trade_executor.src.executor import TradeExecutorService
 
 

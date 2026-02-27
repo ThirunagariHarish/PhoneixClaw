@@ -1,5 +1,6 @@
 import pytest
 from jose import jwt
+
 from services.auth_service.src.auth import (
     create_access_token,
     create_refresh_token,
@@ -7,7 +8,6 @@ from services.auth_service.src.auth import (
     hash_password,
     verify_password,
 )
-
 from shared.config.base_config import config
 
 

@@ -1,4 +1,5 @@
 import pytest
+
 from services.position_monitor.src.exit_engine import ExitEngine
 
 

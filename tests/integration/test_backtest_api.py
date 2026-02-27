@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from services.api_gateway.src.middleware import JWTMiddleware
 from services.api_gateway.src.routes.backtest import router as backtest_router
 from services.auth_service.src.auth import create_access_token
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from shared.crypto.credentials import encrypt_credentials
 from shared.models.database import get_session
 from shared.models.trade import Base, Channel, DataSource, TradingAccount, User

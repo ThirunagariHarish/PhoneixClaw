@@ -1,4 +1,5 @@
 import pytest
+
 from services.trade_executor.src.buffer import calculate_buffered_price
 
 

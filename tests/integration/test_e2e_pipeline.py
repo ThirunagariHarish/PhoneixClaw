@@ -8,6 +8,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from services.trade_parser.src.parser import parse_trade_message
 
 

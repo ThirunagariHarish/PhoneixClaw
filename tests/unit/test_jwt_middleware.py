@@ -1,7 +1,8 @@
 import pytest
-import services.api_gateway.src.middleware as mw_module
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+
+import services.api_gateway.src.middleware as mw_module
 from services.api_gateway.src.middleware import JWTMiddleware
 from services.auth_service.src.auth import create_access_token, create_refresh_token
 
