@@ -309,12 +309,12 @@ async def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ",
         "UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE",
     ]
-    async with engine.begin() as conn:
-        for sql in migrations:
-            try:
+    for sql in migrations:
+        try:
+            async with engine.begin() as conn:
                 await conn.execute(sa.text(sql))
-            except Exception:
-                pass
+        except Exception:
+            pass
     logger.info("Database schema ready")
 
 
@@ -409,7 +409,7 @@ create_metrics_route(app)
 
 @app.get("/health")
 async def health():
-    return {"status": "ready", "service": SERVICE_NAME, "build": "9deee38-fix2"}
+    return {"status": "ready", "service": SERVICE_NAME, "build": "fix-migration-tx"}
 
 
 if __name__ == "__main__":
