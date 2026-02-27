@@ -150,6 +150,7 @@ class DataSource(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     connection_status = Column(String(20), nullable=False, default="DISCONNECTED")
     last_connected_at = Column(DateTime(timezone=True), nullable=True)
+    linked_strategy_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 

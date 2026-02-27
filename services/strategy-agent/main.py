@@ -328,7 +328,7 @@ async def _run_agent_loop(
             result = await execute_tool(tool_name, params)
 
             if "error" in result:
-                retry_key = f"{tool_name}_{iteration}"
+                retry_key = tool_name
                 tool_retry_counts[retry_key] = tool_retry_counts.get(retry_key, 0) + 1
 
                 error_step = {
@@ -504,17 +504,26 @@ def _generate_fallback(message: str) -> str:
     if any(w in msg_lower for w in ["create", "build", "make", "new", "design"]):
         tickers = re.findall(r"\b([A-Z]{1,5})\b", message)
         ticker = tickers[0] if tickers else "SPY"
+        action = json.dumps({"tool": "create_strategy", "params": {
+            "name": f"Strategy for {ticker}",
+            "strategy_text": message[:200],
+            "ticker": ticker,
+        }})
         return (
-            f'THOUGHT: The user wants to create a new strategy for {ticker}. '
+            f"THOUGHT: The user wants to create a new strategy for {ticker}. "
             f"I'll create it, parse the rules, and run a backtest.\n"
-            f'ACTION: {{"tool": "create_strategy", "params": '
-            f'{{"name": "Strategy for {ticker}", "strategy_text": "{message[:200]}", "ticker": "{ticker}"}}}}'
+            f"ACTION: {action}"
         )
 
     if any(w in msg_lower for w in ["backtest", "test", "run", "simulate"]):
+        action = json.dumps({"tool": "backtest", "params": {
+            "strategy_text": message[:200],
+            "ticker": "SPY",
+            "period_years": 2,
+        }})
         return (
             f"THOUGHT: The user wants to run a backtest.\n"
-            f'ACTION: {{"tool": "backtest", "params": {{"strategy_text": "{message[:200]}", "ticker": "SPY", "period_years": 2}}}}'
+            f"ACTION: {action}"
         )
 
     if any(w in msg_lower for w in ["sentiment", "mood", "feeling"]):

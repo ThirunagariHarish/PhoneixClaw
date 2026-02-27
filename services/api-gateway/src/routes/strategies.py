@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from shared.models.database import get_session
-from shared.models.trade import StrategyModel
+from shared.models.trade import DataSource, StrategyModel
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,56 @@ async def deploy_strategy(
     await session.commit()
     await session.refresh(s)
     return _response(s)
+
+
+# ── Deploy strategy as a signal data source ───────────────────────────────────
+
+@router.post("/{strategy_id}/deploy-as-source")
+async def deploy_as_source(
+    strategy_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Deploy a backtested strategy as a signal data source."""
+    s = await _get_strategy(strategy_id, request, session)
+    if not s.backtest_summary:
+        raise HTTPException(status_code=400, detail="Run backtest before deploying as source")
+
+    existing = await session.execute(
+        select(DataSource).where(
+            DataSource.linked_strategy_id == s.id,
+            DataSource.user_id == uuid.UUID(request.state.user_id),
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Strategy is already deployed as a data source")
+
+    ds = DataSource(
+        user_id=uuid.UUID(request.state.user_id),
+        source_type="strategy",
+        display_name=f"Strategy: {s.name}",
+        auth_type="none",
+        credentials_encrypted=b"",
+        data_purpose="trades",
+        connection_status="CONNECTED",
+        linked_strategy_id=s.id,
+    )
+    session.add(ds)
+
+    s.status = "deployed"
+    s.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(ds)
+    await session.refresh(s)
+
+    return {
+        "strategy": _response(s),
+        "data_source": {
+            "id": str(ds.id),
+            "display_name": ds.display_name,
+            "source_type": ds.source_type,
+        },
+    }
 
 
 # ── Approval endpoint for agent deploy gates ─────────────────────────────────
