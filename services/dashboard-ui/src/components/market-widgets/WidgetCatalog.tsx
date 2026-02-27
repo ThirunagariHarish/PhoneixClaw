@@ -6,7 +6,9 @@ import {
   Plus, Gauge, TrendingUp, BarChart3, Sparkles, Newspaper, Youtube,
   Twitter, Globe, Bitcoin, PieChart, Calendar, LineChart, Landmark,
   DollarSign, ArrowUpDown, HeartPulse, CandlestickChart, Rss,
-  Clock, Flame, Rocket,
+  Clock, Flame, Rocket, Search, Activity, BarChart2, ArrowUpCircle,
+  RefreshCw, StickyNote, CheckSquare, CalendarClock, Info, TrendingDown,
+  Zap,
 } from 'lucide-react'
 
 export interface WidgetDef {
@@ -44,6 +46,24 @@ export const WIDGET_DEFINITIONS: WidgetDef[] = [
   { id: 'heatmap', label: 'Market Heatmap', description: 'S&P 500 stock heatmap', icon: BarChart3, category: 'Charts', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
   { id: 'tv-chart', label: 'TradingView Chart', description: 'Advanced interactive chart', icon: LineChart, category: 'Charts', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
   { id: 'platform-sentiment', label: 'Platform Sentiment', description: 'Your Discord sentiment data', icon: HeartPulse, category: 'Platform', defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
+  // TradingView embed widgets
+  { id: 'stock-screener', label: 'Stock Screener', description: 'Filter stocks by technicals & fundamentals', icon: Search, category: 'Screeners', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
+  { id: 'forex-cross-rates', label: 'Forex Cross Rates', description: 'Major currency pair rates matrix', icon: DollarSign, category: 'Screeners', defaultW: 5, defaultH: 5, minW: 4, minH: 4 },
+  { id: 'crypto-screener', label: 'Crypto Screener', description: 'Screen crypto by market cap, volume, change', icon: Bitcoin, category: 'Screeners', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
+  { id: 'technical-analysis', label: 'Technical Analysis', description: 'Buy/Sell/Neutral gauge for any symbol', icon: Activity, category: 'Charts', defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  { id: 'symbol-info', label: 'Symbol Info', description: 'Compact ticker card with price & volume', icon: Info, category: 'Market Pulse', defaultW: 3, defaultH: 2, minW: 2, minH: 2 },
+  { id: 'mini-chart', label: 'Mini Chart', description: 'Small chart with price action', icon: LineChart, category: 'Charts', defaultW: 3, defaultH: 3, minW: 2, minH: 2 },
+  { id: 'hotlists', label: 'Hotlists', description: 'Most active, top gainers/losers, volume leaders', icon: Zap, category: 'Trading Intel', defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  // API-backed widgets
+  { id: 'put-call-ratio', label: 'Put/Call Ratio', description: 'Options P/C ratio for SPY & QQQ', icon: BarChart2, category: 'Trading Intel', defaultW: 3, defaultH: 5, minW: 2, minH: 4 },
+  { id: 'ipo-calendar', label: 'IPO Calendar', description: 'Recent and notable IPO listings', icon: Rocket, category: 'Trading Intel', defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  { id: 'rvol', label: 'Relative Volume', description: 'Stocks with volume spikes vs 20-day avg', icon: BarChart3, category: 'Trading Intel', defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  { id: '52week', label: '52-Week Highs/Lows', description: 'Stocks near 52-week extremes', icon: ArrowUpCircle, category: 'Trading Intel', defaultW: 4, defaultH: 5, minW: 3, minH: 4 },
+  { id: 'sector-rotation', label: 'Sector Rotation', description: 'Multi-timeframe sector performance', icon: RefreshCw, category: 'Indices & Performance', defaultW: 5, defaultH: 5, minW: 4, minH: 4 },
+  // Local/static widgets
+  { id: 'options-expiry', label: 'Options Expiry', description: 'Upcoming options expiration dates', icon: CalendarClock, category: 'Trading Intel', defaultW: 3, defaultH: 4, minW: 2, minH: 3 },
+  { id: 'trading-checklist', label: 'Trading Checklist', description: 'Personal pre-trade checklist', icon: CheckSquare, category: 'Platform', defaultW: 3, defaultH: 5, minW: 2, minH: 4 },
+  { id: 'quick-notes', label: 'Quick Notes', description: 'Sticky notes for trade ideas & reminders', icon: StickyNote, category: 'Platform', defaultW: 3, defaultH: 5, minW: 2, minH: 4 },
 ]
 
 const CATEGORIES = [...new Set(WIDGET_DEFINITIONS.map(w => w.category))]

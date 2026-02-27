@@ -27,6 +27,21 @@ import PlatformSentimentWidget from '@/components/market-widgets/PlatformSentime
 import TradingViewChartWidget from '@/components/market-widgets/TradingViewChartWidget'
 import RSSFeedWidget from '@/components/market-widgets/RSSFeedWidget'
 import MarketClockWidget from '@/components/market-widgets/MarketClockWidget'
+import StockScreenerWidget from '@/components/market-widgets/StockScreenerWidget'
+import ForexCrossRatesWidget from '@/components/market-widgets/ForexCrossRatesWidget'
+import CryptoScreenerWidget from '@/components/market-widgets/CryptoScreenerWidget'
+import TechnicalAnalysisWidget from '@/components/market-widgets/TechnicalAnalysisWidget'
+import SymbolInfoWidget from '@/components/market-widgets/SymbolInfoWidget'
+import MiniChartWidget from '@/components/market-widgets/MiniChartWidget'
+import HotlistsWidget from '@/components/market-widgets/HotlistsWidget'
+import PutCallRatioWidget from '@/components/market-widgets/PutCallRatioWidget'
+import IPOCalendarWidget from '@/components/market-widgets/IPOCalendarWidget'
+import RelativeVolumeWidget from '@/components/market-widgets/RelativeVolumeWidget'
+import FiftyTwoWeekWidget from '@/components/market-widgets/FiftyTwoWeekWidget'
+import SectorRotationWidget from '@/components/market-widgets/SectorRotationWidget'
+import OptionsExpiryWidget from '@/components/market-widgets/OptionsExpiryWidget'
+import TradingChecklistWidget from '@/components/market-widgets/TradingChecklistWidget'
+import QuickNotesWidget from '@/components/market-widgets/QuickNotesWidget'
 
 const WIDGET_COMPONENTS: Record<string, React.ComponentType> = {
   'fear-greed': FearGreedWidget,
@@ -51,6 +66,21 @@ const WIDGET_COMPONENTS: Record<string, React.ComponentType> = {
   'tv-chart': TradingViewChartWidget,
   'rss-feed': RSSFeedWidget,
   'market-clock': MarketClockWidget,
+  'stock-screener': StockScreenerWidget,
+  'forex-cross-rates': ForexCrossRatesWidget,
+  'crypto-screener': CryptoScreenerWidget,
+  'technical-analysis': TechnicalAnalysisWidget,
+  'symbol-info': SymbolInfoWidget,
+  'mini-chart': MiniChartWidget,
+  'hotlists': HotlistsWidget,
+  'put-call-ratio': PutCallRatioWidget,
+  'ipo-calendar': IPOCalendarWidget,
+  'rvol': RelativeVolumeWidget,
+  '52week': FiftyTwoWeekWidget,
+  'sector-rotation': SectorRotationWidget,
+  'options-expiry': OptionsExpiryWidget,
+  'trading-checklist': TradingChecklistWidget,
+  'quick-notes': QuickNotesWidget,
 }
 
 const STORAGE_KEY = 'market-dashboard-layout'
