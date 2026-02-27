@@ -1,35 +1,44 @@
 import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+from services.signal_scorer.src.scorer import SignalScorerService
 
-from services.signal_scorer.src.scorer import SimpleSignalScorer
+
+class TestSignalQuality:
+    def setup_method(self):
+        with patch.object(SignalScorerService, '__init__', lambda self: None):
+            self.scorer = SignalScorerService()
+            self.scorer._last_breakdown = {}
+
+    def test_full_quality_signal(self):
+        signal = {
+            "price": 2.50,
+            "expiration": "2025-03-21",
+            "strike": 190,
+            "quantity": 1,
+            "profit_target": 0.30,
+        }
+        assert self.scorer._score_signal_quality(signal) == 30
+
+    def test_minimal_signal(self):
+        signal = {}
+        assert self.scorer._score_signal_quality(signal) == 0
+
+    def test_partial_signal(self):
+        signal = {"price": 2.50, "strike": 190}
+        assert self.scorer._score_signal_quality(signal) == 13
 
 
-@pytest.fixture
-def scorer():
-    return SimpleSignalScorer()
+class TestMarketConditions:
+    def setup_method(self):
+        with patch.object(SignalScorerService, '__init__', lambda self: None):
+            self.scorer = SignalScorerService()
 
-class TestSimpleSignalScorer:
-    @pytest.mark.asyncio
-    async def test_score_major_index(self, scorer):
-        score = await scorer.score({"ticker": "SPX", "expiration": "2026-02-20", "price": 4.80})
-        assert score > 0.5
+    def test_market_open(self):
+        self.scorer.calendar = MagicMock()
+        self.scorer.calendar.is_market_open.return_value = True
+        assert self.scorer._score_market_conditions() == 18
 
-    @pytest.mark.asyncio
-    async def test_score_unknown_ticker(self, scorer):
-        score = await scorer.score({"ticker": "RANDOMXYZ", "price": 4.80})
-        assert score >= 0.0
-
-    @pytest.mark.asyncio
-    async def test_score_bounded(self, scorer):
-        score = await scorer.score({"ticker": "SPX", "expiration": "2026-02-20", "price": 5.0, "quantity": 2})
-        assert 0.0 <= score <= 1.0
-
-    @pytest.mark.asyncio
-    async def test_explain(self, scorer):
-        explanation = await scorer.explain({"ticker": "SPX", "expiration": "2026-02-20"})
-        assert "SPX" in explanation
-
-    @pytest.mark.asyncio
-    async def test_process_adds_score(self, scorer):
-        result = await scorer.process({"ticker": "SPX", "price": 4.80})
-        assert "signal_score" in result
-        assert "scored_by" in result
+    def test_market_closed(self):
+        self.scorer.calendar = MagicMock()
+        self.scorer.calendar.is_market_open.return_value = False
+        assert self.scorer._score_market_conditions() == 8

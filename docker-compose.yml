@@ -104,6 +104,19 @@ services:
       kafka:
         condition: service_healthy
 
+  signal-scorer:
+    build:
+      context: .
+      dockerfile: services/signal-scorer/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    environment: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
   trade-gateway:
     build:
       context: .

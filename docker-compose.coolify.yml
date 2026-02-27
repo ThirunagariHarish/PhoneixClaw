@@ -152,6 +152,26 @@ services:
           memory: 128M
     restart: unless-stopped
 
+  signal-scorer:
+    build:
+      context: .
+      dockerfile: services/signal-scorer/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
   trade-gateway:
     build:
       context: .
