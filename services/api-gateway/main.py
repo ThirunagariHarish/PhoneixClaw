@@ -55,6 +55,11 @@ async def _run_migrations():
     await init_db()
     migrations = [
         "ALTER TABLE trades ALTER COLUMN trading_account_id DROP NOT NULL",
+        # ── Ensure all User model columns exist ──
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) NOT NULL DEFAULT 'UTC'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '{\"email_enabled\": true}'::jsonb",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'trader'",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb",
@@ -404,7 +409,7 @@ create_metrics_route(app)
 
 @app.get("/health")
 async def health():
-    return {"status": "ready", "service": SERVICE_NAME}
+    return {"status": "ready", "service": SERVICE_NAME, "build": "9deee38-fix2"}
 
 
 if __name__ == "__main__":
