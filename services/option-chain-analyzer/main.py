@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))

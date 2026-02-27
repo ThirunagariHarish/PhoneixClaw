@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
 
 import httpx
 import msgpack
@@ -24,6 +23,7 @@ async def _get_redis():
     if _redis_client is None:
         try:
             import redis.asyncio as aioredis
+
             from shared.config.base_config import config
             _redis_client = aioredis.from_url(config.redis.url, decode_responses=True)
             await _redis_client.ping()
@@ -189,7 +189,11 @@ class AITradeRecommenderService:
                     decision=data.get("decision", "unknown"),
                     decision_rationale=data.get("decision_rationale"),
                     trade_params=data.get("trade_params"),
-                    option_analysis_id=uuid.UUID(data["analysis"]["analysis_id"]) if (data.get("analysis") or {}).get("analysis_id") else None,
+                    option_analysis_id=(
+                        uuid.UUID(data["analysis"]["analysis_id"])
+                        if (data.get("analysis") or {}).get("analysis_id")
+                        else None
+                    ),
                 )
                 session.add(log)
                 await session.commit()

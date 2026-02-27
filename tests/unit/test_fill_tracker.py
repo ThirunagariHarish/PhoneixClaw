@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from services.trade_executor.src.fill_tracker import FillTracker
 
 TRADE_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"

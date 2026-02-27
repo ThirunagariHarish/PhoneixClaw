@@ -1,5 +1,5 @@
-from services.news_aggregator.src.story_clusterer import cluster_headlines
 from services.news_aggregator.src.importance_ranker import rank_headlines
+from services.news_aggregator.src.story_clusterer import cluster_headlines
 
 
 class TestStoryClustering:
@@ -53,7 +53,10 @@ class TestImportanceRanker:
     def test_all_get_scores(self):
         headlines = [
             {"title": "Headline A", "source_api": "newsapi", "tickers": [], "sentiment_score": 0, "cluster_size": 1},
-            {"title": "Headline B", "source_api": "finnhub", "tickers": ["AAPL"], "sentiment_score": 0.5, "cluster_size": 2},
+            {
+                "title": "Headline B", "source_api": "finnhub",
+                "tickers": ["AAPL"], "sentiment_score": 0.5, "cluster_size": 2,
+            },
         ]
         ranked = rank_headlines(headlines)
         assert all("importance_score" in h for h in ranked)

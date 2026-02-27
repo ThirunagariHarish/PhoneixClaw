@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.database import get_session
-from shared.models.trade import User, UserWatchlist
+from shared.models.trade import UserWatchlist
 
 logger = logging.getLogger(__name__)
 

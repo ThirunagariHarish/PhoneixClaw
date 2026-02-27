@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,7 +138,7 @@ async def deploy_pipeline(
     p = await _get_pipeline(pipeline_id, request, session)
 
     nodes = p.flow_json.get("nodes", [])
-    edges = p.flow_json.get("edges", [])
+    p.flow_json.get("edges", [])
     if not nodes:
         raise HTTPException(status_code=400, detail="Pipeline has no nodes")
 
@@ -166,7 +166,7 @@ async def test_pipeline(
     p = await _get_pipeline(pipeline_id, request, session)
 
     nodes = p.flow_json.get("nodes", [])
-    edges = p.flow_json.get("edges", [])
+    p.flow_json.get("edges", [])
 
     results = []
     for node in nodes:

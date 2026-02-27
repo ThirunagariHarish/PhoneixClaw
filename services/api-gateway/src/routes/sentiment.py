@@ -199,13 +199,20 @@ async def ticker_summary(
         llm = OllamaClient()
         summary = await llm.generate(
             prompt=summary_input,
-            system="You are a financial analyst. Provide a concise 2-3 sentence summary of market sentiment. Be specific about bullish/bearish signals.",
+            system=(
+                "You are a financial analyst. Provide a concise"
+                " 2-3 sentence summary of market sentiment."
+                " Be specific about bullish/bearish signals."
+            ),
         )
     except Exception:
         logger.exception("LLM summary failed for %s", ticker)
         bullish = sum(1 for m in messages if m.sentiment_label and "bullish" in m.sentiment_label.lower())
         bearish = sum(1 for m in messages if m.sentiment_label and "bearish" in m.sentiment_label.lower())
-        summary = f"{ticker.upper()} has {len(messages)} recent mentions with {bullish} bullish and {bearish} bearish signals."
+        summary = (
+            f"{ticker.upper()} has {len(messages)} recent mentions"
+            f" with {bullish} bullish and {bearish} bearish signals."
+        )
 
     return {
         "ticker": ticker.upper(),

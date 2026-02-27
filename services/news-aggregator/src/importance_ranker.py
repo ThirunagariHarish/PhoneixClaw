@@ -28,5 +28,6 @@ def rank_headlines(headlines: list[dict]) -> list[dict]:
         h["importance_score"] = round(min(importance, 1.0) * 100, 2)
 
     headlines.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
-    logger.info("Ranked %d headlines, top score: %.1f", len(headlines), headlines[0].get("importance_score", 0) if headlines else 0)
+    top_score = headlines[0].get("importance_score", 0) if headlines else 0
+    logger.info("Ranked %d headlines, top score: %.1f", len(headlines), top_score)
     return headlines

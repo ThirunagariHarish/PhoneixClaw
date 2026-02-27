@@ -53,15 +53,15 @@ async def list_trades(
     user_id = request.state.user_id
     user_uuid = uuid.UUID(user_id)
 
-    PipelineAlias = aliased(TradePipeline)
-    AccountAlias = aliased(TradingAccount)
+    pipeline_alias = aliased(TradePipeline)
+    account_alias = aliased(TradingAccount)
 
     stmt = (
-        select(Trade, AccountAlias.display_name, PipelineAlias.name)
-        .outerjoin(AccountAlias, Trade.trading_account_id == AccountAlias.id)
+        select(Trade, account_alias.display_name, pipeline_alias.name)
+        .outerjoin(account_alias, Trade.trading_account_id == account_alias.id)
         .outerjoin(
-            PipelineAlias,
-            (Trade.channel_id == PipelineAlias.channel_id) & (Trade.user_id == PipelineAlias.user_id),
+            pipeline_alias,
+            (Trade.channel_id == pipeline_alias.channel_id) & (Trade.user_id == pipeline_alias.user_id),
         )
         .where(Trade.user_id == user_uuid)
     )

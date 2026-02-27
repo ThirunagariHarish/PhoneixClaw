@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.crypto.credentials import encrypt_credentials
 from shared.models.database import get_session
 from shared.models.trade import (
-    AITradeDecision,
     AccountSourceMapping,
+    AITradeDecision,
     Channel,
     DataSource,
     RawMessage,
@@ -733,7 +733,8 @@ async def pipeline_performance(
     session: AsyncSession = Depends(get_session),
 ):
     """Time-series performance data for charting."""
-    from sqlalchemy import cast, Date as SQLDate
+    from sqlalchemy import Date as SQLDate
+    from sqlalchemy import cast
     pipeline = await _get_pipeline(pipeline_id, request, session)
 
     stmt = (

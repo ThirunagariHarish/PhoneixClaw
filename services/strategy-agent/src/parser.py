@@ -5,11 +5,13 @@ from shared.llm.client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
-PARSE_PROMPT = """You are a trading strategy parser. Convert the user's natural language strategy description into a structured JSON format.
+PARSE_PROMPT = """\
+You are a trading strategy parser. \
+Convert the user's natural language strategy description into a structured JSON format.
 
 Output JSON with these fields:
 - "name": short strategy name
-- "asset_type": "equity" or "option"  
+- "asset_type": "equity" or "option"
 - "ticker": primary ticker symbol (or null for multi-ticker)
 - "direction": "long", "short", or "both"
 - "entry_rules": list of conditions for entry

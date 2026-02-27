@@ -1,8 +1,5 @@
 import logging
 
-import numpy as np
-import pandas as pd
-
 from .data_fetcher import fetch_historical_data
 
 logger = logging.getLogger(__name__)

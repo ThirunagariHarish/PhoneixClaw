@@ -1,5 +1,4 @@
 import pytest
-
 from services.trade_executor.src.validator import TradeValidator
 
 

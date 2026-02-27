@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import msgpack
 
@@ -26,6 +26,7 @@ async def _get_redis():
     if _redis_client is None:
         try:
             import redis.asyncio as aioredis
+
             from shared.config.base_config import config
             _redis_client = aioredis.from_url(config.redis.url, decode_responses=True)
             await _redis_client.ping()
@@ -102,7 +103,11 @@ class SentimentAnalyzerService:
                     confidence=confidence,
                     source_message_id=msg.get("source_message_id"),
                     raw_metadata=msg.get("raw_metadata", {}),
-                    message_timestamp=datetime.fromisoformat(msg["message_timestamp"]) if msg.get("message_timestamp") else None,
+                    message_timestamp=(
+                        datetime.fromisoformat(msg["message_timestamp"])
+                        if msg.get("message_timestamp")
+                        else None
+                    ),
                 )
                 session.add(sm)
 

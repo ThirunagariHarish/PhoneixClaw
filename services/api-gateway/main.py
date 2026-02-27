@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.api_gateway.src.middleware import JWTMiddleware
 from services.api_gateway.src.routes.accounts import router as accounts_router
 from services.api_gateway.src.routes.admin import router as admin_router
+from services.api_gateway.src.routes.advanced_pipelines import router as advanced_pipelines_router
 from services.api_gateway.src.routes.backtest import router as backtest_router
 from services.api_gateway.src.routes.board import router as board_router
 from services.api_gateway.src.routes.chat import router as chat_router
@@ -19,18 +20,17 @@ from services.api_gateway.src.routes.chat import set_kafka_producer
 from services.api_gateway.src.routes.mappings import router as mappings_router
 from services.api_gateway.src.routes.messages import router as messages_router
 from services.api_gateway.src.routes.metrics import router as metrics_router
+from services.api_gateway.src.routes.models import router as models_router
+from services.api_gateway.src.routes.news import router as news_router
 from services.api_gateway.src.routes.notifications import router as notifications_router
 from services.api_gateway.src.routes.pipelines import ai_router
 from services.api_gateway.src.routes.pipelines import router as pipelines_router
 from services.api_gateway.src.routes.positions import router as positions_router
+from services.api_gateway.src.routes.sentiment import router as sentiment_router
 from services.api_gateway.src.routes.sources import router as sources_router
+from services.api_gateway.src.routes.strategies import router as strategies_router
 from services.api_gateway.src.routes.system import router as system_router
 from services.api_gateway.src.routes.trades import router as trades_router
-from services.api_gateway.src.routes.advanced_pipelines import router as advanced_pipelines_router
-from services.api_gateway.src.routes.news import router as news_router
-from services.api_gateway.src.routes.sentiment import router as sentiment_router
-from services.api_gateway.src.routes.strategies import router as strategies_router
-from services.api_gateway.src.routes.models import router as models_router
 from services.api_gateway.src.routes.watchlist import router as watchlist_router
 from services.api_gateway.src.websocket import router as ws_router
 from services.api_gateway.src.websocket import run_ws_consumer
@@ -71,7 +71,10 @@ async def _run_migrations():
         # ── Phase 2 column additions ──
         "ALTER TABLE trade_pipelines ADD COLUMN IF NOT EXISTS pipeline_type VARCHAR(20) NOT NULL DEFAULT 'trade'",
         "ALTER TABLE trade_pipelines ADD COLUMN IF NOT EXISTS trigger_config JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "ALTER TABLE trade_pipelines ADD COLUMN IF NOT EXISTS market_hours_mode VARCHAR(20) NOT NULL DEFAULT 'regular_only'",
+        (
+            "ALTER TABLE trade_pipelines ADD COLUMN IF NOT EXISTS"
+            " market_hours_mode VARCHAR(20) NOT NULL DEFAULT 'regular_only'"
+        ),
         # ── Phase 2 new tables ──
         """CREATE TABLE IF NOT EXISTS user_watchlist (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -247,15 +250,49 @@ async def _run_migrations():
         "CREATE INDEX IF NOT EXISTS idx_ai_decision_user ON ai_trade_decisions(user_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_ai_decision_ticker ON ai_trade_decisions(ticker, created_at)",
         # ── Seed model_registry with system models ──
-        """INSERT INTO model_registry (id, name, model_type, provider, model_identifier, version, description, config, status, health_status)
-        VALUES
-            (gen_random_uuid(), 'FinBERT', 'sentiment', 'huggingface', 'ProsusAI/finbert', '1.0', 'Financial sentiment analysis model (3-class: positive/neutral/negative, mapped to 5-class)', '{"max_length": 512, "device": "cpu"}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'Mistral 7B', 'llm', 'ollama', 'mistral', '7b', 'General-purpose LLM for trade analysis, summaries, and strategy parsing', '{"temperature": 0.7, "context_length": 8192}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'Llama 3.1 8B', 'llm', 'ollama', 'llama3.1', '8b', 'Fallback LLM model for trade analysis and reasoning', '{"temperature": 0.7, "context_length": 8192}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'Option Chain Analyzer', 'option_analyzer', 'custom', 'option-chain-analyzer', '1.0', 'Analyzes Unusual Whales option chains to recommend optimal contracts', '{"top_k": 3}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'AI Trade Recommender', 'trade_recommender', 'custom', 'ai-trade-recommender', '1.0', 'Converts sentiment/news signals into trade recommendations via LLM + UW', '{}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'Strategy Agent', 'strategy', 'custom', 'strategy-agent', '1.0', 'Natural language strategy parser and backtester', '{}'::jsonb, 'available', 'unknown'),
-            (gen_random_uuid(), 'spaCy NER', 'nlp', 'spacy', 'en_core_web_sm', '3.x', 'Named entity recognition for ticker and financial entity extraction', '{}'::jsonb, 'available', 'unknown')
+        """INSERT INTO model_registry (
+            id, name, model_type, provider, model_identifier,
+            version, description, config, status, health_status
+        ) VALUES
+            (gen_random_uuid(), 'FinBERT', 'sentiment',
+             'huggingface', 'ProsusAI/finbert', '1.0',
+             'Financial sentiment analysis model'
+             ' (3-class: positive/neutral/negative,'
+             ' mapped to 5-class)',
+             '{"max_length": 512, "device": "cpu"}'::jsonb,
+             'available', 'unknown'),
+            (gen_random_uuid(), 'Mistral 7B', 'llm', 'ollama',
+             'mistral', '7b',
+             'General-purpose LLM for trade analysis,'
+             ' summaries, and strategy parsing',
+             '{"temperature": 0.7, "context_length": 8192}'::jsonb,
+             'available', 'unknown'),
+            (gen_random_uuid(), 'Llama 3.1 8B', 'llm', 'ollama',
+             'llama3.1', '8b',
+             'Fallback LLM model for trade analysis and reasoning',
+             '{"temperature": 0.7, "context_length": 8192}'::jsonb,
+             'available', 'unknown'),
+            (gen_random_uuid(), 'Option Chain Analyzer',
+             'option_analyzer', 'custom',
+             'option-chain-analyzer', '1.0',
+             'Analyzes Unusual Whales option chains'
+             ' to recommend optimal contracts',
+             '{"top_k": 3}'::jsonb, 'available', 'unknown'),
+            (gen_random_uuid(), 'AI Trade Recommender',
+             'trade_recommender', 'custom',
+             'ai-trade-recommender', '1.0',
+             'Converts sentiment/news signals into'
+             ' trade recommendations via LLM + UW',
+             '{}'::jsonb, 'available', 'unknown'),
+            (gen_random_uuid(), 'Strategy Agent', 'strategy',
+             'custom', 'strategy-agent', '1.0',
+             'Natural language strategy parser and backtester',
+             '{}'::jsonb, 'available', 'unknown'),
+            (gen_random_uuid(), 'spaCy NER', 'nlp', 'spacy',
+             'en_core_web_sm', '3.x',
+             'Named entity recognition for ticker'
+             ' and financial entity extraction',
+             '{}'::jsonb, 'available', 'unknown')
         ON CONFLICT (name) DO NOTHING""",
         "ALTER TABLE ai_trade_decisions ALTER COLUMN user_id DROP NOT NULL",
     ]

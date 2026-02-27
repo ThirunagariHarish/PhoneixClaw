@@ -1,6 +1,5 @@
 import hashlib
 import logging
-from collections import defaultdict
 
 from rapidfuzz import fuzz
 

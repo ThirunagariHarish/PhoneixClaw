@@ -29,7 +29,7 @@ def run_backtest(
     trades = []
     equity_curve = [initial_capital]
 
-    entry_rules = parsed_config.get("entry_rules", [])
+    parsed_config.get("entry_rules", [])
     direction = parsed_config.get("direction", "long")
 
     for i in range(20, len(df)):

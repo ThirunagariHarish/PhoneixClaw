@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from services.trade_gateway.src.gateway import TradeGatewayService
 
 

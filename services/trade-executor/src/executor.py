@@ -3,6 +3,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
 from services.trade_executor.src.buffer import calculate_buffered_price  # noqa: E402
 from services.trade_executor.src.fill_tracker import FillTracker
 from services.trade_executor.src.validator import trade_validator  # noqa: E402
@@ -14,7 +16,6 @@ from shared.broker.symbol_converter import convert_index_to_etf
 from shared.kafka_utils.consumer import KafkaConsumerWrapper
 from shared.kafka_utils.dlq import DeadLetterQueue
 from shared.kafka_utils.producer import KafkaProducerWrapper
-from sqlalchemy import select
 from shared.models.database import AsyncSessionLocal
 from shared.models.trade import AccountSourceMapping, Channel, Position, TradePipeline, TradingAccount
 from shared.retry import RetryExhaustedError, retry_async

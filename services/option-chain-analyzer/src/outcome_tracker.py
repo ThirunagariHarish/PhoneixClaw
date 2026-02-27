@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from shared.models.database import async_session_factory
 from shared.models.trade import OptionAnalysisLog

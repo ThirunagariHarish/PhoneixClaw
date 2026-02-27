@@ -1,6 +1,7 @@
-from shared.unusual_whales.models import OptionContract
 from services.option_chain_analyzer.src.analyzer import _score_contract
 from services.option_chain_analyzer.src.strategy_suggester import suggest_strategy
+
+from shared.unusual_whales.models import OptionContract
 
 
 class TestOptionAnalyzer:

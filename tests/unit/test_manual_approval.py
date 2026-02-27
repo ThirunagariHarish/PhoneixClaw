@@ -1,7 +1,6 @@
 import time
 
 import pytest
-
 from services.trade_gateway.src.manual_mode import ManualApprovalManager
 
 

@@ -3,6 +3,7 @@ Pydantic models for Unusual Whales API responses.
 """
 
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
