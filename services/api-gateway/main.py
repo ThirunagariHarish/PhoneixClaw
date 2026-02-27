@@ -409,7 +409,7 @@ create_metrics_route(app)
 
 @app.get("/health")
 async def health():
-    return {"status": "ready", "service": SERVICE_NAME, "build": "fix-migration-tx"}
+    return {"status": "ready", "service": SERVICE_NAME}
 
 
 if __name__ == "__main__":
