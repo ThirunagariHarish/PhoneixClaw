@@ -114,7 +114,7 @@ class AITradeRecommenderService:
                 top_contract = analysis["contracts"][0]
                 trade_msg = {
                     "ticker": ticker,
-                    "action": "BTO" if direction in ("bullish", "very_bullish") else "STO",
+                    "action": "BTO",
                     "asset_type": "option",
                     "contract_type": top_contract.get("option_type", "call"),
                     "strike": top_contract.get("strike"),

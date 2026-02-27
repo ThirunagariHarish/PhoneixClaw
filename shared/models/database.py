@@ -21,6 +21,9 @@ async def get_session() -> AsyncSession:  # type: ignore[misc]
         yield session
 
 
+async_session_factory = AsyncSessionLocal
+
+
 async def init_db() -> None:
     from shared.models.trade import Base
 
