@@ -82,8 +82,9 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
   })
 
   const filteredAccounts = (accounts || []).filter(a => {
-    if (subtype === 'alpaca') return a.broker_type === 'alpaca'
-    if (subtype === 'ibkr') return a.broker_type === 'ibkr'
+    const broker = String(data.broker_type || subtype || '')
+    if (broker === 'alpaca') return a.broker_type === 'alpaca'
+    if (broker === 'ibkr') return a.broker_type === 'ibkr'
     return true
   })
 
@@ -303,24 +304,30 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
         {node.type === 'broker' && (
           <>
             <div className="space-y-2">
-              <Label className="text-xs">Broker</Label>
-              <Select value={String(data.subtype || 'alpaca')} onValueChange={v => update('subtype', v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <Label className="text-xs">Broker Type</Label>
+              <Select
+                value={String(data.broker_type || '')}
+                onValueChange={v => {
+                  onUpdate(node.id, { ...data, broker_type: v, account_id: '', account_name: '' })
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select broker..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="alpaca">Alpaca</SelectItem>
                   <SelectItem value="ibkr">Interactive Brokers</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Trading Account</Label>
-              {accountsLoading ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Loading accounts...
-                </div>
-              ) : filteredAccounts.length > 0 ? (
-                <Select
-                  value={String(data.account_id || '')}
+            {data.broker_type && (
+              <div className="space-y-2">
+                <Label className="text-xs">Trading Account</Label>
+                {accountsLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading accounts...
+                  </div>
+                ) : filteredAccounts.length > 0 ? (
+                  <Select
+                    value={String(data.account_id || '')}
                     onValueChange={v => {
                       const acct = filteredAccounts.find(a => a.id === v)
                       onUpdate(node.id, {
@@ -330,22 +337,23 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: Props) {
                         paper_mode: acct?.paper_mode ?? true,
                       })
                     }}
-                >
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select account..." /></SelectTrigger>
-                  <SelectContent>
-                    {filteredAccounts.map(a => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.display_name} {a.paper_mode ? '(Paper)' : '(Live)'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-[11px] text-muted-foreground">
-                  No {subtype} accounts configured. Add one in Trading Accounts.
-                </p>
-              )}
-            </div>
+                  >
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select account..." /></SelectTrigger>
+                    <SelectContent>
+                      {filteredAccounts.map(a => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.display_name} {a.paper_mode ? '(Paper)' : '(Live)'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    No {String(data.broker_type)} accounts configured. Add one in Trading Accounts.
+                  </p>
+                )}
+              </div>
+            )}
           </>
         )}
 

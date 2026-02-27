@@ -66,8 +66,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://phoenixtrader:localdev@postgres:5432/phoenixtrader
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
-      JWT_SECRET_KEY: dev-secret-key
-      CREDENTIAL_ENCRYPTION_KEY: ZGV2LWVuY3J5cHRpb24ta2V5LTEyMzQ1Njc4OTA=
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production-use-openssl-rand-hex-32}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy

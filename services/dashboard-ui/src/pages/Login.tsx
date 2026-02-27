@@ -49,7 +49,8 @@ export default function Login() {
         } else if (!err.response) {
           setError('Service unavailable. Please try again later.')
         } else {
-          setError(err.response.data?.detail || `Login failed (${err.response.status}).`)
+          const detail = err.response.data?.detail
+          setError(typeof detail === 'string' ? detail : `Login failed (${err.response.status}).`)
         }
       } else {
         setError('Login failed. Please try again.')

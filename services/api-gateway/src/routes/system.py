@@ -23,6 +23,12 @@ SERVICE_URLS = {
     "notification-service": "http://notification-service:8010/health",
     "source-orchestrator": "http://source-orchestrator:8002/health",
     "nlp-parser": "http://nlp-parser:8020/health",
+    "audit-writer": "http://audit-writer:8012/health",
+    "sentiment-analyzer": "http://sentiment-analyzer:8021/health",
+    "news-aggregator": "http://news-aggregator:8022/health",
+    "ai-trade-recommender": "http://ai-trade-recommender:8023/health",
+    "option-chain-analyzer": "http://option-chain-analyzer:8024/health",
+    "strategy-agent": "http://strategy-agent:8025/health",
 }
 
 

@@ -37,7 +37,7 @@ export default function MFASetup() {
   })
 
   const confirmMut = useMutation({
-    mutationFn: () => axios.post('/auth/mfa/confirm', { secret: setupData!.secret, totp_code: code }),
+    mutationFn: () => axios.post('/auth/mfa/confirm', { totp_code: code }),
     onSuccess: () => {
       setSuccess('Two-factor authentication has been enabled successfully!')
       setMfaEnabled(true)

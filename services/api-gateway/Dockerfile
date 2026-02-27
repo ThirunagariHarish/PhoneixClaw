@@ -7,6 +7,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY services/api-gateway/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-compile -r requirements.txt
+COPY services/auth-service/requirements.txt auth-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-compile -r auth-requirements.txt
 
 FROM python:3.13-slim
 WORKDIR /app

@@ -167,40 +167,48 @@ async def create_source(req: SourceCreate, request: Request, session: AsyncSessi
             detail="Server misconfiguration: CREDENTIAL_ENCRYPTION_KEY is not set. "
                    "Please set it in the environment before adding sources.",
         )
-    source = DataSource(
-        user_id=uuid.UUID(user_id), source_type=req.source_type,
-        display_name=req.display_name, auth_type=req.auth_type,
-        credentials_encrypted=encrypted,
-        server_id=req.server_id,
-        server_name=req.server_name,
-        data_purpose=req.data_purpose or "trades",
-    )
-    session.add(source)
-    await session.commit()
-    await session.refresh(source)
 
-    if req.selected_channels:
-        for sc in req.selected_channels:
-            if req.source_type == "reddit":
-                display = f"r/{sc.channel_name}" if not sc.channel_name.startswith("r/") else sc.channel_name
-            elif req.source_type == "twitter":
-                display = f"@{sc.channel_name}" if not sc.channel_name.startswith("@") else sc.channel_name
-            else:
-                guild_name = sc.guild_name or ""
-                display = f"{guild_name} / #{sc.channel_name}" if guild_name else f"#{sc.channel_name}"
-            ch = Channel(
-                data_source_id=source.id,
-                channel_identifier=sc.channel_id,
-                display_name=display[:100],
-                guild_id=sc.guild_id,
-                guild_name=sc.guild_name[:200] if sc.guild_name else None,
-            )
-            session.add(ch)
+    try:
+        source = DataSource(
+            user_id=uuid.UUID(user_id), source_type=req.source_type,
+            display_name=req.display_name, auth_type=req.auth_type,
+            credentials_encrypted=encrypted,
+            server_id=req.server_id,
+            server_name=req.server_name,
+            data_purpose=req.data_purpose or "trades",
+        )
+        session.add(source)
+        await session.flush()
+
+        if req.selected_channels:
+            for sc in req.selected_channels:
+                if req.source_type == "reddit":
+                    display = f"r/{sc.channel_name}" if not sc.channel_name.startswith("r/") else sc.channel_name
+                elif req.source_type == "twitter":
+                    display = f"@{sc.channel_name}" if not sc.channel_name.startswith("@") else sc.channel_name
+                else:
+                    guild_name = sc.guild_name or ""
+                    display = f"{guild_name} / #{sc.channel_name}" if guild_name else f"#{sc.channel_name}"
+                ch = Channel(
+                    data_source_id=source.id,
+                    channel_identifier=sc.channel_id,
+                    display_name=display[:100],
+                    guild_id=sc.guild_id,
+                    guild_name=sc.guild_name[:200] if sc.guild_name else None,
+                )
+                session.add(ch)
+            logger.info("Created %d channels for new source %s", len(req.selected_channels), source.id)
+        else:
+            await _ensure_channels_from_credentials(source, req.credentials, session)
+
         await session.commit()
-        logger.info("Created %d channels for new source %s", len(req.selected_channels), source.id)
-    else:
-        await _ensure_channels_from_credentials(source, req.credentials, session)
-        await session.commit()
+        await session.refresh(source)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to create data source: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to save data source: {exc}")
 
     return _source_response(source)
 

@@ -45,7 +45,6 @@ class MFAVerifyRequest(BaseModel):
 
 
 class MFAConfirmRequest(BaseModel):
-    secret: str
     totp_code: str
 
 
@@ -311,6 +310,9 @@ async def mfa_setup(request: Request, session: AsyncSession = Depends(get_sessio
     provisioning_uri = totp.provisioning_uri(name=user.email, issuer_name="PhoenixTrade")
     qr_data_url = _generate_qr_data_url(provisioning_uri)
 
+    user.mfa_secret = secret
+    await session.commit()
+
     return {
         "secret": secret,
         "provisioning_uri": provisioning_uri,
@@ -329,11 +331,16 @@ async def mfa_confirm(request: Request, req: MFAConfirmRequest, session: AsyncSe
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    totp = pyotp.TOTP(req.secret)
+    if user.mfa_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is already enabled")
+
+    if not user.mfa_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Call /mfa/setup first")
+
+    totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(req.totp_code, valid_window=1):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid code. Please try again.")
 
-    user.mfa_secret = req.secret
     user.mfa_enabled = True
     await session.commit()
 

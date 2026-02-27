@@ -67,14 +67,11 @@ class AITradeRecommenderService:
 
     async def _consume_signals(self, consumer: KafkaConsumerWrapper, trigger_type: str):
         logger.info("Consuming %s signals", trigger_type)
-        async for raw in consumer.consume():
-            if not self._running:
-                break
-            try:
-                signal = msgpack.unpackb(raw, raw=False)
-                await self._process_signal(signal, trigger_type)
-            except Exception:
-                logger.exception("Error processing %s signal", trigger_type)
+
+        async def _handle(value: dict, headers: dict):
+            await self._process_signal(value, trigger_type)
+
+        await consumer.consume(_handle)
 
     async def _process_signal(self, signal: dict, trigger_type: str):
         mode = MarketHoursMode(signal.get("market_hours_mode", "extended"))

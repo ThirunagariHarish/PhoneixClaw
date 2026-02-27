@@ -33,7 +33,8 @@ export default function Register() {
       }
     } catch (err) {
       if (err instanceof AxiosError && err.response?.data?.detail) {
-        setError(err.response.data.detail)
+        const detail = err.response.data.detail
+        setError(typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: { msg?: string }) => d.msg || '').filter(Boolean).join('; ') : 'Registration failed.')
       } else {
         setError('Registration failed. Please try again.')
       }

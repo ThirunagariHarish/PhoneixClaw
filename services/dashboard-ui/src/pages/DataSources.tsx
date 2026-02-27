@@ -105,7 +105,17 @@ export default function DataSources() {
       resetDialog()
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      const resp = (err as { response?: { data?: unknown }; message?: string })?.response
+      const data = resp?.data
+      let msg: string | undefined
+      if (data && typeof data === 'object' && 'detail' in data) {
+        const detail = (data as { detail: unknown }).detail
+        if (typeof detail === 'string') msg = detail
+        else if (Array.isArray(detail)) msg = detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
+      } else if (typeof data === 'string' && data.length > 0 && data.length < 500) {
+        msg = data
+      }
+      if (!msg) msg = (err as { message?: string })?.message
       setError(msg || 'Failed to create source. Please check your credentials.')
     },
   })

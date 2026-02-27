@@ -60,14 +60,11 @@ class SentimentAnalyzerService:
     async def run(self):
         self._running = True
         logger.info("Sentiment analyzer consuming from raw-sentiment-messages")
-        async for raw in self._consumer.consume():
-            if not self._running:
-                break
-            try:
-                msg = msgpack.unpackb(raw, raw=False)
-                await self._process_message(msg)
-            except Exception:
-                logger.exception("Error processing sentiment message")
+
+        async def _handle(value: dict, headers: dict):
+            await self._process_message(value)
+
+        await self._consumer.consume(_handle)
 
     async def _process_message(self, msg: dict):
         redis = await _get_redis()

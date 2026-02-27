@@ -31,6 +31,7 @@ interface Source {
   enabled: boolean
   server_id?: string | null
   server_name?: string | null
+  data_purpose?: string
 }
 
 interface Channel {
@@ -454,9 +455,9 @@ export default function TradePipelines() {
 
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Discord Connection</Label>
-                    {sources?.filter(s => s.source_type === 'discord').length ? (
+                    {sources?.filter(s => s.source_type === 'discord' && s.data_purpose === 'trades').length ? (
                       <div className="space-y-2">
-                        {sources.filter(s => s.source_type === 'discord').map(s => (
+                        {sources.filter(s => s.source_type === 'discord' && s.data_purpose === 'trades').map(s => (
                           <button
                             key={s.id}
                             type="button"
