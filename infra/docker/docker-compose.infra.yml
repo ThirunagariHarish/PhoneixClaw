@@ -1,0 +1,54 @@
+# Phoenix v2 — Infrastructure only (Postgres, Redis, MinIO).
+# Use: docker compose -f infra/docker/docker-compose.infra.yml up -d
+# Reference: ImplementationPlan.md M1.1, M1.2.
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: phoenix-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: phoenixtrader
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: phoenixtrader
+    volumes:
+      - phoenix_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenixtrader"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: phoenix-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - phoenix_minio:/data
+    # Healthcheck optional; minio image has no curl/mc by default
+    profiles:
+      - full
+
+volumes:
+  phoenix_pgdata:
+  phoenix_minio:

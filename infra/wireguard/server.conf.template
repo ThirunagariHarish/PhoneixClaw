@@ -1,0 +1,23 @@
+# Phoenix v2 — WireGuard server (Coolify hub) config template.
+# Replace placeholders and copy to /etc/wireguard/wg0.conf on the Coolify server.
+# Reference: Milestones.md M1.2, ArchitecturePlan.md, ImplementationPlan.md Section 13.
+
+[Interface]
+Address = 10.0.1.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+# PostUp/PostDown: adjust for your firewall (ufw/iptables)
+# PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+# PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+# ─── VPS peer (has public IP) ─────────────────────────────────────────────
+# [Peer]
+# PublicKey = <VPS_NODE_PUBLIC_KEY>
+# AllowedIPs = 10.0.1.12/32
+# Endpoint = <VPS_PUBLIC_IP>:51820
+
+# ─── Local laptop peer (NAT, no Endpoint — laptop initiates) ────────────────
+# [Peer]
+# PublicKey = <LAPTOP_PUBLIC_KEY>
+# AllowedIPs = 10.0.1.20/32
+# PersistentKeepalive = 25  # optional, for NAT traversal

@@ -66,6 +66,9 @@ htmlcov/
 services/dashboard-ui/node_modules/
 services/dashboard-ui/dist/
 services/dashboard-ui/.vite/
+apps/dashboard/node_modules/
+apps/dashboard/dist/
+apps/dashboard/.vite/
 
 # Docker
 *.tar

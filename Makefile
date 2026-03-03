@@ -50,8 +50,8 @@ dashboard-install: ## Install dashboard (npm) dependencies
 # ─────────────────────────────────────────────
 # Code Quality
 # ─────────────────────────────────────────────
-lint: ## Run ruff linter
-	$(PYTHON) -m ruff check shared/ services/ tests/
+lint: ## Run ruff linter (shared, services, apps, tests)
+	$(PYTHON) -m ruff check shared/ services/ apps/ tests/
 
 lint-fix: ## Auto-fix lint issues
 	$(PYTHON) -m ruff check --fix shared/ services/ tests/
@@ -62,11 +62,20 @@ typecheck: ## Run mypy type checker
 # ─────────────────────────────────────────────
 # Testing
 # ─────────────────────────────────────────────
-test: ## Run all unit tests
-	$(PYTHON) -m pytest tests/unit/ -v --tb=short
+test: ## Run all unit tests (legacy + apps/api)
+	$(PYTHON) -m pytest tests/unit/ apps/api/tests/ -v --tb=short
+
+test-api: ## Run Phoenix v2 API tests only
+	PYTHONPATH=. $(PYTHON) -m pytest apps/api/tests/ -v --tb=short
+
+test-dashboard: ## Run Phoenix v2 dashboard unit tests
+	cd apps/dashboard && npm run test
+
+test-bridge: ## Run OpenClaw Bridge Service tests (M1.7)
+	cd openclaw/bridge && PYTHONPATH=. $(PYTHON) -m pytest tests/ -v --tb=short
 
 test-cov: ## Run tests with coverage report
-	$(PYTHON) -m pytest tests/unit/ --cov=shared --cov-report=term-missing --cov-report=html
+	PYTHONPATH=. $(PYTHON) -m pytest tests/unit/ apps/api/tests/ --cov=shared --cov=apps --cov-report=term-missing --cov-report=html
 
 benchmark: ## Run latency benchmark
 	$(PYTHON) -m tests.benchmark.run_benchmark --count 1000
@@ -95,8 +104,11 @@ db-init: ## Create all database tables
 db-migrate: ## Generate a new Alembic migration (usage: make db-migrate msg="add xyz")
 	alembic revision --autogenerate -m "$(msg)"
 
-db-upgrade: ## Apply pending migrations
+db-upgrade: ## Apply pending migrations (v1)
 	alembic upgrade head
+
+db-upgrade-v2: ## Apply Phoenix v2 shared/db migrations
+	PYTHONPATH=. alembic -c shared/db/migrations/alembic.ini upgrade head
 
 # ─────────────────────────────────────────────
 # Run Individual Services (local, no Docker)
@@ -116,8 +128,17 @@ run-executor: ## Run Trade Executor on :8008
 run-monitor: ## Run Position Monitor on :8009
 	$(PYTHON) services/position-monitor/main.py
 
-run-dashboard: ## Run React dashboard dev server on :3000
+run-dashboard: ## Run React dashboard dev server on :3000 (v1)
 	cd services/dashboard-ui && npm run dev
+
+run-api-v2: ## Run Phoenix v2 API on :8011
+	PYTHONPATH=. $(PYTHON) -m uvicorn apps.api.src.main:app --host 0.0.0.0 --port 8011 --reload
+
+run-bridge: ## Run OpenClaw Bridge Service (M1.7)
+	cd openclaw/bridge && PYTHONPATH=. $(PYTHON) -m uvicorn src.main:app --host 0.0.0.0 --port 18800
+
+run-dashboard-v2: ## Run Phoenix v2 dashboard dev server on :3000
+	cd apps/dashboard && npm run dev
 
 # ─────────────────────────────────────────────
 # Quick Start (one-command workflows)

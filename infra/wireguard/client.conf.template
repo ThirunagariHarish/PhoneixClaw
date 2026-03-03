@@ -1,0 +1,15 @@
+# Phoenix v2 — WireGuard client (OpenClaw node) config template.
+# Use on VPS or local laptop. Replace placeholders.
+# Reference: Milestones.md M1.2, ImplementationPlan.md Section 13.
+
+[Interface]
+Address = 10.0.1.<CLIENT_LAST_OCTET>/32
+PrivateKey = <CLIENT_PRIVATE_KEY>
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = <SERVER_PUBLIC_KEY>
+Endpoint = <COOLIFY_PUBLIC_IP>:51820
+AllowedIPs = 10.0.1.0/24
+# For clients behind NAT (e.g. home laptop), uncomment:
+# PersistentKeepalive = 25

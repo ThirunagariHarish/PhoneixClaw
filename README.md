@@ -2,6 +2,10 @@
 
 Enterprise-grade, multi-tenant phoenix trade bot. Parses trading signals from Discord (and other sources), routes them through a Kafka pipeline, and executes trades on broker APIs with configurable buffer pricing, risk management, and real-time position monitoring.
 
+**Source of truth:** PhoenixClaw organization repository. Do not push to the legacy/original repo.
+
+**Phoenix v2** (in progress): New monorepo layout with `apps/api` (FastAPI), `apps/dashboard` (React + Vite), and OpenClaw-based agents. See [newdocs/ImplementationPlan.md](newdocs/ImplementationPlan.md) and [newdocs/PRD.md](newdocs/PRD.md).
+
 ## Architecture Overview
 
 ```
@@ -37,7 +41,28 @@ Discord/Twitter/Reddit  -->  Source Orchestrator  -->  Kafka (raw-messages)
 
 ---
 
-## Quick Start (5 minutes)
+## Quick Start — Phoenix v2 (M1.1)
+
+To run only the new v2 API and dashboard (no Kafka/legacy services):
+
+```bash
+# 1. Install Python deps and run v2 API tests
+make dev-install
+make test-api
+
+# 2. Run the v2 API (health at http://localhost:8011/health)
+make run-api-v2
+# In another terminal:
+
+# 3. Install and run the v2 dashboard (http://localhost:3000)
+cd apps/dashboard && npm install && npm run dev
+```
+
+Or run the full legacy platform (see below).
+
+---
+
+## Quick Start (5 minutes) — Legacy platform
 
 ### Step 1: Clone and install
 

@@ -48,7 +48,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "apps/api/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -62,7 +62,7 @@ line-length = 120
 select = ["E", "F", "I", "N", "W"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["services", "shared"]
+known-first-party = ["apps", "services", "shared"]
 
 [tool.mypy]
 python_version = "3.11"
