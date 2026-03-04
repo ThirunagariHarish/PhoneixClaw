@@ -5,7 +5,7 @@
 # All ${VAR} references are auto-detected and exposed in Coolify's UI.
 # Set them in Coolify's Environment Variables panel before deploying.
 #
-# Coolify will assign a domain to the nginx service (port 80).
+# Coolify will route traffic to the nginx service (port 80) via Traefik.
 ###############################################################################
 
 services:
@@ -77,9 +77,9 @@ services:
     image: curlimages/curl:latest
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     entrypoint: >
-      sh -c "curl -sf http://ollama:11434/api/pull -d '{\"name\":\"llama3.2:1b\",\"stream\":false}' || true"
+      sh -c "sleep 30 && curl -sf http://ollama:11434/api/pull -d '{\"name\":\"llama3.2:1b\",\"stream\":false}' || true"
     restart: "no"
 
   # ─── Core Application ──────────────────────────────────────────────────
@@ -122,17 +122,13 @@ services:
           memory: 128M
     restart: unless-stopped
 
-  # ─── Nginx (Public Entrypoint — Coolify assigns domain here) ───────────
+  # ─── Nginx (Public Entrypoint — Coolify routes via Traefik) ────────────
   nginx:
     build:
       context: .
       dockerfile: infra/Dockerfile.nginx
-    ports:
-      - "80:80"
-    depends_on:
-      - phoenix-api
-      - phoenix-dashboard
-      - phoenix-ws-gateway
+    expose:
+      - "80"
     restart: unless-stopped
 
   # ─── Bridge & Gateway ──────────────────────────────────────────────────
@@ -173,7 +169,7 @@ services:
       - OLLAMA_DEFAULT_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     deploy:
       resources:
         limits:
