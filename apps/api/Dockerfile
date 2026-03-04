@@ -31,4 +31,4 @@ EXPOSE 8011
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8011/health || exit 1
 
-CMD ["uvicorn", "apps.api.src.main:app", "--host", "0.0.0.0", "--port", "8011"]
+CMD ["sh", "-c", "alembic -c shared/db/migrations/alembic.ini upgrade head && uvicorn apps.api.src.main:app --host 0.0.0.0 --port 8011"]
