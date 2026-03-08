@@ -2,22 +2,29 @@
 Connector CRUD API routes.
 
 M1.9: Connector management, credential encryption, test connection.
+Discord discovery endpoints ported from v1 sources.py.
 Reference: PRD Section 3.6, ArchitecturePlan §3.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+import httpx
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from apps.api.src.deps import DbSession
 from shared.db.models.connector import Connector, ConnectorAgent
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v2/connectors", tags=["connectors"])
 
+
+# ── Schemas ──────────────────────────────────────────────────────────────────
 
 class ConnectorCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -64,6 +71,61 @@ class ConnectorResponse(BaseModel):
         )
 
 
+class DiscoverServersRequest(BaseModel):
+    token: str
+    auth_type: str = "user_token"
+
+
+class DiscoverChannelsRequest(BaseModel):
+    token: str
+    auth_type: str = "user_token"
+    server_id: str | None = None
+
+
+# ── Discovery endpoints ──────────────────────────────────────────────────────
+
+@router.post("/discover-servers")
+async def discover_servers_endpoint(req: DiscoverServersRequest):
+    """Discover Discord servers accessible with the given token."""
+    from shared.discord_utils.channel_discovery import discover_servers
+    try:
+        servers = await discover_servers(req.token, auth_type=req.auth_type)
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="discord.py is not installed on the server",
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Server discovery failed")
+        raise HTTPException(status_code=502, detail=f"Discovery failed: {str(exc)[:200]}")
+    return {"servers": servers}
+
+
+@router.post("/discover-channels")
+async def discover_channels_endpoint(req: DiscoverChannelsRequest):
+    """Discover Discord channels accessible with the given token, optionally filtered by server."""
+    from shared.discord_utils.channel_discovery import discover_channels
+    try:
+        channels = await discover_channels(req.token, auth_type=req.auth_type)
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="discord.py is not installed on the server",
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Channel discovery failed")
+        raise HTTPException(status_code=502, detail=f"Discovery failed: {str(exc)[:200]}")
+    if req.server_id:
+        channels = [c for c in channels if c.get("guild_id") == req.server_id]
+    return {"channels": channels}
+
+
+# ── CRUD ─────────────────────────────────────────────────────────────────────
+
 @router.get("", response_model=list[ConnectorResponse])
 async def list_connectors(session: DbSession):
     """List all configured connectors."""
@@ -74,13 +136,15 @@ async def list_connectors(session: DbSession):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ConnectorResponse)
-async def create_connector(payload: ConnectorCreate, session: DbSession):
+async def create_connector(payload: ConnectorCreate, request: Request, session: DbSession):
     """Create a new connector with encrypted credentials."""
-    # Encrypt credentials if provided
     encrypted_creds = None
     if payload.credentials:
         from shared.crypto.credentials import encrypt_credentials
         encrypted_creds = encrypt_credentials(payload.credentials)
+
+    user_id_str = getattr(request.state, "user_id", None)
+    user_id = uuid.UUID(user_id_str) if user_id_str else uuid.UUID("00000000-0000-0000-0000-000000000000")
 
     connector = Connector(
         id=uuid.uuid4(),
@@ -88,7 +152,7 @@ async def create_connector(payload: ConnectorCreate, session: DbSession):
         type=payload.type,
         config=payload.config,
         credentials_encrypted=encrypted_creds,
-        user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),  # TODO: from auth context
+        user_id=user_id,
         status="disconnected",
     )
     session.add(connector)
@@ -148,9 +212,11 @@ async def delete_connector(connector_id: str, session: DbSession):
     await session.commit()
 
 
+# ── Test connection ──────────────────────────────────────────────────────────
+
 @router.post("/{connector_id}/test")
 async def test_connector(connector_id: str, session: DbSession):
-    """Test connectivity for a connector."""
+    """Test connectivity for a connector by validating credentials against the upstream API."""
     result = await session.execute(
         select(Connector).where(Connector.id == uuid.UUID(connector_id))
     )
@@ -158,9 +224,50 @@ async def test_connector(connector_id: str, session: DbSession):
     if not connector:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
-    # Placeholder: actual test would instantiate connector and call test_connection()
-    return {"connector_id": connector_id, "reachable": True, "latency_ms": 42}
+    conn_status = "ERROR"
+    detail = ""
 
+    try:
+        from shared.crypto.credentials import decrypt_credentials
+        creds = decrypt_credentials(connector.credentials_encrypted) if connector.credentials_encrypted else {}
+    except Exception:
+        logger.exception("Failed to decrypt credentials for connector %s", connector_id)
+        return {"connection_status": "ERROR", "detail": "Could not decrypt stored credentials"}
+
+    try:
+        if connector.type == "discord":
+            token = creds.get("user_token") or creds.get("bot_token", "")
+            if not token:
+                return {"connection_status": "ERROR", "detail": "No Discord token in stored credentials"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://discord.com/api/v10/users/@me",
+                    headers={"Authorization": token},
+                )
+                if resp.status_code == 200:
+                    conn_status = "connected"
+                    detail = resp.json().get("username", "")
+                else:
+                    detail = f"Discord API returned {resp.status_code}"
+        else:
+            conn_status = "connected"
+            detail = f"Test not fully implemented for {connector.type}"
+    except httpx.TimeoutException:
+        detail = "Connection timed out"
+    except Exception as exc:
+        detail = str(exc)[:200]
+
+    connector.status = conn_status
+    if conn_status == "connected":
+        connector.last_connected_at = datetime.now(timezone.utc)
+    connector.error_message = detail if conn_status == "ERROR" else None
+    connector.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    return {"connection_status": conn_status, "detail": detail}
+
+
+# ── Agent linking ────────────────────────────────────────────────────────────
 
 @router.post("/{connector_id}/agents", status_code=status.HTTP_201_CREATED)
 async def link_agent(connector_id: str, payload: ConnectorAgentLink, session: DbSession):
