@@ -339,3 +339,30 @@ async def ship_agent(instance_id: str, session: DbSession, agent_type: str = "ba
     ssh_result = await gateway.ship_agent(inst.id, agent_type, {})
 
     return {"success": ssh_result.exit_code == 0, "output": ssh_result.stdout, "error": ssh_result.stderr}
+
+
+class RunCommandRequest(BaseModel):
+    command: str = Field(..., min_length=1, max_length=4000)
+    timeout: int = Field(default=60, ge=5, le=600)
+
+
+@router.post("/{instance_id}/run-command")
+async def run_instance_command(instance_id: str, payload: RunCommandRequest, session: DbSession):
+    """Execute a shell command on the VPS instance (admin/testing)."""
+    result = await session.execute(
+        select(ClaudeCodeInstance).where(ClaudeCodeInstance.id == uuid.UUID(instance_id))
+    )
+    inst = result.scalar_one_or_none()
+    if not inst:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
+
+    from apps.api.src.services.agent_gateway import gateway
+
+    gateway.register_instance(inst.id, inst.host, inst.ssh_port, inst.ssh_username, inst.ssh_key_encrypted)
+    ssh_result = await gateway.run_command(inst.id, payload.command, timeout=payload.timeout)
+
+    return {
+        "exit_code": ssh_result.exit_code,
+        "stdout": ssh_result.stdout,
+        "stderr": ssh_result.stderr,
+    }
