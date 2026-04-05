@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import pwd
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -128,6 +129,8 @@ async def _run_claude_pipeline(
     config_path = work_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2, default=str))
 
+    _chown_to_phoenix(work_dir)
+
     use_claude = _can_use_claude_sdk()
 
     if not use_claude:
@@ -147,7 +150,7 @@ async def _run_claude_pipeline(
         prompt = _build_prompt(agent_id, config, work_dir)
         options = ClaudeAgentOptions(
             cwd=str(work_dir),
-            permission_mode="bypassPermissions",
+            permission_mode="dontAsk",
             allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
         )
 
@@ -207,6 +210,17 @@ def _sdk_unavailable_reason() -> str:
     if not shutil.which("claude"):
         return "claude CLI not found in PATH"
     return "unknown"
+
+
+def _chown_to_phoenix(path: Path) -> None:
+    """Recursively chown a directory to the phoenix user if it exists."""
+    try:
+        pw = pwd.getpwnam("phoenix")
+        uid, gid = pw.pw_uid, pw.pw_gid
+        for p in [path] + list(path.rglob("*")):
+            os.chown(p, uid, gid)
+    except (KeyError, PermissionError):
+        pass
 
 
 async def _fallback_to_task_runner(

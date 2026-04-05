@@ -13,11 +13,14 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl openssh-client gnupg && \
+    apt-get install -y --no-install-recommends \
+        curl openssh-client gnupg libgomp1 && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g @anthropic-ai/claude-code && \
     rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 -s /bin/bash phoenix
 
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
@@ -29,6 +32,8 @@ COPY scripts/ scripts/
 COPY pyproject.toml .
 
 RUN pip install --no-deps -e . 2>/dev/null || true
+
+RUN mkdir -p /app/data && chown -R phoenix:phoenix /app/data
 
 ENV PYTHONPATH=/app
 EXPOSE 8011
