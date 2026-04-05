@@ -823,7 +823,7 @@ async def get_agent_chat(agent_id: str, session: DbSession, limit: int = Query(5
             "role": m.role,
             "content": m.content,
             "message_type": getattr(m, "message_type", "text") or "text",
-            "metadata": getattr(m, "metadata", {}) or {},
+            "metadata": getattr(m, "extra_data", {}) or {},
             "created_at": m.created_at.isoformat(),
         }
         for m in messages
@@ -854,7 +854,7 @@ async def send_agent_chat(agent_id: str, payload: dict[str, Any], session: DbSes
         role="user",
         content=content,
         message_type=msg_type,
-        metadata=msg_metadata,
+        extra_data=msg_metadata,
     )
     session.add(user_msg)
 
@@ -892,7 +892,7 @@ async def send_agent_chat(agent_id: str, payload: dict[str, Any], session: DbSes
         role="agent",
         content=response_text,
         message_type=response_type,
-        metadata=response_metadata,
+        extra_data=response_metadata,
     )
     session.add(agent_msg)
     await session.commit()

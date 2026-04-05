@@ -13,5 +13,5 @@ class AgentChatMessage(Base):
     role: Mapped[str] = mapped_column(String(10), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String(30), nullable=False, default="text")
-    metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    extra_data: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
