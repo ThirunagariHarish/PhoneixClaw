@@ -20,6 +20,12 @@ V3_CLEANUP_SQL = [
     "DROP TABLE IF EXISTS claude_code_instances",
 ]
 
+V3_ADD_COLUMNS_SQL = [
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS phoenix_api_key VARCHAR(200)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS worker_container_id VARCHAR(100)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS worker_status VARCHAR(30) NOT NULL DEFAULT 'STOPPED'",
+]
+
 
 async def create_all_tables():
     from sqlalchemy import text
@@ -67,6 +73,13 @@ async def create_all_tables():
             except Exception as e:
                 print(f"  (skipped: {e})")
         print("V3 cleanup complete — VPS columns and tables removed.")
+
+        for sql in V3_ADD_COLUMNS_SQL:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                print(f"  (skipped: {e})")
+        print("V3 new columns ensured.")
 
     await engine.dispose()
     print("DB tables ready.")
