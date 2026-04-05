@@ -13,6 +13,7 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_EXPAND_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
       - LLM_GATEWAY_URL=http://phoenix-llm-gateway:8050
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
