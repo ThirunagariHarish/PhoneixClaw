@@ -75,13 +75,30 @@ def main():
     # Impute and scale tabular
     imputer = SimpleImputer(strategy="median")
     X_train_imp = imputer.fit_transform(X_train)
-    X_val_imp = imputer.transform(X_val)
-    X_test_imp = imputer.transform(X_test)
+    n_features = X_train_imp.shape[1]
+
+    if len(X_val) > 0:
+        X_val_imp = imputer.transform(X_val)
+    else:
+        X_val_imp = np.empty((0, n_features), dtype=np.float64)
+
+    if len(X_test) > 0:
+        X_test_imp = imputer.transform(X_test)
+    else:
+        X_test_imp = np.empty((0, n_features), dtype=np.float64)
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train_imp)
-    X_val_scaled = scaler.transform(X_val_imp)
-    X_test_scaled = scaler.transform(X_test_imp)
+
+    if len(X_val_imp) > 0:
+        X_val_scaled = scaler.transform(X_val_imp)
+    else:
+        X_val_scaled = np.empty((0, n_features), dtype=np.float64)
+
+    if len(X_test_imp) > 0:
+        X_test_scaled = scaler.transform(X_test_imp)
+    else:
+        X_test_scaled = np.empty((0, n_features), dtype=np.float64)
 
     joblib.dump(imputer, output_dir / "imputer.pkl")
     joblib.dump(scaler, output_dir / "scaler.pkl")
