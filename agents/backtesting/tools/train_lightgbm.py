@@ -31,15 +31,17 @@ def main():
     import lightgbm as lgb
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
+    min_child = min(20, max(1, len(X_train)))
     model = lgb.LGBMClassifier(
         n_estimators=500, max_depth=8, learning_rate=0.05,
-        num_leaves=63, min_child_samples=20,
+        num_leaves=63, min_child_samples=min_child,
         subsample=0.8, colsample_bytree=0.8,
         is_unbalance=True, random_state=42, verbose=-1,
     )
+    eval_set = [(X_val, y_val)] if len(X_val) > 0 else [(X_train, y_train)]
     model.fit(
         X_train, y_train,
-        eval_set=[(X_val, y_val)],
+        eval_set=eval_set,
         callbacks=[lgb.early_stopping(50, verbose=False)],
     )
 

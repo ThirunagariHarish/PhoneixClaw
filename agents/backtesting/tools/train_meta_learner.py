@@ -43,9 +43,14 @@ def main():
     X_meta = np.column_stack([predictions[m] for m in available_models])
 
     # Simple train/test from the test set itself (in practice, use OOF predictions from training)
-    split = int(len(X_meta) * 0.5)
-    X_meta_train, X_meta_test = X_meta[:split], X_meta[split:]
-    y_meta_train, y_meta_test = y_test[:split], y_test[split:]
+    n_meta = len(X_meta)
+    if n_meta < 2:
+        X_meta_train, X_meta_test = X_meta, X_meta
+        y_meta_train, y_meta_test = y_test, y_test
+    else:
+        split = max(1, int(n_meta * 0.5))
+        X_meta_train, X_meta_test = X_meta[:split], X_meta[split:]
+        y_meta_train, y_meta_test = y_test[:split], y_test[split:]
 
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score

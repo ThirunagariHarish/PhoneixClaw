@@ -24,6 +24,18 @@ def main():
     feature_names = meta["feature_columns"]
     X_test = np.load(data_dir / "X_test.npy")
 
+    if len(X_test) == 0:
+        output = {
+            "model_name": "",
+            "method": "skipped",
+            "top_features": [],
+            "error": "X_test is empty",
+        }
+        with open(args.output, "w") as f:
+            json.dump(output, f, indent=2)
+        print("Explainability skipped: X_test is empty")
+        return
+
     with open(model_dir / "best_model.json") as f:
         best_info = json.load(f)
 

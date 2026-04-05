@@ -110,13 +110,18 @@ def main():
             torch.FloatTensor(X_train.astype(np.float32)),
             torch.FloatTensor(y_train.astype(np.float32)),
         )
-        train_dl = DataLoader(train_ds, batch_size=64, shuffle=True)
-        val_ds = TensorDataset(
-            torch.FloatTensor(candle_val),
-            torch.FloatTensor(X_val.astype(np.float32)),
-            torch.FloatTensor(y_val.astype(np.float32)),
-        )
-        val_dl = DataLoader(val_ds, batch_size=128)
+        train_bs = max(1, min(64, len(train_ds)))
+        train_dl = DataLoader(train_ds, batch_size=train_bs, shuffle=True)
+        if len(X_val) > 0:
+            val_ds = TensorDataset(
+                torch.FloatTensor(candle_val),
+                torch.FloatTensor(X_val.astype(np.float32)),
+                torch.FloatTensor(y_val.astype(np.float32)),
+            )
+        else:
+            val_ds = train_ds
+        val_bs = max(1, min(128, len(val_ds)))
+        val_dl = DataLoader(val_ds, batch_size=val_bs)
 
         best_val_loss = float("inf")
         patience = 10
@@ -156,7 +161,8 @@ def main():
                 torch.FloatTensor(candle_test),
                 torch.FloatTensor(X_test.astype(np.float32)),
             )
-            te_dl = DataLoader(te_ds, batch_size=128)
+            te_bs = max(1, min(128, len(te_ds)))
+            te_dl = DataLoader(te_ds, batch_size=te_bs)
             probs = []
             for cb, xb in te_dl:
                 cb, xb = cb.to(device), xb.to(device)
@@ -174,17 +180,36 @@ def main():
 
         SEQ_LEN = 10
         input_size = X_train.shape[1]
+        n_tab_max = max(len(X_train), len(X_val), len(X_test))
+        seq_len_eff = min(SEQ_LEN, max(1, n_tab_max - 1)) if n_tab_max > 0 else 1
 
         def make_sequences(X, y, seq_len):
+            feat_dim = X.shape[1]
             xs, ys = [], []
+            if len(X) == 0:
+                return (
+                    np.zeros((0, seq_len, feat_dim), dtype=np.float32),
+                    np.zeros((0,), dtype=np.float32),
+                )
+            if len(X) <= seq_len:
+                pad_rows = seq_len - len(X)
+                x_f = X.astype(np.float32)
+                if pad_rows > 0:
+                    pad = np.tile(x_f[0:1], (pad_rows, 1))
+                    xseq = np.vstack([pad, x_f])
+                else:
+                    xseq = x_f
+                xs.append(xseq[-seq_len:])
+                ys.append(float(y[-1]))
+                return np.array(xs, dtype=np.float32), np.array(ys, dtype=np.float32)
             for i in range(seq_len, len(X)):
-                xs.append(X[i - seq_len : i])
-                ys.append(y[i])
-            return np.array(xs), np.array(ys)
+                xs.append(X[i - seq_len : i].astype(np.float32))
+                ys.append(float(y[i]))
+            return np.array(xs, dtype=np.float32), np.array(ys, dtype=np.float32)
 
-        X_tr_seq, y_tr_seq = make_sequences(X_train, y_train, SEQ_LEN)
-        X_val_seq, y_val_seq = make_sequences(X_val, y_val, SEQ_LEN)
-        X_te_seq, y_te_seq = make_sequences(X_test, y_test, SEQ_LEN)
+        X_tr_seq, y_tr_seq = make_sequences(X_train, y_train, seq_len_eff)
+        X_val_seq, y_val_seq = make_sequences(X_val, y_val, seq_len_eff)
+        X_te_seq, y_te_seq = make_sequences(X_test, y_test, seq_len_eff)
 
         class TradeLSTM(nn.Module):
             def __init__(self, inp, hidden=128, layers=2):
@@ -208,9 +233,14 @@ def main():
         criterion = nn.BCELoss()
 
         train_ds = TensorDataset(torch.FloatTensor(X_tr_seq), torch.FloatTensor(y_tr_seq))
-        train_dl = DataLoader(train_ds, batch_size=64, shuffle=True)
-        val_ds = TensorDataset(torch.FloatTensor(X_val_seq), torch.FloatTensor(y_val_seq))
-        val_dl = DataLoader(val_ds, batch_size=128)
+        train_bs = max(1, min(64, len(train_ds)))
+        train_dl = DataLoader(train_ds, batch_size=train_bs, shuffle=True)
+        if len(X_val_seq) > 0:
+            val_ds = TensorDataset(torch.FloatTensor(X_val_seq), torch.FloatTensor(y_val_seq))
+        else:
+            val_ds = train_ds
+        val_bs = max(1, min(128, len(val_ds)))
+        val_dl = DataLoader(val_ds, batch_size=val_bs)
 
         best_val_loss = float("inf")
         patience = 10

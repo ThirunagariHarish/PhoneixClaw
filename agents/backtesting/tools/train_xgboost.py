@@ -33,13 +33,15 @@ def main():
 
     pos_weight = len(y_train[y_train == 0]) / max(len(y_train[y_train == 1]), 1)
 
+    eval_set = [(X_val, y_val)] if len(X_val) > 0 else [(X_train, y_train)]
+
     model = XGBClassifier(
         n_estimators=500, max_depth=6, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8,
         eval_metric="logloss", early_stopping_rounds=50,
         scale_pos_weight=pos_weight, random_state=42,
     )
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    model.fit(X_train, y_train, eval_set=eval_set, verbose=False)
 
     y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1]

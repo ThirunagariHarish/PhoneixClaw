@@ -116,8 +116,11 @@ def _try_pytorch_forecasting(
     except Exception:
         return False
 
-    train_loader = training.to_dataloader(train=True, batch_size=64, num_workers=0)
-    val_loader = validation.to_dataloader(train=False, batch_size=128, num_workers=0)
+    n_val_series = N - n_train_series
+    train_bs = max(1, min(64, n_train_series))
+    val_bs = max(1, min(128, max(n_val_series, 1)))
+    train_loader = training.to_dataloader(train=True, batch_size=train_bs, num_workers=0)
+    val_loader = validation.to_dataloader(train=False, batch_size=val_bs, num_workers=0)
 
     tft = TemporalFusionTransformer.from_dataset(
         training,
@@ -150,7 +153,9 @@ def _try_pytorch_forecasting(
     df_test = to_long_df(candle_test, X_test, y_test)
     try:
         test_ds = TimeSeriesDataSet.from_dataset(training, df_test, predict=True, stop_randomization=True)
-        test_loader = test_ds.to_dataloader(train=False, batch_size=128, num_workers=0)
+        n_test_series = len(y_test)
+        test_bs = max(1, min(128, n_test_series))
+        test_loader = test_ds.to_dataloader(train=False, batch_size=test_bs, num_workers=0)
     except Exception:
         return False
 
@@ -280,12 +285,19 @@ def main():
 
     n = len(X_train)
     val_split = int(n * 0.85)
+    if val_split <= 0:
+        val_split = n
+    if val_split >= n and n > 1:
+        val_split = n - 1
     X_tr, X_vl = X_train[:val_split], X_train[val_split:]
     c_tr, c_vl = candle_train[:val_split], candle_train[val_split:]
     y_tr, y_vl = y_train[:val_split], y_train[val_split:]
+    if len(X_vl) == 0:
+        c_vl, X_vl, y_vl = c_tr, X_tr, y_tr
 
     train_ds = TensorDataset(torch.FloatTensor(c_tr), torch.FloatTensor(X_tr), torch.FloatTensor(y_tr))
-    train_dl = DataLoader(train_ds, batch_size=64, shuffle=True)
+    train_bs = max(1, min(64, len(train_ds)))
+    train_dl = DataLoader(train_ds, batch_size=train_bs, shuffle=True)
 
     best_val_loss = float("inf")
     patience_counter = 0

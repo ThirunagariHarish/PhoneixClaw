@@ -98,13 +98,16 @@ def main():
         cat_features=cat_kw,
         feature_names=feature_names,
     )
-    val_pool = Pool(
-        data=X_val_full,
-        label=y_val,
-        cat_features=cat_kw,
-        feature_names=feature_names,
-    )
-    model.fit(train_pool, eval_set=val_pool)
+    if len(X_val_full) > 0:
+        val_pool = Pool(
+            data=X_val_full,
+            label=y_val,
+            cat_features=cat_kw,
+            feature_names=feature_names,
+        )
+        model.fit(train_pool, eval_set=val_pool)
+    else:
+        model.fit(train_pool, eval_set=train_pool)
     model.save_model(str(output_dir / "catboost_model.cbm"))
 
     test_pool = Pool(

@@ -50,8 +50,17 @@ def main():
 
         tfidf = TfidfVectorizer(max_features=5000, stop_words="english")
         X_tfidf = tfidf.fit_transform(texts)
-        svd = TruncatedSVD(n_components=384)
-        embeddings = svd.fit_transform(X_tfidf).astype(np.float32)
+        n_components = min(384, X_tfidf.shape[0] - 1, X_tfidf.shape[1])
+        if n_components < 1:
+            embeddings = np.zeros((len(texts), 384), dtype=np.float32)
+        else:
+            svd = TruncatedSVD(n_components=n_components)
+            reduced = svd.fit_transform(X_tfidf).astype(np.float32)
+            if reduced.shape[1] < 384:
+                pad = np.zeros((reduced.shape[0], 384 - reduced.shape[1]), dtype=np.float32)
+                embeddings = np.hstack([reduced, pad])
+            else:
+                embeddings = reduced
 
     np.save(output_dir / "text_embeddings.npy", embeddings)
     print(f"Saved text embeddings: shape={embeddings.shape} to {output_dir / 'text_embeddings.npy'}")

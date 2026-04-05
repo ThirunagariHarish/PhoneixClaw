@@ -86,6 +86,10 @@ def main():
 
     n = len(X_train)
     val_split = int(n * 0.85)
+    if val_split <= 0:
+        val_split = n
+    if val_split >= n and n > 1:
+        val_split = n - 1
 
     train_ds = TensorDataset(
         torch.FloatTensor(candle_train_t[:val_split]),
@@ -93,12 +97,19 @@ def main():
         torch.FloatTensor(X_train[:val_split]),
         torch.FloatTensor(y_train[:val_split]),
     )
-    train_dl = DataLoader(train_ds, batch_size=64, shuffle=True)
+    train_bs = max(1, min(64, len(train_ds)))
+    train_dl = DataLoader(train_ds, batch_size=train_bs, shuffle=True)
 
-    c_vl = torch.FloatTensor(candle_train_t[val_split:]).to(device)
-    t_vl = torch.FloatTensor(text_train_t[val_split:]).to(device)
-    x_vl = torch.FloatTensor(X_train[val_split:]).to(device)
-    y_vl = torch.FloatTensor(y_train[val_split:]).to(device)
+    if val_split < n:
+        c_vl = torch.FloatTensor(candle_train_t[val_split:]).to(device)
+        t_vl = torch.FloatTensor(text_train_t[val_split:]).to(device)
+        x_vl = torch.FloatTensor(X_train[val_split:]).to(device)
+        y_vl = torch.FloatTensor(y_train[val_split:]).to(device)
+    else:
+        c_vl = torch.FloatTensor(candle_train_t[:val_split]).to(device)
+        t_vl = torch.FloatTensor(text_train_t[:val_split]).to(device)
+        x_vl = torch.FloatTensor(X_train[:val_split]).to(device)
+        y_vl = torch.FloatTensor(y_train[:val_split]).to(device)
 
     best_val_loss = float("inf")
     patience_counter = 0

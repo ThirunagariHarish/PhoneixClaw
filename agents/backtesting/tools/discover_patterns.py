@@ -126,6 +126,11 @@ def main():
 
     data_dir = Path(args.data)
     df = pd.read_parquet(data_dir / "enriched.parquet")
+    if len(df) == 0:
+        with open(args.output, "w") as f:
+            json.dump([], f, indent=2)
+        print("Discovered 0 patterns (empty enriched data)")
+        return
     patterns = discover_patterns(df)
 
     with open(args.output, "w") as f:

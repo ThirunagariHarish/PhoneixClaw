@@ -58,8 +58,15 @@ def main():
 
     # --- Time-based split ---
     n = len(X)
-    train_end = int(n * 0.7)
-    val_end = int(n * 0.85)
+    if n < 5:
+        train_end = max(1, n - 1)
+        val_end = train_end
+    else:
+        train_end = int(n * 0.7)
+        val_end = int(n * 0.85)
+
+    train_end = max(1, train_end)
+    val_end = max(train_end, val_end)
 
     X_train, y_train = X.iloc[:train_end], y[:train_end]
     X_val, y_val = X.iloc[train_end:val_end], y[train_end:val_end]
@@ -149,6 +156,20 @@ def main():
     }
     with open(output_dir / "preprocessing_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+    meta = {
+        "feature_columns": feature_cols,
+        "n_features": len(feature_cols),
+        "n_train": train_end,
+        "n_val": val_end - train_end,
+        "n_test": n - val_end,
+        "has_candles": candle_path.exists(),
+        "has_text": text_path.exists(),
+        "categorical_columns": available_cats,
+    }
+    with open(output_dir / "meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+
     print(f"Preprocessing complete: {json.dumps(summary, indent=2)}")
 
 
