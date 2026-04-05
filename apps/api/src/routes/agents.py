@@ -230,7 +230,7 @@ async def create_agent(payload: AgentCreate, session: DbSession):
         },
     }
 
-    from apps.api.src.services.task_runner import run_backtest
+    from apps.api.src.services.claude_backtester import run_backtest
     await run_backtest(agent_id, backtest.id, backtest_config)
 
     return AgentResponse.from_model(agent)
