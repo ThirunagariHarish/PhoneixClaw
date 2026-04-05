@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,7 +118,7 @@ async def _run_claude_pipeline(
     backtest_id: uuid.UUID,
     config: dict,
 ) -> None:
-    """Run the pipeline using the Claude Agent SDK."""
+    """Try Claude Agent SDK first; fall back to subprocess pipeline on any failure."""
     work_dir = REPO_ROOT / "data" / f"backtest_{agent_id}"
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "output").mkdir(exist_ok=True)
@@ -127,28 +128,29 @@ async def _run_claude_pipeline(
     config_path = work_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2, default=str))
 
+    use_claude = _can_use_claude_sdk()
+
+    if not use_claude:
+        async for session in _get_session():
+            await _log(session, agent_id, backtest_id, "fallback", 3,
+                       f"Claude SDK unavailable ({_sdk_unavailable_reason()}), using subprocess pipeline")
+        await _fallback_to_task_runner(agent_id, backtest_id, config)
+        return
+
     async for session in _get_session():
-        await _log(session, agent_id, backtest_id, "claude_agent_start", 2, "Starting Claude Code agent for backtesting")
+        await _log(session, agent_id, backtest_id, "claude_agent_start", 2,
+                   "Starting Claude Code agent for backtesting")
 
     try:
         from claude_agent_sdk import query, ClaudeAgentOptions
-    except ImportError:
-        logger.warning("claude-agent-sdk not installed — falling back to task_runner")
-        async for session in _get_session():
-            await _log(session, agent_id, backtest_id, "fallback", 3, "SDK unavailable, using subprocess pipeline")
-        from apps.api.src.services.task_runner import _run_pipeline
-        await _run_pipeline(agent_id, backtest_id, config)
-        return
 
-    prompt = _build_prompt(agent_id, config, work_dir)
+        prompt = _build_prompt(agent_id, config, work_dir)
+        options = ClaudeAgentOptions(
+            cwd=str(work_dir),
+            permission_mode="bypassPermissions",
+            allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+        )
 
-    options = ClaudeAgentOptions(
-        cwd=str(work_dir),
-        permission_mode="bypassPermissions",
-        allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
-    )
-
-    try:
         last_text = ""
         async for message in query(prompt=prompt, options=options):
             if hasattr(message, "content") and isinstance(message.content, list):
@@ -172,11 +174,49 @@ async def _run_claude_pipeline(
                 await _mark_completed(session, agent_id, backtest_id)
 
     except Exception as exc:
-        logger.exception("Claude backtester crashed for agent %s", agent_id)
+        error_str = str(exc)[:500]
+        logger.warning("Claude SDK failed for agent %s: %s — falling back to subprocess", agent_id, error_str)
         async for session in _get_session():
-            await _mark_failed(session, agent_id, backtest_id, "claude_agent_crash", str(exc)[:500])
+            await _log(session, agent_id, backtest_id, "sdk_fallback", 3,
+                       f"Claude SDK error ({error_str[:200]}), retrying with subprocess pipeline")
+        await _fallback_to_task_runner(agent_id, backtest_id, config)
     finally:
         _running_tasks.pop(str(agent_id), None)
+
+
+def _can_use_claude_sdk() -> bool:
+    """Check if the Claude Agent SDK and CLI are available."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError:
+        return False
+    if not shutil.which("claude"):
+        return False
+    return True
+
+
+def _sdk_unavailable_reason() -> str:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "ANTHROPIC_API_KEY not set"
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError:
+        return "claude-agent-sdk not installed"
+    if not shutil.which("claude"):
+        return "claude CLI not found in PATH"
+    return "unknown"
+
+
+async def _fallback_to_task_runner(
+    agent_id: uuid.UUID,
+    backtest_id: uuid.UUID,
+    config: dict,
+) -> None:
+    """Run the pipeline using the subprocess-based task_runner."""
+    from apps.api.src.services.task_runner import _run_pipeline
+    await _run_pipeline(agent_id, backtest_id, config)
 
 
 async def _log(
