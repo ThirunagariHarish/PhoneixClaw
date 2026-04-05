@@ -679,50 +679,6 @@ function StepReview({ form, connectors }: {
       </div>
     </div>
   )
-}({ label, value, onChange, min, max, step, unit }: {
-  label: string
-  value: number
-  onChange: (v: number) => void
-  min: number
-  max: number
-  step: number
-  unit: string
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label>{label}</Label>
-        <span className="text-sm font-mono font-medium">{value}{unit}</span>
-      </div>
-      <div className="flex items-center gap-3">
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value))}
-          className="flex-1 accent-primary"
-        />
-        <Input
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value)
-            if (!isNaN(v) && v >= min && v <= max) onChange(v)
-          }}
-          className="w-20"
-        />
-      </div>
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{min}{unit}</span>
-        <span>{max}{unit}</span>
-      </div>
-    </div>
-  )
 }
 
 function SliderInput({ label, value, onChange, min, max, step, unit }: {
