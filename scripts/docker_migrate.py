@@ -49,17 +49,6 @@ async def create_all_tables():
 
 
 def main():
-    result = subprocess.run(
-        ["alembic", "-c", "shared/db/migrations/alembic.ini", "upgrade", "head"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        print("Alembic migrations applied successfully.")
-        return
-
-    print(f"Alembic failed ({result.returncode}): {result.stderr[:500]}")
-    print("Falling back to create_all ...")
     asyncio.run(create_all_tables())
 
 
