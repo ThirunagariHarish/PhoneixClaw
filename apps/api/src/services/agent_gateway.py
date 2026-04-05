@@ -96,7 +96,7 @@ class AgentGateway:
         if result.exit_code != 0 or "REACHABLE" not in result.stdout:
             return HealthStatus(reachable=False, claude_installed=False)
 
-        claude_result = await ssh_pool.run(instance_id, "claude --version 2>/dev/null || echo NOT_INSTALLED")
+        claude_result = await ssh_pool.run(instance_id, "export PATH=\"$HOME/.claude/bin:$HOME/.local/bin:$PATH\"; claude --version 2>/dev/null || echo NOT_INSTALLED")
         claude_installed = "NOT_INSTALLED" not in claude_result.stdout
         claude_version = claude_result.stdout.strip() if claude_installed else None
 
@@ -131,7 +131,7 @@ class AgentGateway:
     async def install_claude_code(self, instance_id: UUID) -> SSHResult:
         return await ssh_pool.run(
             instance_id,
-            "curl -fsSL https://claude.ai/install.sh | sh && claude --version",
+            "which bash >/dev/null 2>&1 || apt-get update -qq && apt-get install -y -qq bash >/dev/null 2>&1; curl -fsSL https://claude.ai/install.sh | bash && export PATH=\"$HOME/.claude/bin:$PATH\" && claude --version",
             timeout=600,
         )
 
@@ -159,6 +159,7 @@ class AgentGateway:
     async def run_backtesting(self, instance_id: UUID, config: dict) -> SSHResult:
         await self.ship_agent(instance_id, "backtesting", config)
         command = (
+            "export PATH=\"$HOME/.claude/bin:$HOME/.local/bin:$PATH\"; "
             "cd ~/agents/backtesting && "
             "claude --print 'Read config.json and run the backtesting pipeline. "
             "Report progress as JSON lines to stdout.'"

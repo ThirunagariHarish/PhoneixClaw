@@ -290,9 +290,12 @@ async def setup_claude(instance_id: str, payload: SetupClaudeRequest, session: D
     api_key = payload.anthropic_api_key
     escaped_key = api_key.replace("'", "'\\''")
     auth_cmd = (
+        f"export PATH=\"$HOME/.claude/bin:$HOME/.local/bin:$PATH\"; "
         f"grep -q 'ANTHROPIC_API_KEY' ~/.bashrc 2>/dev/null && "
         f"sed -i 's|^export ANTHROPIC_API_KEY=.*|export ANTHROPIC_API_KEY=\\'{escaped_key}\\'|' ~/.bashrc || "
         f"echo 'export ANTHROPIC_API_KEY=\\'{escaped_key}\\'' >> ~/.bashrc; "
+        f"grep -q '.claude/bin' ~/.bashrc 2>/dev/null || "
+        f"echo 'export PATH=\"$HOME/.claude/bin:$PATH\"' >> ~/.bashrc; "
         f"export ANTHROPIC_API_KEY='{escaped_key}'; "
         f"claude --version"
     )

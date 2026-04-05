@@ -9,6 +9,22 @@ from fastapi import APIRouter
 router = APIRouter(prefix="/api/v2/market", tags=["market"])
 
 
+@router.get("/overview")
+async def get_market_overview():
+    """Aggregated market overview: indices, sentiment, key levels."""
+    return {
+        "indices": [
+            {"symbol": "SPX", "name": "S&P 500", "price": 5218.42, "change": 18.73, "change_pct": 0.36},
+            {"symbol": "NDX", "name": "Nasdaq 100", "price": 18342.15, "change": 92.61, "change_pct": 0.51},
+            {"symbol": "DJI", "name": "Dow Jones", "price": 39127.80, "change": -45.20, "change_pct": -0.12},
+            {"symbol": "VIX", "name": "CBOE Volatility", "price": 14.32, "change": -0.58, "change_pct": -3.89},
+        ],
+        "sentiment": "neutral",
+        "market_phase": "regular_hours",
+        "key_levels": {"spx_support": 5180, "spx_resistance": 5260},
+    }
+
+
 @router.get("/indices")
 async def get_market_indices():
     """Return major market indices with price and daily change."""
