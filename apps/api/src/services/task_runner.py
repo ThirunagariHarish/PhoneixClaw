@@ -1,11 +1,9 @@
 """Task Runner — executes backtesting pipeline as local Python subprocesses.
 
-Replaces the VPS-based agent_gateway. Instead of SSH-ing to remote machines
-and shipping agent bundles, we run the backtesting tools directly on the API
-server as background asyncio tasks.
-
-Claude Code Cloud Tasks can also trigger backtesting by POSTing progress
-callbacks to the /backtest-progress endpoint.
+Each step in agents/backtesting/tools/ is a standalone CLI script with its own
+argparse flags.  This runner maps step names to the correct CLI arguments and
+orchestrates sequential execution, writing progress to PostgreSQL so the
+dashboard can poll it.
 """
 
 import asyncio
@@ -30,12 +28,35 @@ BACKTESTING_TOOLS = REPO_ROOT / "agents" / "backtesting" / "tools"
 _running_tasks: dict[str, asyncio.Task] = {}
 
 
+def _build_step_args(cfg: str, w: str) -> dict[str, list[str]]:
+    """Return CLI arg lists keyed by step name.
+
+    cfg = path to config JSON file
+    w   = work directory for this backtest run
+    """
+    pre = f"{w}/preprocessed"
+    models = f"{w}/models"
+    return {
+        "transform":        ["--config", cfg, "--output", f"{w}/transformed.parquet"],
+        "enrich":           ["--input", f"{w}/transformed.parquet", "--output", f"{w}/enriched.parquet"],
+        "preprocess":       ["--input", f"{w}/enriched.parquet", "--output", pre],
+        "train_xgboost":    ["--data", pre, "--output", models],
+        "train_lightgbm":   ["--data", pre, "--output", models],
+        "train_catboost":   ["--data", pre, "--output", models],
+        "train_rf":         ["--data", pre, "--output", models],
+        "evaluate":         ["--models-dir", models, "--output", f"{models}/best_model.json"],
+        "patterns":         ["--data", w, "--output", f"{w}/patterns.json"],
+        "explainability":   ["--model", models, "--data", pre, "--output", f"{w}/explainability.json"],
+        "create_live_agent": ["--config", cfg, "--models", models, "--output", f"{w}/live_agent"],
+    }
+
+
 async def run_backtest(
     agent_id: uuid.UUID,
     backtest_id: uuid.UUID,
     config: dict,
 ) -> None:
-    """Run the full backtesting pipeline as sequential subprocess steps.
+    """Kick off the full backtesting pipeline in the background.
 
     Each step is a Python script in agents/backtesting/tools/. Progress is
     written to the DB so the dashboard can poll it. On completion, the agent
@@ -56,21 +77,33 @@ async def _run_pipeline(
     config: dict,
 ) -> None:
     """Execute each pipeline step, updating DB progress along the way."""
-    config_path = REPO_ROOT / "data" / f"backtest_{agent_id}.json"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+    work_dir = REPO_ROOT / "data" / f"backtest_{agent_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "models").mkdir(exist_ok=True)
+
+    config_path = work_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2, default=str))
 
+    step_args = _build_step_args(str(config_path), str(work_dir))
+
+    env_extra = {
+        "PHOENIX_API_URL": config.get("phoenix_api_url", ""),
+        "PHOENIX_API_KEY": config.get("phoenix_api_key", ""),
+        "PHOENIX_AGENT_ID": str(agent_id),
+        "PHOENIX_BACKTEST_ID": str(backtest_id),
+    }
+
     steps = [
-        ("transform", "transform.py", 15),
-        ("enrich", "enrich.py", 30),
-        ("preprocess", "preprocess.py", 35),
-        ("train_xgboost", "train_xgboost.py", 45),
-        ("train_lightgbm", "train_lightgbm.py", 50),
-        ("train_catboost", "train_catboost.py", 55),
-        ("train_rf", "train_rf.py", 58),
-        ("evaluate", "evaluate_models.py", 70),
-        ("patterns", "discover_patterns.py", 80),
-        ("explainability", "build_explainability.py", 85),
+        ("transform",       "transform.py",          15),
+        ("enrich",          "enrich.py",              30),
+        ("preprocess",      "preprocess.py",          35),
+        ("train_xgboost",   "train_xgboost.py",      45),
+        ("train_lightgbm",  "train_lightgbm.py",     50),
+        ("train_catboost",  "train_catboost.py",      55),
+        ("train_rf",        "train_rf.py",            58),
+        ("evaluate",        "evaluate_models.py",     70),
+        ("patterns",        "discover_patterns.py",   80),
+        ("explainability",  "build_explainability.py", 85),
         ("create_live_agent", "create_live_agent.py", 95),
     ]
 
@@ -82,9 +115,10 @@ async def _run_pipeline(
                     logger.warning("Step %s script not found: %s", step_name, script_path)
                     continue
 
+                args = step_args.get(step_name, [])
                 await _update_progress(session, agent_id, backtest_id, step_name, pct, f"Running {step_name}...")
 
-                exit_code, stdout, stderr = await _run_script(script_path, config_path)
+                exit_code, stdout, stderr = await _run_script(script_path, args, env_extra)
 
                 if exit_code != 0:
                     error_msg = (stderr or stdout or "Unknown error")[:500]
@@ -100,18 +134,23 @@ async def _run_pipeline(
             logger.exception("Pipeline crashed for agent %s", agent_id)
             await _mark_failed(session, agent_id, backtest_id, "pipeline_error", str(exc)[:500])
         finally:
-            config_path.unlink(missing_ok=True)
             _running_tasks.pop(str(agent_id), None)
 
 
-async def _run_script(script_path: Path, config_path: Path) -> tuple[int, str, str]:
-    """Run a Python script as an asyncio subprocess."""
+async def _run_script(
+    script_path: Path,
+    cli_args: list[str],
+    env_extra: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    """Run a Python script as an asyncio subprocess with proper CLI args."""
     python = os.getenv("PYTHON_BIN", "python3")
+    env = {**os.environ, **(env_extra or {})}
     proc = await asyncio.create_subprocess_exec(
-        python, str(script_path), str(config_path),
+        python, str(script_path), *cli_args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(BACKTESTING_TOOLS.parent),
+        env=env,
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     return (

@@ -14,6 +14,7 @@ Usage (CLI, invoked by .claude/settings.json hooks):
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,17 @@ def _load_config() -> dict:
         if candidate.exists():
             with open(candidate) as f:
                 return json.load(f)
+
+    api_url = os.environ.get("PHOENIX_API_URL", "")
+    agent_id = os.environ.get("PHOENIX_AGENT_ID", "")
+    api_key = os.environ.get("PHOENIX_API_KEY", "")
+    if api_url and agent_id:
+        return {
+            "phoenix_api_url": api_url,
+            "phoenix_api_key": api_key,
+            "agent_id": agent_id,
+        }
+
     return {}
 
 
