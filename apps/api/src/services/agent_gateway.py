@@ -147,6 +147,7 @@ class AgentGateway:
         )
         if result.exit_code == 0:
             await self._push_anthropic_key(instance_id)
+            await ssh_pool.run(instance_id, "echo '{}' > ~/.claude/.credentials.json 2>/dev/null; true")
         return result
 
     async def _push_anthropic_key(self, instance_id: UUID):
