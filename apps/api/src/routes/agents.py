@@ -273,7 +273,10 @@ async def update_agent(agent_id: str, payload: AgentUpdate, session: DbSession):
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(agent_id: str, session: DbSession):
-    """Delete an agent."""
+    """Delete an agent and stop its worker if running."""
+    from apps.api.src.services.agent_manager import stop_agent
+    await stop_agent(uuid.UUID(agent_id))
+
     result = await session.execute(
         select(Agent).where(Agent.id == uuid.UUID(agent_id))
     )
@@ -286,25 +289,21 @@ async def delete_agent(agent_id: str, session: DbSession):
 
 @router.post("/{agent_id}/pause")
 async def pause_agent(agent_id: str, session: DbSession):
-    """Pause a running agent."""
-    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
-    agent = result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    agent.status = "PAUSED"
-    await session.commit()
+    """Pause a running agent's Claude Code session."""
+    from apps.api.src.services.agent_manager import pause_agent as _pause
+    result = await _pause(uuid.UUID(agent_id))
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
     return {"id": agent_id, "status": "PAUSED"}
 
 
 @router.post("/{agent_id}/resume")
 async def resume_agent(agent_id: str, session: DbSession):
-    """Resume a paused agent."""
-    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
-    agent = result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    agent.status = "RUNNING"
-    await session.commit()
+    """Resume a paused agent's Claude Code session."""
+    from apps.api.src.services.agent_manager import resume_agent as _resume
+    result = await _resume(uuid.UUID(agent_id))
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
     return {"id": agent_id, "status": "RUNNING"}
 
 
@@ -376,7 +375,7 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
 
 @router.post("/{agent_id}/promote")
 async def promote_agent(agent_id: str, session: DbSession):
-    """Promote an approved agent to live trading."""
+    """Promote an approved agent to live trading via Claude Code agent."""
     result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
     agent = result.scalar_one_or_none()
     if not agent:
@@ -384,10 +383,9 @@ async def promote_agent(agent_id: str, session: DbSession):
     if agent.status not in ("APPROVED", "PAPER", "BACKTEST_COMPLETE"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Only APPROVED/PAPER agents can be promoted, current: {agent.status}")
 
-    agent.status = "RUNNING"
-    agent.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return {"id": agent_id, "status": "RUNNING"}
+    from apps.api.src.services.agent_manager import start_agent
+    mgr_result = await start_agent(uuid.UUID(agent_id))
+    return {"id": agent_id, "status": "RUNNING", "worker": mgr_result}
 
 
 class LiveMessagePayload(BaseModel):
@@ -790,13 +788,13 @@ async def send_agent_command(agent_id: str, session: DbSession, payload: dict[st
     action = body.get("action", body.get("command", "status"))
 
     if action == "pause":
-        agent.status = "PAUSED"
-        await session.commit()
+        from apps.api.src.services.agent_manager import pause_agent as _pause_agent
+        await _pause_agent(uuid.UUID(agent_id))
         return {"action": "pause", "result": "Agent paused"}
 
     if action == "resume":
-        agent.status = "RUNNING"
-        await session.commit()
+        from apps.api.src.services.agent_manager import resume_agent as _resume_agent
+        await _resume_agent(uuid.UUID(agent_id))
         return {"action": "resume", "result": "Agent resumed"}
 
     if action == "switch_mode":
@@ -952,7 +950,7 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
 
 @router.post("/{agent_id}/activate", status_code=200)
 async def activate_agent(agent_id: str, session: DbSession):
-    """Activate an agent for live trading."""
+    """Activate an agent for live trading via Claude Code agent."""
     agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
     agent = agent_result.scalar_one_or_none()
     if not agent:
@@ -960,7 +958,28 @@ async def activate_agent(agent_id: str, session: DbSession):
     if agent.status not in ("BACKTEST_COMPLETE", "PAUSED", "CREATED"):
         raise HTTPException(status_code=400, detail=f"Cannot activate agent in status {agent.status}")
 
-    agent.status = "RUNNING"
-    agent.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return {"message": "Agent activated", "agent_id": agent_id, "status": "RUNNING"}
+    from apps.api.src.services.agent_manager import start_agent
+    mgr_result = await start_agent(uuid.UUID(agent_id))
+    if mgr_result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=mgr_result["message"])
+    return {"message": "Agent activated", "agent_id": agent_id, "status": "RUNNING", "worker": mgr_result}
+
+
+@router.get("/{agent_id}/worker-status")
+async def get_worker_status(agent_id: str, session: DbSession):
+    """Get the Claude Code agent worker status."""
+    from apps.api.src.services.agent_manager import get_agent_status
+
+    agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = agent_result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    worker = get_agent_status(agent_id)
+    return {
+        "agent_id": agent_id,
+        "agent_status": agent.status,
+        "worker_status": agent.worker_status or "STOPPED",
+        "worker_running": worker.get("running", False),
+        "session_id": worker.get("session_id"),
+    }
