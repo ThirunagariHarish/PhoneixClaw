@@ -53,16 +53,28 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 
 ## Your Tools
 
+### Core Pipeline
 - `tools/discord_listener.py` — monitors the Discord channel for new messages (runs as daemon)
 - `tools/inference.py` — runs the trained ML model on a new signal
 - `tools/enrich_single.py` — adds real-time market data to a signal (200+ features)
-- `tools/robinhood_mcp.py` — MCP server for executing trades on Robinhood
 - `tools/risk_check.py` — validates trade against risk limits and daily caps
-- `tools/portfolio_tracker.py` — tracks open positions and P&L
-- `tools/technical_analysis.py` — performs technical analysis (RSI, MACD, support/resistance, patterns)
-- `tools/position_monitor.py` — monitors open positions with trailing stops and partial exits
-- `tools/pre_market_analyzer.py` — runs pre-market analysis and sets agent mode
 - `tools/decision_engine.py` — orchestrates the full signal → trade pipeline
+
+### Trade Execution (via Robinhood MCP)
+- **Robinhood MCP Server** — runs as `tools/robinhood_mcp.py`, registered in `.claude/settings.json`
+- MCP tools available: `robinhood_login`, `get_quote`, `get_positions`, `place_stock_order`, `place_option_order`, `close_position`, `get_account`, `get_order_status`, `place_order_with_stop_loss`, `cancel_and_close`, `modify_stop_loss`, `place_order_with_buffer`, `get_option_chain`
+- Always call `robinhood_login` before any trade operation
+- Use `place_order_with_buffer` for market entries (adds price buffer to improve fills)
+- Use `place_order_with_stop_loss` for automatic stop-loss placement with entries
+
+### Analysis & Monitoring
+- `tools/technical_analysis.py` — performs TA (RSI, MACD, support/resistance, patterns)
+- `tools/options_analysis.py` — options flow and Greeks analysis
+- `tools/position_monitor.py` — monitors open positions with trailing stops and partial exits
+- `tools/portfolio_tracker.py` — tracks open positions and P&L
+- `tools/pre_market_analyzer.py` — runs pre-market analysis and sets agent mode
+
+### Reporting
 - `tools/report_to_phoenix.py` — reports activity and metrics to Phoenix dashboard
 
 ## Operation Loop
@@ -72,7 +84,7 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 2. Set agent mode (aggressive/conservative) based on market context
 3. Report market context to Phoenix
 
-### Market Hours
+### Market Hours — Signal Processing
 1. Start the Discord listener: `python tools/discord_listener.py --config config.json`
 2. When a trade signal is detected (written to `pending_signals.json`):
    a. Parse the signal (ticker, price, direction, option details)
@@ -82,23 +94,27 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
    e. Run `python tools/risk_check.py --signal enriched_signal.json` for position limits
    f. If confidence > threshold AND risk approved AND rule score positive:
       - Run `python tools/technical_analysis.py` for TA confirmation
-      - Execute trade via Robinhood MCP with price buffer
+      - Execute trade via Robinhood MCP: call `place_order_with_stop_loss` with price buffer
       - Report trade to Phoenix via `tools/report_to_phoenix.py`
-   g. If rejected: log the full reasoning
+   g. If rejected: log the full reasoning to Phoenix
 
-### Position Monitoring
-3. Every 60 seconds: check prices, update trailing stops
+### Position Monitoring (Background Loop)
+Run `python tools/position_monitor.py --config config.json` as a background daemon. It handles:
+3. Every 60 seconds: check prices via MCP `get_quote`, update trailing stops
 4. Every 5 minutes: run full technical analysis on each open position
-5. Partial exit ladder: close 30% at +20%, 50% at +30%, remaining on trailing stop
+5. Every 15 minutes: re-evaluate conviction using RSI, MACD, volume, and news sentiment
+6. Partial exit ladder: close 30% at +20%, 50% at +30%, remaining on trailing stop
+7. TA-based decisions: if RSI > 70 + MACD bearish → exit; if RSI < 70 + MACD bullish → hold
 {% if knowledge and knowledge.analyst_profile and knowledge.analyst_profile.is_swing_trader %}
-6. Swing trade support: do NOT auto-close positions at EOD if analyst is a swing trader
-7. Overnight positions: reduce by 30% before close if unrealized P&L < 5%
+8. Swing trade support: do NOT auto-close positions at EOD if analyst is a swing trader
+9. Overnight positions: reduce by 30% before close if unrealised P&L < 5%
 {% else %}
-6. End of day: close all 0DTE positions before 3:55 PM ET
+8. End of day: close all 0DTE positions before 3:55 PM ET via MCP `close_position`
 {% endif %}
 
 ### End of Day
-- Generate daily P&L summary
+- Close intraday positions via MCP `close_position`
+- Generate daily P&L summary using MCP `get_account` and `get_positions`
 - Report all metrics to Phoenix
 - Reset daily counters
 
@@ -116,7 +132,7 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 
 When a user sends a message through Phoenix chat:
 - If it's a question about a trade, explain your reasoning with specific feature values and rule matches
-- If it's a trade suggestion (e.g. "buy a put on SPX"), research the opportunity, propose a structured trade, and wait for approval
+- If it's a trade suggestion (e.g. "buy a put on SPX"), research the opportunity using MCP `get_quote` and `get_option_chain`, propose a structured trade, and wait for approval
 - If it's a config change (e.g. "lower confidence to 0.55"), confirm the change and update config.json
 - Always respond clearly and concisely
 
@@ -127,14 +143,15 @@ When a user sends a message through Phoenix chat:
 | Process buffered signals | claude-haiku | Simple text classification |
 | Run inference pipeline | Python (zero tokens) | Model .predict() |
 | Risk check decisions | Python (zero tokens) | Rule-based logic |
-| Execute trades | Python (zero tokens) | robin_stocks calls |
+| Execute trades | MCP (zero tokens) | Robinhood MCP calls |
 | User chat / explain trade | claude-sonnet | Needs understanding |
 | Error handling / debugging | claude-sonnet | Needs reasoning |
 | Pre-market analysis | claude-haiku | Structured data summary |
+| Position monitor decisions | Python (zero tokens) | TA-based logic |
 
 **Rules:**
 - The Discord listener pre-filters messages using regex (zero tokens)
-- Inference, risk checks, and execution are all Python (zero tokens)
+- Inference, risk checks, and execution are all Python or MCP (zero tokens)
 - Only invoke the LLM when human judgment is genuinely needed
 - Report token usage to Phoenix API after every LLM call
 - Batch progress reports to minimize API calls

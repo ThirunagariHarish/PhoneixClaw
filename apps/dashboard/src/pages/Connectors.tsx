@@ -59,7 +59,7 @@ interface ChannelInfo {
 
 type PlatformType =
   | 'discord' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
-  | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier'
+  | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier' | 'robinhood'
   | 'yfinance' | 'polygon' | 'alphavantage'
 
 // ─── Platform Metadata ──────────────────────────────────────────────────────
@@ -84,6 +84,7 @@ const PLATFORMS: PlatformMeta[] = [
   { type: 'alpaca',          label: 'Alpaca',          description: 'Commission-free stock & options trading', category: 'broker', icon: TrendingUp,    color: 'text-yellow-500',  bgColor: 'bg-yellow-500/10' },
   { type: 'ibkr',            label: 'Interactive Brokers', description: 'Professional multi-asset broker',     category: 'broker', icon: Landmark,      color: 'text-red-500',     bgColor: 'bg-red-500/10' },
   { type: 'tradier',         label: 'Tradier',         description: 'Options-focused broker',                  category: 'broker', icon: BarChart3,     color: 'text-teal-500',    bgColor: 'bg-teal-500/10' },
+  { type: 'robinhood',       label: 'Robinhood',       description: 'Commission-free stock & options via MCP',  category: 'broker', icon: TrendingUp,    color: 'text-green-500',   bgColor: 'bg-green-500/10' },
   { type: 'yfinance',        label: 'Yahoo Finance',   description: 'Free historical OHLCV and options data',  category: 'data',   icon: TrendingUp,    color: 'text-violet-500',  bgColor: 'bg-violet-500/10' },
   { type: 'polygon',         label: 'Polygon.io',      description: 'Real-time and historical market data',    category: 'data',   icon: BarChart3,     color: 'text-cyan-500',    bgColor: 'bg-cyan-500/10' },
   { type: 'alphavantage',    label: 'Alpha Vantage',   description: 'Free stock API with technical indicators', category: 'data',   icon: Activity,      color: 'text-lime-500',    bgColor: 'bg-lime-500/10' },
@@ -410,6 +411,11 @@ function AddConnectorWizard({
     display_name: '', api_key: '', sandbox: true,
   })
 
+  // Robinhood
+  const [robinhoodForm, setRobinhoodForm] = useState({
+    display_name: '', username: '', password: '', totp_secret: '', mode: 'paper' as 'paper' | 'live',
+  })
+
   // Market data connectors
   const [yfinanceForm, setYfinanceForm] = useState({ display_name: '' })
   const [polygonForm, setPolygonForm] = useState({ display_name: '', api_key: '' })
@@ -436,6 +442,7 @@ function AddConnectorWizard({
       setAlpacaForm({ display_name: '', api_key: '', api_secret: '', mode: 'paper' })
       setIbkrForm({ display_name: '', host: '127.0.0.1', port: '7497', client_id: '1' })
       setTradierForm({ display_name: '', api_key: '', sandbox: true })
+      setRobinhoodForm({ display_name: '', username: '', password: '', totp_secret: '', mode: 'paper' })
       setYfinanceForm({ display_name: '' })
       setPolygonForm({ display_name: '', api_key: '' })
       setAlphaVantageForm({ display_name: '', api_key: '' })
@@ -593,6 +600,12 @@ function AddConnectorWizard({
           config = { sandbox: tradierForm.sandbox }
           break
         }
+        case 'robinhood': {
+          name = robinhoodForm.display_name
+          credentials = { username: robinhoodForm.username, password: robinhoodForm.password, totp_secret: robinhoodForm.totp_secret }
+          config = { mode: robinhoodForm.mode }
+          break
+        }
       }
 
       switch (platform) {
@@ -654,6 +667,8 @@ function AddConnectorWizard({
         return !!(ibkrForm.display_name && ibkrForm.host && ibkrForm.port)
       case 'tradier':
         return !!(tradierForm.display_name && tradierForm.api_key)
+      case 'robinhood':
+        return !!(robinhoodForm.display_name && robinhoodForm.username && robinhoodForm.password)
       case 'yfinance':
         return !!yfinanceForm.display_name
       case 'polygon':
@@ -1014,6 +1029,56 @@ function AddConnectorWizard({
                     ? 'Sandbox uses simulated market data and delayed quotes.'
                     : '⚠️ Production connects to real markets.'}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Robinhood */}
+          {platform === 'robinhood' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={robinhoodForm.display_name} onChange={(e) => setRobinhoodForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Robinhood Trading" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Username / Email</Label>
+                <Input value={robinhoodForm.username} onChange={(e) => setRobinhoodForm((f) => ({ ...f, username: e.target.value }))} placeholder="your@email.com" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Password</Label>
+                <Input type="password" value={robinhoodForm.password} onChange={(e) => setRobinhoodForm((f) => ({ ...f, password: e.target.value }))} placeholder="Robinhood password" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>TOTP Secret (optional)</Label>
+                <Input type="password" value={robinhoodForm.totp_secret} onChange={(e) => setRobinhoodForm((f) => ({ ...f, totp_secret: e.target.value }))} placeholder="MFA TOTP secret (base32)" className="font-mono" />
+                <p className="text-xs text-muted-foreground">Required if you have 2FA enabled. This is the secret key, not the 6-digit code.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <div className="flex gap-3">
+                  {(['paper', 'live'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setRobinhoodForm((f) => ({ ...f, mode }))}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        robinhoodForm.mode === mode
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:border-primary/50'
+                      }`}
+                    >
+                      {mode === 'paper' ? 'Paper Trading' : 'Live Trading'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {robinhoodForm.mode === 'paper'
+                    ? 'Paper mode simulates trades without real money.'
+                    : 'Live mode executes real trades on Robinhood.'}
+                </p>
+              </div>
+              <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3 text-xs text-green-400">
+                Credentials are encrypted at rest with Fernet encryption. The agent uses the Robinhood MCP server for trade execution.
               </div>
             </div>
           )}

@@ -14,20 +14,27 @@ Read `config.json` to get:
 
 ## Pipeline Steps
 
-Execute these steps in order. After each step, report progress to stdout as a JSON line:
-```json
-{"progress": "step1_complete", "message": "Transformed 1,247 messages into 312 trades", "pct": 12}
-```
+Execute these steps in order. After each step, report progress to Phoenix using the curl commands below.
 
 ### Step 1: Transformation
 Run: `python tools/transform.py --config config.json --output output/transformed.parquet`
 
 This reads Discord history, parses trade signals, reconstructs partial exits, computes profit labels, and attaches sentiment scores.
 
-### Step 2: Enrichment
+### Step 2: Enrichment (~200 features)
 Run: `python tools/enrich.py --input output/transformed.parquet --output output/enriched.parquet`
 
-This adds ~200 market attributes (technical indicators, volume, market context, time features, sentiment, options data) to each trade row. Also builds candle windows (30 bars x 15 features per trade) saved as `output/candle_windows.npy`.
+This adds ~200 market attributes across 8 categories:
+1. **Price Action** (~25): returns, gaps, range, ATR, 52-week distances, Fibonacci levels, candle patterns (doji, hammer, engulfing), inside bars, higher-high/lower-low counts
+2. **Technical Indicators** (~30): RSI (7/14/21), MACD, Bollinger Bands, Stochastic, ADX, CCI, OBV, Williams %R, ROC, MFI, TRIX, Keltner Channel, Donchian Channel, Ichimoku, Parabolic SAR, CMF, Stochastic RSI
+3. **Moving Averages** (~20): SMA/EMA (5/10/20/50/100/200), distance from SMAs, crossover signals
+4. **Volume** (~15): raw volume, SMA 5/10/20, ratios, Z-scores, VWAP distance, up-volume ratio, AD line, Force Index, breakout flags
+5. **Market Context** (~25): SPY/QQQ/IWM/DIA returns, VIX level/change/percentile, sector ETF returns (XLF/XLK/XLE/XLV/XLI/XLC/XLU/XLP/XLB/XLRE), SPY correlation, TLT/GLD returns
+6. **Time Features** (~15): hour, minute, day-of-week, month, quarter, pre-market, first/last hour, OPEX proximity, power hour, quad witching
+7. **Sentiment & Events** (~15): FinBERT sentiment, analyst grades, days to earnings/FOMC/CPI/NFP, proximity flags
+8. **Options Data** (~15): premium flow, put/call ratio, GEX, IV rank/percentile, Greeks (delta/gamma/theta/vega)
+
+Also builds candle windows (30 bars × 15 features per trade) saved as `output/candle_windows.npy`.
 
 ### Step 3: Text Embeddings
 Run: `python tools/compute_text_embeddings.py --input output/enriched.parquet --output output/text_embeddings.npy`
@@ -76,13 +83,51 @@ This assembles the live trading agent with:
 - Tool scripts and skill markdown files
 - `config.json` with risk parameters and credentials
 
+### Step 10: Auto-Create Analyst Agent
+After all pipeline steps complete successfully, notify Phoenix to auto-create the analyst agent:
+
+```bash
+curl -s -X POST "{phoenix_api_url}/api/v2/agents/{agent_id}/backtest-progress" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Key: {phoenix_api_key}" \
+  -d '{"step": "completed", "message": "Pipeline complete — analyst agent ready for creation", "progress_pct": 100, "status": "COMPLETED", "metrics": {"auto_create_analyst": true}}'
+```
+
+This triggers the Agent Gateway to prepare the analyst agent with all trained models and configuration.
+
+## Error Recovery (Self-Healing)
+
+You are a self-healing agent. When a step fails:
+
+1. **Read the error output carefully** — understand what went wrong
+2. **Common fixes to try automatically:**
+   - Missing Python package → `pip install <package>`
+   - File not found → check if previous step output exists, re-run if needed
+   - Memory error → reduce batch size or try a smaller model variant
+   - API rate limit → wait 60 seconds and retry
+   - Permission denied → check file permissions, try `chmod`
+3. **Retry the failed step ONCE** after applying the fix
+4. **If retry fails**, report the failure and continue to the next step if possible
+5. **Never modify tool scripts** unless it's a clear bug fix (typo, missing import)
+
+## Progress Reporting
+
+After each step, report progress via curl:
+```bash
+curl -s -X POST "{phoenix_api_url}/api/v2/agents/{agent_id}/backtest-progress" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Key: {phoenix_api_key}" \
+  -d '{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}'
+```
+
+Progress percentages: transform=12, enrich=30, text_embeddings=33, preprocess=35, train_base=55, train_ensemble=65, evaluate=70, explainability=80, patterns=85, create_live_agent=95, completed=100
+
 ## Important Rules
 - Always check if each tool script exists before running it
-- If a script fails, read the error, try to fix it, and retry once
 - Report progress after each step
 - Do not proceed to Step 5 until Steps 1–4 are complete
 - Base training scripts in Step 5 can run in parallel, but hybrid and meta-learner must wait for base models
-- The final output should be a working live agent in ~/agents/live/ with a valid manifest.json
+- The final output should be a working live agent with a valid manifest.json
 
 ## Token Optimization
 

@@ -242,8 +242,8 @@ async def create_agent(payload: AgentCreate, session: DbSession):
         },
     }
 
-    from apps.api.src.services.claude_backtester import run_backtest
-    await run_backtest(agent_id, backtest.id, backtest_config)
+    from apps.api.src.services.agent_gateway import gateway
+    await gateway.create_backtester(agent_id, backtest.id, backtest_config)
 
     return AgentResponse.from_model(agent)
 
@@ -286,8 +286,8 @@ async def update_agent(agent_id: str, payload: AgentUpdate, session: DbSession):
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(agent_id: str, session: DbSession):
     """Delete an agent and stop its worker if running."""
-    from apps.api.src.services.agent_manager import stop_agent
-    await stop_agent(uuid.UUID(agent_id))
+    from apps.api.src.services.agent_gateway import gateway
+    await gateway.stop_agent(uuid.UUID(agent_id))
 
     result = await session.execute(
         select(Agent).where(Agent.id == uuid.UUID(agent_id))
@@ -302,8 +302,8 @@ async def delete_agent(agent_id: str, session: DbSession):
 @router.post("/{agent_id}/pause")
 async def pause_agent(agent_id: str, session: DbSession):
     """Pause a running agent's Claude Code session."""
-    from apps.api.src.services.agent_manager import pause_agent as _pause
-    result = await _pause(uuid.UUID(agent_id))
+    from apps.api.src.services.agent_gateway import gateway
+    result = await gateway.pause_agent(uuid.UUID(agent_id))
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result["message"])
     return {"id": agent_id, "status": "PAUSED"}
@@ -312,8 +312,8 @@ async def pause_agent(agent_id: str, session: DbSession):
 @router.post("/{agent_id}/resume")
 async def resume_agent(agent_id: str, session: DbSession):
     """Resume a paused agent's Claude Code session."""
-    from apps.api.src.services.agent_manager import resume_agent as _resume
-    result = await _resume(uuid.UUID(agent_id))
+    from apps.api.src.services.agent_gateway import gateway
+    result = await gateway.resume_agent(uuid.UUID(agent_id))
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result["message"])
     return {"id": agent_id, "status": "RUNNING"}
@@ -395,8 +395,8 @@ async def promote_agent(agent_id: str, session: DbSession):
     if agent.status not in ("APPROVED", "PAPER", "BACKTEST_COMPLETE"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Only APPROVED/PAPER agents can be promoted, current: {agent.status}")
 
-    from apps.api.src.services.agent_manager import start_agent
-    mgr_result = await start_agent(uuid.UUID(agent_id))
+    from apps.api.src.services.agent_gateway import gateway
+    mgr_result = await gateway.create_analyst(uuid.UUID(agent_id))
     return {"id": agent_id, "status": "RUNNING", "worker": mgr_result}
 
 
@@ -800,13 +800,13 @@ async def send_agent_command(agent_id: str, session: DbSession, payload: dict[st
     action = body.get("action", body.get("command", "status"))
 
     if action == "pause":
-        from apps.api.src.services.agent_manager import pause_agent as _pause_agent
-        await _pause_agent(uuid.UUID(agent_id))
+        from apps.api.src.services.agent_gateway import gateway
+        await gateway.pause_agent(uuid.UUID(agent_id))
         return {"action": "pause", "result": "Agent paused"}
 
     if action == "resume":
-        from apps.api.src.services.agent_manager import resume_agent as _resume_agent
-        await _resume_agent(uuid.UUID(agent_id))
+        from apps.api.src.services.agent_gateway import gateway
+        await gateway.resume_agent(uuid.UUID(agent_id))
         return {"action": "resume", "result": "Agent resumed"}
 
     if action == "switch_mode":
@@ -959,6 +959,13 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
             agent.total_trades = bt.total_trades
             agent.win_rate = bt.win_rate or 0.0
 
+        if m.get("auto_create_analyst"):
+            try:
+                from apps.api.src.services.agent_gateway import gateway
+                await gateway._auto_create_analyst(uuid.UUID(agent_id), {}, None)
+            except Exception as exc:
+                logger.warning("Auto-create analyst failed for %s: %s", agent_id, exc)
+
     if payload.status == "FAILED" and bt:
         bt.status = "FAILED"
         bt.error_message = payload.message[:500]
@@ -982,17 +989,17 @@ async def activate_agent(agent_id: str, session: DbSession):
     if agent.status not in ("BACKTEST_COMPLETE", "PAUSED", "CREATED"):
         raise HTTPException(status_code=400, detail=f"Cannot activate agent in status {agent.status}")
 
-    from apps.api.src.services.agent_manager import start_agent
-    mgr_result = await start_agent(uuid.UUID(agent_id))
-    if mgr_result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=mgr_result["message"])
+    from apps.api.src.services.agent_gateway import gateway
+    mgr_result = await gateway.create_analyst(uuid.UUID(agent_id))
+    if not mgr_result:
+        raise HTTPException(status_code=400, detail="Could not start agent")
     return {"message": "Agent activated", "agent_id": agent_id, "status": "RUNNING", "worker": mgr_result}
 
 
 @router.get("/{agent_id}/worker-status")
 async def get_worker_status(agent_id: str, session: DbSession):
     """Get the Claude Code agent worker status."""
-    from apps.api.src.services.agent_manager import get_agent_status
+    from apps.api.src.services.agent_gateway import get_agent_status
 
     agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
     agent = agent_result.scalar_one_or_none()
@@ -1007,3 +1014,41 @@ async def get_worker_status(agent_id: str, session: DbSession):
         "worker_running": worker.get("running", False),
         "session_id": worker.get("session_id"),
     }
+
+
+# -- Gateway session listing -----------------------------------------------
+
+
+@router.get("/gateway/sessions")
+async def list_gateway_sessions(session: DbSession):
+    """List all active Claude Code agent sessions from the gateway."""
+    from apps.api.src.services.agent_gateway import gateway
+    sessions = await gateway.list_agents()
+    return {"sessions": sessions}
+
+
+@router.get("/{agent_id}/sessions")
+async def get_agent_sessions(agent_id: str, session: DbSession, limit: int = Query(20, ge=1, le=100)):
+    """Get session history for a specific agent."""
+    from shared.db.models.agent_session import AgentSession
+    result = await session.execute(
+        select(AgentSession)
+        .where(AgentSession.agent_id == uuid.UUID(agent_id))
+        .order_by(AgentSession.started_at.desc())
+        .limit(limit)
+    )
+    sessions = result.scalars().all()
+    return [
+        {
+            "id": str(s.id),
+            "agent_type": s.agent_type,
+            "status": s.status,
+            "session_id": s.session_id,
+            "working_dir": s.working_dir,
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "last_heartbeat": s.last_heartbeat.isoformat() if s.last_heartbeat else None,
+            "stopped_at": s.stopped_at.isoformat() if s.stopped_at else None,
+            "error_message": s.error_message,
+        }
+        for s in sessions
+    ]

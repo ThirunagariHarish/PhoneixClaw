@@ -4,6 +4,7 @@ Phoenix v2 ORM models. M1.6.
 
 from shared.db.models.agent import Agent, AgentBacktest, AgentLog
 from shared.db.models.agent_chat import AgentChatMessage
+from shared.db.models.agent_session import AgentSession
 from shared.db.models.agent_message import AgentMessage
 from shared.db.models.agent_metric import AgentMetric
 from shared.db.models.agent_trade import AgentTrade
@@ -31,6 +32,7 @@ __all__ = [
     "Agent",
     "AgentBacktest",
     "AgentChatMessage",
+    "AgentSession",
     "AgentLog",
     "AgentMetric",
     "AgentTrade",

@@ -217,6 +217,47 @@ def enrich_signal(signal: dict) -> dict:
             break
     attrs["consecutive_green"] = greens
 
+    # Fibonacci retracement levels relative to 20d range
+    if len(high) >= 20:
+        h20 = float(high.iloc[-20:].max())
+        l20 = float(low.iloc[-20:].min())
+        rng = h20 - l20
+        if rng > 0:
+            for fib_level in [0.236, 0.382, 0.5, 0.618, 0.786]:
+                fib_price = h20 - fib_level * rng
+                attrs[f"fib_{str(fib_level).replace('.', '')}"] = fib_price
+                attrs[f"dist_fib_{str(fib_level).replace('.', '')}"] = (attrs["last_close"] - fib_price) / attrs["last_close"]
+
+    # Higher highs / lower lows count
+    for lookback in [5, 10]:
+        if len(high) > lookback:
+            hh = sum(1 for j in range(1, lookback) if high.iloc[-j] > high.iloc[-j - 1])
+            ll = sum(1 for j in range(1, lookback) if low.iloc[-j] < low.iloc[-j - 1])
+            attrs[f"higher_highs_{lookback}d"] = hh
+            attrs[f"lower_lows_{lookback}d"] = ll
+
+    # Inside bar / candle patterns
+    if len(high) >= 2:
+        attrs["inside_bar"] = float(high.iloc[-1] <= high.iloc[-2] and low.iloc[-1] >= low.iloc[-2])
+        body = abs(close.iloc[-1] - opn.iloc[-1])
+        full_range = high.iloc[-1] - low.iloc[-1]
+        if full_range > 0:
+            body_ratio = body / full_range
+            upper_wick = high.iloc[-1] - max(close.iloc[-1], opn.iloc[-1])
+            lower_wick = min(close.iloc[-1], opn.iloc[-1]) - low.iloc[-1]
+            attrs["is_doji"] = float(body_ratio < 0.1)
+            attrs["is_hammer"] = float(lower_wick > 2 * body and upper_wick < body * 0.5)
+            prev_body = close.iloc[-2] - opn.iloc[-2]
+            curr_body = close.iloc[-1] - opn.iloc[-1]
+            attrs["is_engulfing_bull"] = float(
+                prev_body < 0 and curr_body > 0 and
+                opn.iloc[-1] <= close.iloc[-2] and close.iloc[-1] >= opn.iloc[-2]
+            )
+            attrs["is_engulfing_bear"] = float(
+                prev_body > 0 and curr_body < 0 and
+                opn.iloc[-1] >= close.iloc[-2] and close.iloc[-1] <= opn.iloc[-2]
+            )
+
     # ── 2. Technical Indicators ──────────────────────────────────────────
     for p in [7, 14, 21]:
         attrs[f"rsi_{p}"] = _last(_rsi(close, p))
@@ -260,6 +301,76 @@ def enrich_signal(signal: dict) -> dict:
     attrs["obv"] = _last(obv_vals)
     attrs["obv_slope_5"] = float(obv_vals.iloc[-1] - obv_vals.iloc[-min(6, len(obv_vals))]) / 5 if len(obv_vals) >= 5 else np.nan
     attrs["obv_slope_20"] = float(obv_vals.iloc[-1] - obv_vals.iloc[-min(21, len(obv_vals))]) / 20 if len(obv_vals) >= 20 else np.nan
+
+    # Williams %R
+    if len(close) >= 14:
+        highest14 = high.rolling(14).max()
+        lowest14 = low.rolling(14).min()
+        wr = -100 * (highest14.iloc[-1] - close.iloc[-1]) / (highest14.iloc[-1] - lowest14.iloc[-1]) if (highest14.iloc[-1] - lowest14.iloc[-1]) > 0 else np.nan
+        attrs["williams_r_14"] = float(wr)
+
+    # Rate of Change
+    for roc_d in [5, 10]:
+        if len(close) > roc_d:
+            attrs[f"roc_{roc_d}d"] = float((close.iloc[-1] - close.iloc[-roc_d - 1]) / close.iloc[-roc_d - 1])
+
+    # Money Flow Index
+    if len(close) >= 15:
+        tp = (high + low + close) / 3
+        mf = tp * volume
+        pos_mf = mf.where(tp.diff() > 0, 0.0).rolling(14).sum()
+        neg_mf = mf.where(tp.diff() <= 0, 0.0).rolling(14).sum()
+        mfi = 100 - (100 / (1 + pos_mf / neg_mf.replace(0, np.nan)))
+        attrs["mfi_14"] = _last(mfi)
+
+    # TRIX (15)
+    if len(close) >= 45:
+        ema1 = _ema(close, 15)
+        ema2 = _ema(ema1, 15)
+        ema3 = _ema(ema2, 15)
+        attrs["trix_15"] = float(((ema3.iloc[-1] - ema3.iloc[-2]) / ema3.iloc[-2]) * 100) if ema3.iloc[-2] != 0 else np.nan
+
+    # Keltner Channel
+    if len(close) >= 20:
+        kc_mid = _ema(close, 20)
+        kc_atr = _atr(high, low, close, 10)
+        kc_upper = kc_mid + 2 * kc_atr
+        kc_lower = kc_mid - 2 * kc_atr
+        attrs["keltner_upper"] = _last(kc_upper)
+        attrs["keltner_lower"] = _last(kc_lower)
+        kc_range = kc_upper.iloc[-1] - kc_lower.iloc[-1]
+        attrs["keltner_position"] = float((close.iloc[-1] - kc_lower.iloc[-1]) / kc_range) if kc_range > 0 else np.nan
+
+    # Donchian Channel (20d)
+    if len(high) >= 20:
+        dc_upper = float(high.rolling(20).max().iloc[-1])
+        dc_lower = float(low.rolling(20).min().iloc[-1])
+        attrs["donchian_upper"] = dc_upper
+        attrs["donchian_lower"] = dc_lower
+        dc_range = dc_upper - dc_lower
+        attrs["donchian_position"] = float((close.iloc[-1] - dc_lower) / dc_range) if dc_range > 0 else np.nan
+
+    # Ichimoku (simplified)
+    if len(close) >= 52:
+        tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
+        kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
+        senkou_a = ((tenkan + kijun) / 2).shift(26)
+        senkou_b = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+        attrs["ichimoku_tenkan"] = _last(tenkan)
+        attrs["ichimoku_kijun"] = _last(kijun)
+        attrs["ichimoku_above_cloud"] = float(
+            close.iloc[-1] > max(senkou_a.iloc[-1], senkou_b.iloc[-1])
+        ) if not (np.isnan(senkou_a.iloc[-1]) or np.isnan(senkou_b.iloc[-1])) else np.nan
+
+    # Parabolic SAR direction (simplified)
+    if len(close) >= 5:
+        attrs["parabolic_sar_bullish"] = float(close.iloc[-1] > close.iloc[-3])
+
+    # CMF (20)
+    if len(close) >= 20:
+        clv = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
+        cmf = (clv * volume).rolling(20).sum() / volume.rolling(20).sum().replace(0, np.nan)
+        attrs["cmf_20"] = _last(cmf)
 
     # ── 3. Moving Averages ───────────────────────────────────────────────
     for w in [5, 10, 20, 50, 100, 200]:
@@ -306,17 +417,52 @@ def enrich_signal(signal: dict) -> dict:
         vol_mean = volume.iloc[-20:].mean()
         attrs["volume_zscore"] = float((volume.iloc[-1] - vol_mean) / vol_std) if vol_std > 0 else 0.0
 
+    # Up-volume ratio (5d)
+    if len(close) >= 5:
+        up_days = sum(1 for j in range(1, 6) if close.iloc[-j] > opn.iloc[-j])
+        attrs["up_volume_ratio_5d"] = up_days / 5.0
+
+    # AD line
+    if len(close) >= 2:
+        clv_vol = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
+        ad_line = (clv_vol.fillna(0) * volume).cumsum()
+        attrs["ad_line"] = _last(ad_line)
+
+    # Force Index (13)
+    if len(close) >= 14:
+        force = close.diff() * volume
+        force_ema = _ema(force.fillna(0), 13)
+        attrs["force_index_13"] = _last(force_ema)
+
     # ── 5. Volatility ───────────────────────────────────────────────────
     log_returns = np.log(close / close.shift(1)).dropna()
     for w in [5, 10, 20, 60]:
         if len(log_returns) >= w:
             attrs[f"realized_vol_{w}d"] = float(log_returns.iloc[-w:].std() * np.sqrt(252))
 
+    if attrs.get("realized_vol_5d") and attrs.get("realized_vol_20d") and attrs["realized_vol_20d"] > 0:
+        attrs["vol_ratio_5_20"] = attrs["realized_vol_5d"] / attrs["realized_vol_20d"]
+
     if len(close) >= 20:
         attrs["parkinson_vol"] = float(np.sqrt(
             (1 / (4 * len(high.iloc[-20:]) * np.log(2))) *
             ((np.log(high.iloc[-20:] / low.iloc[-20:])) ** 2).sum()
         ) * np.sqrt(252))
+
+    # Garman-Klass volatility (20d)
+    if len(close) >= 21:
+        gc_close = close.iloc[-21:]
+        gc_high = high.iloc[-21:]
+        gc_low = low.iloc[-21:]
+        gc_open = opn.iloc[-21:]
+        hl = np.log(gc_high.iloc[1:].values / gc_low.iloc[1:].values) ** 2
+        co = np.log(gc_close.iloc[1:].values / gc_open.iloc[1:].values) ** 2
+        attrs["garman_klass_vol"] = float(np.sqrt((0.5 * hl - (2 * np.log(2) - 1) * co).mean()) * np.sqrt(252))
+
+    # ATR percentile (30d)
+    atr_series = _atr(high, low, close)
+    if len(atr_series) >= 30:
+        attrs["atr_percentile_30d"] = float((atr_series.iloc[-30:] < atr_series.iloc[-1]).mean())
 
     # ── 6. Market Context ────────────────────────────────────────────────
     for etf in MARKET_ETFS:
@@ -356,6 +502,14 @@ def enrich_signal(signal: dict) -> dict:
         if not sect.empty and len(sect) >= 2:
             attrs[f"sector_{sector_name}_1d"] = float(
                 (sect["Close"].iloc[-1] - sect["Close"].iloc[-2]) / sect["Close"].iloc[-2]
+            )
+
+    # Fixed income / gold proxies
+    for proxy_ticker, proxy_prefix in [("TLT", "tlt"), ("GLD", "gld")]:
+        p_data = _get(proxy_ticker, period="5d", interval="1d")
+        if not p_data.empty and len(p_data) >= 2:
+            attrs[f"{proxy_prefix}_return_1d"] = float(
+                (p_data["Close"].iloc[-1] - p_data["Close"].iloc[-2]) / p_data["Close"].iloc[-2]
             )
 
     # ── 7. Time Features ────────────────────────────────────────────────
@@ -480,6 +634,20 @@ def enrich_signal(signal: dict) -> dict:
             attrs[f"days_to_{name}"] = days_away
             attrs[f"{name}_within_3d"] = float(days_away <= 3)
 
+    # Quad witching (3rd Friday of Mar/Jun/Sep/Dec)
+    if entry_date.month in (3, 6, 9, 12):
+        try:
+            c_cal = calendar.Calendar()
+            fridays_qw = [d for d in c_cal.itermonthdays2(entry_date.year, entry_date.month)
+                          if d[0] != 0 and d[1] == 4]
+            qw_day = fridays_qw[2][0] if len(fridays_qw) >= 3 else 20
+            qw_date = date(entry_date.year, entry_date.month, qw_day)
+            attrs["is_quad_witching_week"] = float(abs((qw_date - entry_date).days) <= 5)
+        except Exception:
+            attrs["is_quad_witching_week"] = 0.0
+    else:
+        attrs["is_quad_witching_week"] = 0.0
+
     # ── 9. Options Data (Unusual Whales / yfinance) ───────────────────
     try:
         import asyncio
@@ -487,48 +655,44 @@ def enrich_signal(signal: dict) -> dict:
         uw = UnusualWhalesClient()
         _loop = asyncio.new_event_loop()
         try:
-            # Options flow
             flow = _loop.run_until_complete(uw.get_options_flow(ticker=ticker))
-        if flow:
-            total_premium = sum(float(f.premium or 0) for f in flow[:50])
-            call_premium = sum(float(f.premium or 0) for f in flow[:50]
-                               if f.option_type == "CALL")
-            put_premium = total_premium - call_premium
-            attrs["options_total_premium_50"] = total_premium
-            attrs["options_call_premium_pct"] = call_premium / total_premium if total_premium > 0 else 0.5
-            attrs["options_put_call_ratio"] = put_premium / call_premium if call_premium > 0 else np.nan
-            attrs["options_flow_count"] = len(flow)
-        # GEX
-        gex = _loop.run_until_complete(uw.get_gex(ticker))
-        if gex and gex.total_gex is not None:
-            attrs["gex_value"] = float(gex.total_gex)
-            attrs["gex_positive"] = float(attrs.get("gex_value", 0) > 0)
-        # IV rank & Greeks from options chain
-        try:
-            chain = _loop.run_until_complete(uw.get_option_chain(ticker))
-            contracts = chain.contracts if chain else []
-            if contracts:
-                ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
-                if ivs:
-                    current_iv = ivs[0]
-                    iv_min, iv_max = min(ivs), max(ivs)
-                    attrs["iv_current"] = current_iv
-                    attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
-                                        if iv_max > iv_min else 0.5)
-                    attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
-                # Average Greeks from near-the-money contracts
-                entry_px = float(signal.get("entry_price", 0))
-                atm = [c for c in contracts if entry_px > 0 and
-                       abs(c.strike - entry_px) < entry_px * 0.05]
-                if not atm:
-                    atm = contracts[:5]
-                if atm:
-                    attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
-                    attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
-                    attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
-                    attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
-        except Exception:
-            pass
+            if flow:
+                total_premium = sum(float(f.premium or 0) for f in flow[:50])
+                call_premium = sum(float(f.premium or 0) for f in flow[:50]
+                                   if f.option_type == "CALL")
+                put_premium = total_premium - call_premium
+                attrs["options_total_premium_50"] = total_premium
+                attrs["options_call_premium_pct"] = call_premium / total_premium if total_premium > 0 else 0.5
+                attrs["options_put_call_ratio"] = put_premium / call_premium if call_premium > 0 else np.nan
+                attrs["options_flow_count"] = len(flow)
+            gex = _loop.run_until_complete(uw.get_gex(ticker))
+            if gex and gex.total_gex is not None:
+                attrs["gex_value"] = float(gex.total_gex)
+                attrs["gex_positive"] = float(attrs.get("gex_value", 0) > 0)
+            try:
+                chain = _loop.run_until_complete(uw.get_option_chain(ticker))
+                contracts = chain.contracts if chain else []
+                if contracts:
+                    ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
+                    if ivs:
+                        current_iv = ivs[0]
+                        iv_min, iv_max = min(ivs), max(ivs)
+                        attrs["iv_current"] = current_iv
+                        attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
+                                            if iv_max > iv_min else 0.5)
+                        attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
+                    entry_px = float(signal.get("entry_price", 0))
+                    atm = [c for c in contracts if entry_px > 0 and
+                           abs(c.strike - entry_px) < entry_px * 0.05]
+                    if not atm:
+                        atm = contracts[:5]
+                    if atm:
+                        attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
+                        attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
+                        attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
+                        attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
+            except Exception:
+                pass
         finally:
             _loop.close()
     except Exception:

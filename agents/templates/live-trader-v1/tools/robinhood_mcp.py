@@ -182,11 +182,26 @@ def _ensure_login() -> None:
     if _rh_logged_in:
         return
     rh = _get_rh()
+
     username = os.environ.get("RH_USERNAME", "")
     password = os.environ.get("RH_PASSWORD", "")
     totp_secret = os.environ.get("RH_TOTP_SECRET", "")
+
+    config_path = os.environ.get("ROBINHOOD_CONFIG", "")
+    if config_path and not username:
+        try:
+            import json as _json
+            with open(config_path) as f:
+                cfg = _json.load(f)
+            rh_cfg = cfg.get("robinhood", {})
+            username = rh_cfg.get("username", username)
+            password = rh_cfg.get("password", password)
+            totp_secret = rh_cfg.get("totp_secret", totp_secret)
+        except Exception as exc:
+            log.warning("Failed to read Robinhood config from %s: %s", config_path, exc)
+
     if not username or not password:
-        raise ValueError("RH_USERNAME and RH_PASSWORD env vars are required")
+        raise ValueError("RH_USERNAME and RH_PASSWORD env vars (or ROBINHOOD_CONFIG) are required")
     mfa_code = None
     if totp_secret:
         import pyotp

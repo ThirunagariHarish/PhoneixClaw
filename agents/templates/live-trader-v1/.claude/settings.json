@@ -9,6 +9,15 @@
       "Bash(shutdown *)", "Bash(reboot *)"
     ]
   },
+  "mcpServers": {
+    "robinhood": {
+      "command": "python3",
+      "args": ["tools/robinhood_mcp.py"],
+      "env": {
+        "ROBINHOOD_CONFIG": "config.json"
+      }
+    }
+  },
   "hooks": {
     "SessionStart": [{
       "hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_start 2>/dev/null || true"}]
