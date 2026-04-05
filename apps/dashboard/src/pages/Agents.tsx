@@ -1,14 +1,13 @@
 /**
  * Agents page — manage Claude Code trading agents.
- * FlexCards for agent overview, 6-step creation wizard, detail panel.
+ * Cards for agent overview, 4-step creation wizard, detail panel.
  * M1.11.
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '@/lib/api'
 import { PageHeader } from '@/components/ui/PageHeader'
-import { FlexCard } from '@/components/ui/FlexCard'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { SidePanel } from '@/components/ui/SidePanel'
@@ -93,20 +92,7 @@ const AGENT_TYPES = [
   { value: 'trend', label: 'Trend Agent' },
 ]
 
-const AGENT_SKILLS = [
-  { id: 'discord_monitoring', label: 'Discord Signal Monitoring', description: 'Listen to analyst channels for trade signals in real-time' },
-  { id: 'technical_analysis', label: 'Technical Analysis', description: 'RSI, MACD, Bollinger Bands, support/resistance levels' },
-  { id: 'options_analysis', label: 'Options Flow Analysis', description: 'Analyze options chain, IV, Greeks, unusual flow' },
-  { id: 'risk_assessment', label: 'Risk Assessment', description: 'Position sizing, stop-loss, portfolio risk scoring' },
-  { id: 'trade_execution', label: 'Trade Execution (Robinhood)', description: 'Execute trades via Robinhood MCP server' },
-  { id: 'position_monitoring', label: 'Position Monitoring', description: 'Track open positions, trailing stops, P&L alerts' },
-  { id: 'pre_market_analysis', label: 'Pre-Market Intelligence', description: 'Pre-market scan, set agent mode (aggressive/conservative)' },
-  { id: 'pattern_recognition', label: 'Pattern Recognition', description: 'Apply backtesting-derived patterns to new trades' },
-  { id: 'model_inference', label: 'ML Model Inference', description: 'Run trained models (XGBoost, LSTM, etc.) for trade decisions' },
-  { id: 'explainability', label: 'Trade Explainability', description: 'Explain why a trade was taken or skipped using SHAP' },
-]
-
-const WIZARD_STEPS = ['Basic Info', 'Connectors', 'Instance', 'Skills', 'Risk Config', 'Review'] as const
+const WIZARD_STEPS = ['Channel', 'Instance', 'Risk Config', 'Review'] as const
 
 interface ConnectorInfo {
   id: string
@@ -340,13 +326,14 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
               <MetricPill label="Sharpe" value={`${backtest.sharpe_ratio?.toFixed(2)}`} trend={(backtest.sharpe_ratio ?? 0) >= 1.0 ? 'up' : 'neutral'} />
               <MetricPill label="Trades" value={`${backtest.total_trades}`} trend="neutral" />
             </div>
-            {backtest.metrics?.rules && (
+            {Array.isArray(backtest.metrics?.rules) && backtest.metrics.rules.length > 0 && (
               <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
                 <Shield className="h-3 w-3" />
-                {(backtest.metrics.rules as unknown[]).length} rules learned
-                {backtest.metrics?.overall_channel_metrics &&
-                  (backtest.metrics.overall_channel_metrics as Record<string, unknown>).best_ticker &&
-                  ` · Top: ${(backtest.metrics.overall_channel_metrics as Record<string, unknown>).best_ticker}`
+                {String(backtest.metrics.rules.length)} rules learned
+                {backtest.metrics?.overall_channel_metrics != null
+                  && typeof (backtest.metrics.overall_channel_metrics as Record<string, unknown>).best_ticker === 'string'
+                  ? ` · Top: ${(backtest.metrics.overall_channel_metrics as Record<string, string>).best_ticker}`
+                  : null
                 }
               </div>
             )}
@@ -459,41 +446,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
   )
 }
 
-function StepBasicInfo({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <Label>Name</Label>
-        <Input
-          value={form.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          placeholder="e.g. SPY-Discord-Trader"
-        />
-      </div>
-      <div>
-        <Label>Type</Label>
-        <Select value={form.type} onValueChange={(v) => onChange({ type: v })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {AGENT_TYPES.map((t) => (
-              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <AiAssistPopover
-        label="Description"
-        value={form.description}
-        onChange={(v) => onChange({ description: v })}
-        placeholder="What does this agent do?"
-        multiline
-        context={`agent type: ${form.type}`}
-      />
-    </div>
-  )
-}
-
-function StepConnectors({ form, onChange, connectors }: {
+function StepChannel({ form, onChange, connectors }: {
   form: WizardFormData
   onChange: (f: Partial<WizardFormData>) => void
   connectors: ConnectorInfo[]
@@ -528,101 +481,130 @@ function StepConnectors({ form, onChange, connectors }: {
 
   const channels = channelsFromConnector(selectedConnector)
 
-  const description = isTrading
-    ? 'Select a Discord connector and one channel to ingest trading signals from.'
-    : 'Select data sources for trend analysis. Pick multiple connectors — Discord, Reddit, Twitter, Unusual Whales, or News feeds.'
-
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{description}</p>
-      {allowed.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-8 text-center">
-          <Plug className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            {isTrading ? 'No Discord connectors found.' : 'No matching connectors found.'}
-          </p>
-          <Link to="/connectors">
-            <Button variant="outline" size="sm">
-              <Plus className="h-4 w-4 mr-1.5" /> Add Connectors
-            </Button>
-          </Link>
-        </div>
-      ) : (
-        <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {isTrading ? 'Discord Servers' : 'Data Sources'}
-          </p>
-          {allowed.map((c) => {
-            const meta = getPlatformMeta(c.type)
-            const Icon = meta.icon
-            const selected = form.connector_ids.includes(c.id)
-            return (
-              <div key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => selectConnector(c.id)}
-                  className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all ${
-                    selected
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
-                      : 'border-border hover:border-primary/40 hover:bg-accent/50'
-                  }`}
-                >
-                  {isTrading ? (
-                    <div className={`h-4 w-4 rounded-full border-2 shrink-0 ${selected ? 'border-primary bg-primary' : 'border-muted-foreground/40'}`}>
-                      {selected && <div className="h-full w-full rounded-full bg-primary" />}
-                    </div>
-                  ) : selected ? (
-                    <CheckSquare className="h-4 w-4 text-primary shrink-0" />
-                  ) : (
-                    <SquareIcon className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                  )}
-                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${meta.bgColor}`}>
-                    <Icon className={`h-4 w-4 ${meta.color}`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{c.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{connectorSummary(c)}</p>
-                  </div>
-                  <Badge variant="outline" className={`text-[10px] ${meta.color}`}>{meta.label}</Badge>
-                </button>
+      <div>
+        <Label>Agent Name</Label>
+        <Input
+          value={form.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="e.g. SPY-Discord-Trader"
+        />
+      </div>
+      <div>
+        <Label>Type</Label>
+        <Select value={form.type} onValueChange={(v) => onChange({ type: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {AGENT_TYPES.map((t) => (
+              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <AiAssistPopover
+        label="Description"
+        value={form.description}
+        onChange={(v) => onChange({ description: v })}
+        placeholder="What does this agent do?"
+        multiline
+        context={`agent type: ${form.type}`}
+      />
 
-                {/* Channel picker for Trading Agent */}
-                {isTrading && selected && channels.length > 0 && (
-                  <div className="ml-7 mt-2 space-y-1 border-l-2 border-primary/20 pl-4">
-                    <p className="text-xs font-medium text-muted-foreground mb-1.5">Select one channel:</p>
-                    {channels.map((ch) => {
-                      const isActive = form.selected_channel?.channel_id === ch.channel_id
-                      return (
-                        <button
-                          key={ch.channel_id}
-                          type="button"
-                          onClick={() => onChange({ selected_channel: { channel_id: ch.channel_id, channel_name: ch.channel_name } })}
-                          className={`w-full flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-all ${
-                            isActive
-                              ? 'bg-primary/10 text-primary font-medium'
-                              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
-                          }`}
-                        >
-                          <div className={`h-3.5 w-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isActive ? 'border-primary' : 'border-muted-foreground/40'}`}>
-                            {isActive && <div className="h-1.5 w-1.5 rounded-full bg-primary" />}
-                          </div>
-                          <Hash className="h-3.5 w-3.5 shrink-0 opacity-50" />
-                          <span className="truncate">{ch.channel_name}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-      {form.connector_ids.length > 0 && !isTrading && (
-        <p className="text-xs text-muted-foreground">
-          {form.connector_ids.length} connector{form.connector_ids.length !== 1 ? 's' : ''} selected
+      <div className="border-t pt-4">
+        <p className="text-sm text-muted-foreground mb-3">
+          {isTrading
+            ? 'Select a Discord connector and one channel to ingest trading signals from.'
+            : 'Select data sources for trend analysis.'}
         </p>
-      )}
+        {allowed.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-8 text-center">
+            <Plug className="h-8 w-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              {isTrading ? 'No Discord connectors found.' : 'No matching connectors found.'}
+            </p>
+            <Link to="/connectors">
+              <Button variant="outline" size="sm">
+                <Plus className="h-4 w-4 mr-1.5" /> Add Connectors
+              </Button>
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              {isTrading ? 'Discord Servers' : 'Data Sources'}
+            </p>
+            {allowed.map((c) => {
+              const meta = getPlatformMeta(c.type)
+              const Icon = meta.icon
+              const selected = form.connector_ids.includes(c.id)
+              return (
+                <div key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => selectConnector(c.id)}
+                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all ${
+                      selected
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                        : 'border-border hover:border-primary/40 hover:bg-accent/50'
+                    }`}
+                  >
+                    {isTrading ? (
+                      <div className={`h-4 w-4 rounded-full border-2 shrink-0 ${selected ? 'border-primary bg-primary' : 'border-muted-foreground/40'}`}>
+                        {selected && <div className="h-full w-full rounded-full bg-primary" />}
+                      </div>
+                    ) : selected ? (
+                      <CheckSquare className="h-4 w-4 text-primary shrink-0" />
+                    ) : (
+                      <SquareIcon className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+                    )}
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${meta.bgColor}`}>
+                      <Icon className={`h-4 w-4 ${meta.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{c.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{connectorSummary(c)}</p>
+                    </div>
+                    <Badge variant="outline" className={`text-[10px] ${meta.color}`}>{meta.label}</Badge>
+                  </button>
+
+                  {isTrading && selected && channels.length > 0 && (
+                    <div className="ml-7 mt-2 space-y-1 border-l-2 border-primary/20 pl-4">
+                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Select one channel:</p>
+                      {channels.map((ch) => {
+                        const isActive = form.selected_channel?.channel_id === ch.channel_id
+                        return (
+                          <button
+                            key={ch.channel_id}
+                            type="button"
+                            onClick={() => onChange({ selected_channel: { channel_id: ch.channel_id, channel_name: ch.channel_name } })}
+                            className={`w-full flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-all ${
+                              isActive
+                                ? 'bg-primary/10 text-primary font-medium'
+                                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                            }`}
+                          >
+                            <div className={`h-3.5 w-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isActive ? 'border-primary' : 'border-muted-foreground/40'}`}>
+                              {isActive && <div className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                            </div>
+                            <Hash className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                            <span className="truncate">{ch.channel_name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {form.connector_ids.length > 0 && !isTrading && (
+          <p className="text-xs text-muted-foreground mt-2">
+            {form.connector_ids.length} connector{form.connector_ids.length !== 1 ? 's' : ''} selected
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -684,45 +666,6 @@ function StepInstance({ form, onChange, instances }: {
           )}
         </div>
       )}
-    </div>
-  )
-}
-
-function StepSkills({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
-  const toggleSkill = (skillId: string) => {
-    const next = form.skills.includes(skillId)
-      ? form.skills.filter((s) => s !== skillId)
-      : [...form.skills, skillId]
-    onChange({ skills: next })
-  }
-
-  return (
-    <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">Select the Claude Code agent tools and capabilities to enable.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {AGENT_SKILLS.map((skill) => {
-          const checked = form.skills.includes(skill.id)
-          return (
-            <label
-              key={skill.id}
-              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                checked ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => toggleSkill(skill.id)}
-                className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
-              />
-              <div>
-                <p className="text-sm font-medium">{skill.label}</p>
-                <p className="text-xs text-muted-foreground">{skill.description}</p>
-              </div>
-            </label>
-          )
-        })}
-      </div>
     </div>
   )
 }
@@ -894,18 +837,6 @@ function StepReview({ form, instances, connectors }: {
         <div className="p-3">
           <p className="text-xs text-muted-foreground">Instance</p>
           <p className="font-medium">{instanceName}</p>
-        </div>
-        <div className="p-3">
-          <p className="text-xs text-muted-foreground">Skills</p>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {form.skills.length === 0 ? (
-              <span className="text-sm text-muted-foreground">None selected</span>
-            ) : (
-              form.skills.map((s) => (
-                <Badge key={s} variant="secondary">{AGENT_SKILLS.find((sk) => sk.id === s)?.label ?? s}</Badge>
-              ))
-            )}
-          </div>
         </div>
         <div className="p-3">
           <p className="text-xs text-muted-foreground">Risk Configuration</p>
@@ -1175,24 +1106,7 @@ export default function AgentsPage() {
     },
   })
 
-  const backtestCompleteMutation = useMutation({
-    mutationFn: async (agentId: string) => api.post(`/api/v2/agents/${agentId}/backtest-complete`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents'] })
-      queryClient.invalidateQueries({ queryKey: ['agent-stats'] })
-    },
-  })
-
-  useEffect(() => {
-    const backtestingAgents = agents.filter((a) => a.status === 'BACKTESTING')
-    backtestingAgents.forEach((a) => {
-      const created = new Date(a.created_at).getTime()
-      const elapsed = Date.now() - created
-      if (elapsed > 15_000) {
-        backtestCompleteMutation.mutate(a.id)
-      }
-    })
-  }, [agents])
+  // Backtesting is now handled on VPS via Agent Gateway — no client-side timer needed
 
   const { data: stats } = useQuery<AgentStats>({
     queryKey: ['agent-stats'],
@@ -1268,17 +1182,16 @@ export default function AgentsPage() {
 
   const canAdvance = (step: number): boolean => {
     switch (step) {
-      case 0: return form.name.trim().length > 0
-      case 1: {
+      case 0: {
+        if (form.name.trim().length === 0) return false
         if (form.type === 'trading') {
           return form.connector_ids.length === 1 && form.selected_channel !== null
         }
         return form.connector_ids.length > 0
       }
-      case 2: return form.instance_id === '__managed__' || form.instance_id.length > 0
-      case 3: return true // skills are optional
-      case 4: return true // risk config has defaults
-      case 5: return true // review
+      case 1: return form.instance_id === '__managed__' || form.instance_id.length > 0
+      case 2: return true
+      case 3: return true
       default: return false
     }
   }
@@ -1307,12 +1220,10 @@ export default function AgentsPage() {
             <StepIndicator currentStep={wizardStep} />
 
             <div className="min-h-[280px]">
-              {wizardStep === 0 && <StepBasicInfo form={form} onChange={updateForm} />}
-              {wizardStep === 1 && <StepConnectors form={form} onChange={updateForm} connectors={connectors} />}
-              {wizardStep === 2 && <StepInstance form={form} onChange={updateForm} instances={instances} />}
-              {wizardStep === 3 && <StepSkills form={form} onChange={updateForm} />}
-              {wizardStep === 4 && <StepRiskConfig form={form} onChange={updateForm} />}
-              {wizardStep === 5 && <StepReview form={form} instances={instances} connectors={connectors} />}
+              {wizardStep === 0 && <StepChannel form={form} onChange={updateForm} connectors={connectors} />}
+              {wizardStep === 1 && <StepInstance form={form} onChange={updateForm} instances={instances} />}
+              {wizardStep === 2 && <StepRiskConfig form={form} onChange={updateForm} />}
+              {wizardStep === 3 && <StepReview form={form} instances={instances} connectors={connectors} />}
             </div>
 
             <div className="flex items-center justify-between pt-4 border-t">

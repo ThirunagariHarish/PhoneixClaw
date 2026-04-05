@@ -64,7 +64,7 @@ async def get_portfolio_performance(
     return {
         "total_value": round(running_total, 2),
         "total_pnl": round(total_pnl, 2),
-        "total_pnl_pct": 0.0,
+        "total_pnl_pct": None,
         "period": period,
         "trade_count": trade_count,
         "equity_curve": equity_curve,
@@ -169,11 +169,11 @@ async def get_performance_summary(
 
     return {
         "total_pnl": round(total_pnl, 2),
-        "total_pnl_pct": 0.0,
+        "total_pnl_pct": None,
         "win_rate": round(wins / max(total_trades, 1), 4),
-        "sharpe_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "max_drawdown_pct": 0.0,
+        "sharpe_ratio": None,
+        "max_drawdown": None,
+        "max_drawdown_pct": None,
         "total_trades": total_trades,
         "winning_trades": wins,
         "losing_trades": losses,
@@ -215,7 +215,7 @@ async def get_risk_metrics(
         "var_95": var_95,
         "var_99": var_99,
         "max_drawdown": max_dd,
-        "max_drawdown_pct": 0.0,
-        "exposure_pct": 0.0,
+        "max_drawdown_pct": None,
+        "exposure_pct": None,
         "period": period,
     }

@@ -13,7 +13,6 @@ Flow:
 
 import logging
 import uuid
-import random
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -65,44 +64,16 @@ def _simulate_option_outcome(
     sentiment: str,
     ticker: str,
     posted_at: datetime,
-) -> dict:
+) -> Optional[dict]:
     """
-    Simulate option selection and outcome.
-    In production, this would query Unusual Whales for the actual option chain
-    and historical price to determine real profitability.
+    Look up real option chain and historical price to determine profitability.
+    Requires Unusual Whales or equivalent market data integration.
+    Returns None until real market data provider is wired in.
     """
-    random.seed(hash(f"{ticker}{posted_at.isoformat()}{sentiment}"))
-
-    option_type = "CALL" if sentiment == "bullish" else "PUT"
-    base_price = random.uniform(50, 500)
-    strike = round(base_price * (1.02 if sentiment == "bullish" else 0.98), 2)
-    premium = round(random.uniform(0.5, 8.0), 2)
-    dte = random.choice([7, 14, 30, 45])
-
-    # Simulated outcome — biased slightly toward profitable for realistic feel
-    price_move_pct = random.gauss(0.5 if sentiment == "bullish" else -0.5, 3.0)
-    if sentiment == "bullish":
-        is_profitable = price_move_pct > (strike - base_price) / base_price * 100
-    else:
-        is_profitable = price_move_pct < (base_price - strike) / base_price * 100
-
-    final_price = base_price * (1 + price_move_pct / 100)
-    if is_profitable:
-        option_return_pct = random.uniform(20, 300)
-    else:
-        option_return_pct = random.uniform(-100, -10)
-
-    return {
-        "option_type": option_type,
-        "strike": strike,
-        "premium": premium,
-        "dte": dte,
-        "base_price": round(base_price, 2),
-        "final_price": round(final_price, 2),
-        "price_move_pct": round(price_move_pct, 2),
-        "option_return_pct": round(option_return_pct, 2),
-        "is_profitable": is_profitable,
-    }
+    raise NotImplementedError(
+        "_simulate_option_outcome requires a real options data provider "
+        "(e.g. Unusual Whales historical chain). Random simulation removed."
+    )
 
 
 async def run_trend_backtest(
@@ -152,7 +123,12 @@ async def run_trend_backtest(
         if sentiment == "neutral":
             continue
 
-        option_result = _simulate_option_outcome(sentiment, primary_ticker, msg.posted_at)
+        try:
+            option_result = _simulate_option_outcome(sentiment, primary_ticker, msg.posted_at)
+        except NotImplementedError:
+            continue
+        if option_result is None:
+            continue
 
         headline_analyses.append({
             "message_id": str(msg.id),

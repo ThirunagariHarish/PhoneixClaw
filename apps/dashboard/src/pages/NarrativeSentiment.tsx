@@ -21,44 +21,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MessageCircle, Brain, TrendingUp, AlertTriangle, Newspaper } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-]
-
-const MOCK_FEED = [
-  { id: '1', ts: new Date().toISOString(), source: 'Twitter', headline: 'Fed signals potential rate cut in Q2', score: 0.42, tickers: ['SPY', 'QQQ'], urgent: true },
-  { id: '2', ts: new Date(Date.now() - 300000).toISOString(), source: 'News', headline: 'CPI comes in below expectations', score: 0.68, tickers: ['TLT'], urgent: false },
-  { id: '3', ts: new Date(Date.now() - 600000).toISOString(), source: 'Reddit', headline: 'WSB piling into NVDA calls', score: -0.15, tickers: ['NVDA'], urgent: true },
-  { id: '4', ts: new Date(Date.now() - 900000).toISOString(), source: 'SEC', headline: 'Form 4: Insider selling at AAPL', score: -0.55, tickers: ['AAPL'], urgent: false },
-]
-
-const MOCK_FED_SPEAKERS = [
-  { id: '1', name: 'Jerome Powell', date: '2025-03-15', summary: 'Data-dependent stance, no rush to cut', hawkish: 0.6, dovish: 0.2 },
-  { id: '2', name: 'John Williams', date: '2025-03-12', summary: 'Soft landing likely, inflation easing', hawkish: 0.3, dovish: 0.65 },
-]
-
-const MOCK_SOCIAL = {
-  cashtags: ['$NVDA', '$TSLA', '$AAPL', '$META', '$GOOGL'],
-  wsbMomentum: ['GME', 'AMC', 'NVDA', 'TSLA', 'PLTR'],
-  heatmap: [
-    { ticker: 'NVDA', sentiment: 0.72 },
-    { ticker: 'TSLA', sentiment: 0.45 },
-    { ticker: 'AAPL', sentiment: 0.12 },
-    { ticker: 'META', sentiment: -0.08 },
-    { ticker: 'GME', sentiment: -0.35 },
-  ],
+const EMPTY_SOCIAL = {
+  cashtags: [] as string[],
+  wsbMomentum: [] as string[],
+  heatmap: [] as Array<{ ticker: string; sentiment: number }>,
 }
-
-const MOCK_EARNINGS = [
-  { ticker: 'NVDA', date: '2025-03-20', expectation: 0.65, postRisk: null },
-  { ticker: 'ORCL', date: '2025-03-18', expectation: 0.22, postRisk: 'Transcript risk: cautious guidance' },
-]
-
-const MOCK_ANALYST = [
-  { ticker: 'NVDA', action: 'Upgrade', firm: 'Goldman', target: 950, impact: '+3.2%' },
-  { ticker: 'TSLA', action: 'Downgrade', firm: 'Morgan Stanley', target: 180, impact: '-2.1%' },
-]
 
 function sentimentColor(score: number) {
   if (score >= 0.5) return 'bg-emerald-500'
@@ -74,6 +41,11 @@ export default function NarrativeSentimentPage() {
   const [sourceToggles, setSourceToggles] = useState({ twitter: true, news: true, reddit: true, sec: true })
   const queryClient = useQueryClient()
 
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
   const { data: feedResponse } = useQuery({
     queryKey: ['narrative-feed'],
     queryFn: async () => {
@@ -81,40 +53,40 @@ export default function NarrativeSentimentPage() {
         const res = await api.get('/api/v2/narrative/feed')
         return res.data
       } catch {
-        return { items: MOCK_FEED, metrics: { marketSentiment: 0.35, fearGreed: 62, twitterVelocity: 0.78, newsSentimentAvg: 0.42 } }
+        return { items: [], metrics: { marketSentiment: 0, fearGreed: 0, twitterVelocity: 0, newsSentimentAvg: 0 } }
       }
     },
   })
 
   const metrics = feedResponse?.metrics ?? {
-    marketSentiment: 0.35,
-    fearGreed: 62,
-    twitterVelocity: 0.78,
-    newsSentimentAvg: 0.42,
+    marketSentiment: 0,
+    fearGreed: 0,
+    twitterVelocity: 0,
+    newsSentimentAvg: 0,
   }
 
-  const feed = feedResponse?.items ?? MOCK_FEED
+  const feed = feedResponse?.items ?? []
 
   const { data: fedWatch = [] } = useQuery({
     queryKey: ['narrative-fed-watch'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/narrative/fed-watch')
-        return res.data ?? MOCK_FED_SPEAKERS
+        return res.data ?? []
       } catch {
-        return MOCK_FED_SPEAKERS
+        return []
       }
     },
   })
 
-  const { data: social = MOCK_SOCIAL } = useQuery({
+  const { data: social = EMPTY_SOCIAL } = useQuery({
     queryKey: ['narrative-social'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/narrative/social')
-        return res.data ?? MOCK_SOCIAL
+        return res.data ?? EMPTY_SOCIAL
       } catch {
-        return MOCK_SOCIAL
+        return EMPTY_SOCIAL
       }
     },
   })
@@ -124,9 +96,9 @@ export default function NarrativeSentimentPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/narrative/earnings')
-        return res.data ?? MOCK_EARNINGS
+        return res.data ?? []
       } catch {
-        return MOCK_EARNINGS
+        return []
       }
     },
   })
@@ -136,9 +108,9 @@ export default function NarrativeSentimentPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/narrative/analyst-moves')
-        return res.data ?? MOCK_ANALYST
+        return res.data ?? []
       } catch {
-        return MOCK_ANALYST
+        return []
       }
     },
   })
@@ -155,10 +127,10 @@ export default function NarrativeSentimentPage() {
   const formatTime = (iso: string) =>
     new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
-  const feedItems = Array.isArray(feed) ? feed : MOCK_FEED
-  const fedItems = Array.isArray(fedWatch) ? fedWatch : MOCK_FED_SPEAKERS
-  const earningsItems = Array.isArray(earnings) ? earnings : MOCK_EARNINGS
-  const analystItems = Array.isArray(analystMoves) ? analystMoves : MOCK_ANALYST
+  const feedItems = Array.isArray(feed) ? feed : []
+  const fedItems = Array.isArray(fedWatch) ? fedWatch : []
+  const earningsItems = Array.isArray(earnings) ? earnings : []
+  const analystItems = Array.isArray(analystMoves) ? analystMoves : []
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -200,7 +172,7 @@ export default function NarrativeSentimentPage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_INSTANCES.map((inst) => (
+                  {instances.map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>
                       {inst.name}
                     </SelectItem>
@@ -352,7 +324,7 @@ export default function NarrativeSentimentPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground mb-2">Twitter trending cashtags</p>
                 <div className="flex flex-wrap gap-2">
-                  {(social.cashtags ?? MOCK_SOCIAL.cashtags).map((t: string) => (
+                  {(social.cashtags ?? []).map((t: string) => (
                     <Badge key={t} variant="secondary">{t}</Badge>
                   ))}
                 </div>
@@ -360,7 +332,7 @@ export default function NarrativeSentimentPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground mb-2">WSB momentum tickers</p>
                 <div className="flex flex-wrap gap-2">
-                  {(social.wsbMomentum ?? MOCK_SOCIAL.wsbMomentum).map((t: string) => (
+                  {(social.wsbMomentum ?? []).map((t: string) => (
                     <Badge key={t} variant="outline">{t}</Badge>
                   ))}
                 </div>
@@ -368,7 +340,7 @@ export default function NarrativeSentimentPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground mb-2">Sentiment heatmap by ticker</p>
                 <div className="space-y-2">
-                  {(social.heatmap ?? MOCK_SOCIAL.heatmap).map((h: { ticker: string; sentiment: number }) => (
+                  {(social.heatmap ?? []).map((h: { ticker: string; sentiment: number }) => (
                     <div key={h.ticker} className="flex items-center gap-2">
                       <span className="w-12 font-mono text-sm">{h.ticker}</span>
                       <div className="flex-1 h-4 rounded bg-muted overflow-hidden">

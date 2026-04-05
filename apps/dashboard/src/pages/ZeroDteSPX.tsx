@@ -36,75 +36,48 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { getMetricTooltip } from '@/lib/metricTooltips'
 
-// Mock data
-const MOCK_SPX = { price: 5987.42, change: 12.35, changePct: 0.21 }
-const MOCK_METRICS = {
-  vix: 14.2,
-  gexNet: -2.4e9,
-  dealerGammaZone: 'Negative',
-  zeroDteVolume: 1.2e6,
-  putCallRatio: 0.89,
-  mocImbalance: -847e6,
+const EMPTY_SPX = { price: 0, change: 0, changePct: 0 }
+const EMPTY_METRICS = {
+  vix: 0,
+  gexNet: 0,
+  dealerGammaZone: '—',
+  zeroDteVolume: 0,
+  putCallRatio: 0,
+  mocImbalance: 0,
 }
-const MOCK_GAMMA_LEVELS = [
-  { strike: 5975, gex: 1.2e9, type: 'Support', distance: -12 },
-  { strike: 5980, gex: 0.8e9, type: 'Support', distance: -7 },
-  { strike: 5985, gex: -0.3e9, type: 'Flip', distance: -2 },
-  { strike: 5990, gex: -1.1e9, type: 'Wall', distance: 3 },
-  { strike: 5995, gex: -0.9e9, type: 'Resistance', distance: 8 },
-  { strike: 6000, gex: -0.5e9, type: 'Resistance', distance: 13 },
-]
-const MOCK_MOC = {
-  direction: 'Sell',
-  amount: -847e6,
-  historicalAvg: -420e6,
-  predictedImpact: -0.12,
-  tradeSignal: 'Bearish',
+const EMPTY_GAMMA_LEVELS: Array<{ strike: number; gex: number; type: string; distance: number }> = []
+const EMPTY_MOC = {
+  direction: '—',
+  amount: 0,
+  historicalAvg: 0,
+  predictedImpact: 0,
+  tradeSignal: '—',
   releaseTime: '15:50',
 }
-const MOCK_VANNA_CHARM = {
-  vannaLevel: 0.42,
+const EMPTY_VANNA_CHARM = {
+  vannaLevel: 0,
   vannaDirection: 'up',
-  charmBidActive: true,
-  strikes: [
-    { strike: 5975, vanna: 0.12, charm: -0.08 },
-    { strike: 5985, vanna: 0.22, charm: -0.15 },
-    { strike: 5995, vanna: 0.18, charm: -0.12 },
-  ],
+  charmBidActive: false,
+  strikes: [] as Array<{ strike: number; vanna: number; charm: number }>,
 }
-const MOCK_VOLUME = {
-  callVolume: 680000,
-  putVolume: 520000,
-  ratio: 1.31,
-  volumeByStrike: [
-    { strike: 5975, calls: 45, puts: 32 },
-    { strike: 5980, calls: 62, puts: 48 },
-    { strike: 5985, calls: 78, puts: 55 },
-    { strike: 5990, calls: 55, puts: 72 },
-    { strike: 5995, calls: 42, puts: 58 },
-    { strike: 6000, calls: 38, puts: 45 },
-  ],
-  largestTrades: [
-    { strike: 5985, type: 'Call', size: 500, premium: 2.4e6 },
-    { strike: 5990, type: 'Put', size: 400, premium: 1.8e6 },
-  ],
+const EMPTY_VOLUME = {
+  callVolume: 0,
+  putVolume: 0,
+  ratio: 0,
+  volumeByStrike: [] as Array<{ strike: number; calls: number; puts: number }>,
+  largestTrades: [] as Array<{ strike: number; type: string; size: number; premium: number }>,
   gammaSqueezeSignal: false,
 }
-const MOCK_TRADE_PLAN = {
-  direction: 'SHORT',
-  instrument: 'SPX',
-  strikes: '5990P / 5980P',
-  size: '2 contracts',
-  entry: 'Market at 3:50',
-  stop: '5995',
-  target: '5970',
-  signals: ['GEX bearish', 'MOC sell imbalance', 'Charm bid active', '0DTE put flow'],
+const EMPTY_TRADE_PLAN = {
+  direction: '—',
+  instrument: '—',
+  strikes: '—',
+  size: '—',
+  entry: '—',
+  stop: '—',
+  target: '—',
+  signals: [] as string[],
 }
-
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-]
 
 function useCountdownTo(targetHour: number, targetMin: number) {
   const [remaining, setRemaining] = useState<string>('')
@@ -136,66 +109,97 @@ export default function ZeroDteSPXPage() {
   const countdownToClose = useCountdownTo(16, 0)
   const countdownToMoc = useCountdownTo(15, 50)
 
-  const { data: gammaLevels = MOCK_GAMMA_LEVELS } = useQuery({
-    queryKey: ['zero-dte', 'gamma-levels'],
+  const { data: spxData = EMPTY_SPX } = useQuery({
+    queryKey: ['zero-dte', 'spx-price'],
     queryFn: async () => {
       try {
-        const res = await api.get('/api/v2/zero-dte/gamma-levels')
-        return res.data
+        const res = await api.get('/api/v2/zero-dte/spx-price')
+        return res.data ?? EMPTY_SPX
       } catch {
-        return MOCK_GAMMA_LEVELS
+        return EMPTY_SPX
+      }
+    },
+    refetchInterval: 10000,
+  })
+
+  const { data: spxMetrics = EMPTY_METRICS } = useQuery({
+    queryKey: ['zero-dte', 'metrics'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/zero-dte/metrics')
+        return res.data ?? EMPTY_METRICS
+      } catch {
+        return EMPTY_METRICS
       }
     },
     refetchInterval: 30000,
   })
 
-  const { data: mocData = MOCK_MOC } = useQuery({
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
+  const { data: gammaLevels = EMPTY_GAMMA_LEVELS } = useQuery({
+    queryKey: ['zero-dte', 'gamma-levels'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/zero-dte/gamma-levels')
+        return res.data ?? EMPTY_GAMMA_LEVELS
+      } catch {
+        return EMPTY_GAMMA_LEVELS
+      }
+    },
+    refetchInterval: 30000,
+  })
+
+  const { data: mocData = EMPTY_MOC } = useQuery({
     queryKey: ['zero-dte', 'moc-imbalance'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/moc-imbalance')
-        return res.data
+        return res.data ?? EMPTY_MOC
       } catch {
-        return MOCK_MOC
+        return EMPTY_MOC
       }
     },
     refetchInterval: 60000,
   })
 
-  const { data: vannaCharm = MOCK_VANNA_CHARM } = useQuery({
+  const { data: vannaCharm = EMPTY_VANNA_CHARM } = useQuery({
     queryKey: ['zero-dte', 'vanna-charm'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/vanna-charm')
-        return res.data
+        return res.data ?? EMPTY_VANNA_CHARM
       } catch {
-        return MOCK_VANNA_CHARM
+        return EMPTY_VANNA_CHARM
       }
     },
     refetchInterval: 30000,
   })
 
-  const { data: volume = MOCK_VOLUME } = useQuery({
+  const { data: volume = EMPTY_VOLUME } = useQuery({
     queryKey: ['zero-dte', 'volume'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/volume')
-        return res.data
+        return res.data ?? EMPTY_VOLUME
       } catch {
-        return MOCK_VOLUME
+        return EMPTY_VOLUME
       }
     },
     refetchInterval: 15000,
   })
 
-  const { data: tradePlan = MOCK_TRADE_PLAN } = useQuery({
+  const { data: tradePlan = EMPTY_TRADE_PLAN } = useQuery({
     queryKey: ['zero-dte', 'trade-plan'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/trade-plan')
-        return res.data
+        return res.data ?? EMPTY_TRADE_PLAN
       } catch {
-        return MOCK_TRADE_PLAN
+        return EMPTY_TRADE_PLAN
       }
     },
     refetchInterval: 60000,
@@ -224,10 +228,10 @@ export default function ZeroDteSPXPage() {
       <PageHeader icon={Activity} title="0DTE SPX Command Center" description="Zero days to expiration SPX options flow and signals">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-muted-foreground">
           <span className="font-mono text-base sm:text-lg font-semibold text-foreground">
-            SPX {MOCK_SPX.price.toLocaleString()}
+            SPX {spxData.price ? spxData.price.toLocaleString() : '—'}
           </span>
-          <span className={MOCK_SPX.change >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-            {MOCK_SPX.change >= 0 ? '+' : ''}{MOCK_SPX.change} ({MOCK_SPX.changePct}%)
+          <span className={spxData.change >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+            {spxData.change >= 0 ? '+' : ''}{spxData.change} ({spxData.changePct}%)
           </span>
           <span className="flex items-center gap-1">
             <Timer className="h-4 w-4" />
@@ -238,26 +242,26 @@ export default function ZeroDteSPXPage() {
 
       {/* Top Metrics Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2 sm:gap-3">
-        <MetricCard title="SPX Price" value={MOCK_SPX.price.toLocaleString()} tooltip={getMetricTooltip('SPX Price')} />
-        <MetricCard title="VIX" value={MOCK_METRICS.vix} tooltip={getMetricTooltip('VIX')} />
+        <MetricCard title="SPX Price" value={spxData.price ? spxData.price.toLocaleString() : '—'} tooltip={getMetricTooltip('SPX Price')} />
+        <MetricCard title="VIX" value={spxMetrics.vix || '—'} tooltip={getMetricTooltip('VIX')} />
         <MetricCard
           title="GEX Net"
-          value={formatGex(MOCK_METRICS.gexNet)}
-          trend={MOCK_METRICS.gexNet >= 0 ? 'up' : 'down'}
+          value={spxMetrics.gexNet ? formatGex(spxMetrics.gexNet) : '—'}
+          trend={spxMetrics.gexNet >= 0 ? 'up' : 'down'}
           tooltip={getMetricTooltip('GEX Net')}
         />
         <MetricCard
           title="Dealer Gamma Zone"
-          value={MOCK_METRICS.dealerGammaZone}
-          trend={MOCK_METRICS.dealerGammaZone === 'Positive' ? 'up' : 'down'}
+          value={spxMetrics.dealerGammaZone}
+          trend={spxMetrics.dealerGammaZone === 'Positive' ? 'up' : 'down'}
           tooltip={getMetricTooltip('Dealer Gamma Zone')}
         />
-        <MetricCard title="0DTE Volume" value={formatGex(MOCK_METRICS.zeroDteVolume)} tooltip={getMetricTooltip('ODTE Volume')} />
-        <MetricCard title="Put/Call Ratio" value={MOCK_METRICS.putCallRatio.toFixed(2)} tooltip={getMetricTooltip('Put/Call Ratio')} />
+        <MetricCard title="0DTE Volume" value={spxMetrics.zeroDteVolume ? formatGex(spxMetrics.zeroDteVolume) : '—'} tooltip={getMetricTooltip('ODTE Volume')} />
+        <MetricCard title="Put/Call Ratio" value={spxMetrics.putCallRatio ? spxMetrics.putCallRatio.toFixed(2) : '—'} tooltip={getMetricTooltip('Put/Call Ratio')} />
         <MetricCard
           title="MOC Imbalance"
-          value={`$${formatMoc(Math.abs(MOCK_METRICS.mocImbalance))}`}
-          trend={MOCK_METRICS.mocImbalance >= 0 ? 'up' : 'down'}
+          value={spxMetrics.mocImbalance ? `$${formatMoc(Math.abs(spxMetrics.mocImbalance))}` : '—'}
+          trend={spxMetrics.mocImbalance >= 0 ? 'up' : 'down'}
           tooltip={getMetricTooltip('MOC Imbalance')}
         />
       </div>
@@ -550,7 +554,7 @@ export default function ZeroDteSPXPage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_INSTANCES.map((inst) => (
+                  {instances.map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>{inst.name}</SelectItem>
                   ))}
                 </SelectContent>

@@ -140,12 +140,8 @@ class WalkForwardEngine:
         return windows
 
     def _evaluate(self, config: dict, data: list) -> dict:
-        """Evaluate strategy on a data window (placeholder)."""
-        import random
-        return {
-            "total_trades": random.randint(10, 100),
-            "win_rate": round(random.uniform(0.35, 0.65), 2),
-            "sharpe_ratio": round(random.uniform(-0.5, 2.5), 2),
-            "total_pnl": round(random.uniform(-5000, 15000), 2),
-            "max_drawdown_pct": round(random.uniform(5, 25), 1),
-        }
+        """Evaluate strategy on a data window. Not yet implemented — returns zeros."""
+        raise NotImplementedError(
+            "_evaluate requires a real strategy evaluation implementation; "
+            "random placeholder has been removed"
+        )

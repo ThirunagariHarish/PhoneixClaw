@@ -78,143 +78,10 @@ interface DailySummary {
   pipeline_health: string
 }
 
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-  { id: 'inst-3', name: 'Instance C (Staging)' },
-]
-
-const MOCK_SIGNALS: Signal[] = [
-  {
-    id: '1',
-    time: '2025-03-03T09:35:00Z',
-    symbol: 'NVDA',
-    direction: 'LONG',
-    confidence: 0.87,
-    source_agent: 'Risk Analyzer',
-    entry_price: 142.50,
-    stop_loss: 138.20,
-    take_profit: 152.00,
-    risk_reward: 2.2,
-    status: 'NEW',
-    research_note: 'Strong AI narrative momentum. Earnings beat expectations. Institutional accumulation from 13F filings.',
-    technical_chart_ref: 'NVDA 1D — VWAP support, multi-timeframe confluence at 142.30.',
-    risk_analysis: 'VaR within limits. Stop at 2.5 ATR. Position size 1.2% of portfolio.',
-  },
-  {
-    id: '2',
-    time: '2025-03-03T09:42:00Z',
-    symbol: 'AAPL',
-    direction: 'SHORT',
-    confidence: 0.72,
-    source_agent: 'Risk Analyzer',
-    entry_price: 178.90,
-    stop_loss: 181.50,
-    take_profit: 172.00,
-    risk_reward: 2.6,
-    status: 'ACTIVE',
-    research_note: 'Sector rotation out of mega-cap tech. Relative strength weakening vs QQQ.',
-    technical_chart_ref: 'AAPL 4H — Failed breakout at 180. Fibonacci 61.8% retracement target.',
-    risk_analysis: 'Circuit breaker at -3%. Dynamic stop trailing.',
-  },
-  {
-    id: '3',
-    time: '2025-03-03T10:15:00Z',
-    symbol: 'SPY',
-    direction: 'LONG',
-    confidence: 0.81,
-    source_agent: 'Risk Analyzer',
-    entry_price: 512.30,
-    stop_loss: 508.00,
-    take_profit: 520.00,
-    risk_reward: 1.8,
-    status: 'NEW',
-    research_note: 'Market breadth improving. VIX term structure contango. Macro regime: risk-on.',
-    technical_chart_ref: 'SPY 1D — Opening range breakout above 511. VWAP reversion support.',
-    risk_analysis: 'Portfolio VaR 0.8%. Delta-neutral hedge considered.',
-  },
-  {
-    id: '4',
-    time: '2025-03-03T10:28:00Z',
-    symbol: 'TSLA',
-    direction: 'LONG',
-    confidence: 0.65,
-    source_agent: 'Risk Analyzer',
-    entry_price: 248.50,
-    stop_loss: 243.00,
-    take_profit: 262.00,
-    risk_reward: 2.4,
-    status: 'EXPIRED',
-    research_note: 'EV sentiment improving. Headlines positive. Watch delivery numbers.',
-    technical_chart_ref: 'TSLA 1H — Gap fill complete. ORB setup.',
-    risk_analysis: 'Higher volatility. Reduced position size.',
-  },
-  {
-    id: '5',
-    time: '2025-03-03T11:00:00Z',
-    symbol: 'AMD',
-    direction: 'LONG',
-    confidence: 0.79,
-    source_agent: 'Risk Analyzer',
-    entry_price: 168.20,
-    stop_loss: 164.50,
-    take_profit: 178.00,
-    risk_reward: 2.5,
-    status: 'NEW',
-    research_note: 'AI chip demand tailwind. Cross-asset correlation with NVDA strong.',
-    technical_chart_ref: 'AMD 4H — Multi-timeframe confluence. Fibonacci 38.2% entry.',
-    risk_analysis: 'Correlation-adjusted exposure. Max 2% portfolio.',
-  },
-  {
-    id: '6',
-    time: '2025-03-03T11:22:00Z',
-    symbol: 'META',
-    direction: 'LONG',
-    confidence: 0.74,
-    source_agent: 'Risk Analyzer',
-    entry_price: 485.20,
-    stop_loss: 478.00,
-    take_profit: 502.00,
-    risk_reward: 2.3,
-    status: 'NEW',
-    research_note: 'Ad revenue recovery. Social sentiment positive.',
-    technical_chart_ref: 'META 1D — VWAP reversion. ORB above 484.',
-    risk_analysis: 'Standard position size. VaR compliant.',
-  },
-  {
-    id: '7',
-    time: '2025-03-03T11:45:00Z',
-    symbol: 'MSFT',
-    direction: 'LONG',
-    confidence: 0.82,
-    source_agent: 'Risk Analyzer',
-    entry_price: 415.80,
-    stop_loss: 410.50,
-    take_profit: 428.00,
-    risk_reward: 2.0,
-    status: 'ACTIVE',
-    research_note: 'Cloud growth resilient. AI Copilot adoption accelerating.',
-    technical_chart_ref: 'MSFT 4H — Multi-timeframe confluence. Fibonacci support.',
-    risk_analysis: 'Low volatility. Full position size approved.',
-  },
-]
-
-const MOCK_SUMMARY: DailySummary = {
-  total_signals_today: 5,
-  win_rate_7d: 62,
-  avg_rr: 2.3,
-  active_signals: 2,
-  pipeline_health: 'healthy',
-}
-
-const MOCK_PIPELINE: PipelineStatus = {
-  status: 'deployed',
-  instance_id: 'inst-1',
-  agents: [
-    { id: 'ra', name: 'Research Analyst', status: 'running', last_run: '2025-03-03T07:00:00Z', signals_produced: 8 },
-    { id: 'ta', name: 'Technical Analyst', status: 'running', last_run: '2025-03-03T07:15:00Z', signals_produced: 6 },
-    { id: 'rk', name: 'Risk Analyzer', status: 'running', last_run: '2025-03-03T07:30:00Z', signals_produced: 5 },
-  ],
+const EMPTY_PIPELINE: PipelineStatus = {
+  status: 'not_deployed',
+  instance_id: null,
+  agents: [],
 }
 
 export default function DailySignalsPage() {
@@ -222,34 +89,39 @@ export default function DailySignalsPage() {
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null)
   const queryClient = useQueryClient()
 
-  const { data: signals = MOCK_SIGNALS, isLoading: signalsLoading } = useQuery<Signal[]>({
+  const { data: signals = [], isLoading: signalsLoading } = useQuery<Signal[]>({
     queryKey: ['daily-signals'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/daily-signals')
-        return res.data
+        return res.data ?? []
       } catch {
-        return MOCK_SIGNALS
+        return []
       }
     },
     refetchInterval: 30000,
   })
 
-  const { data: pipeline = MOCK_PIPELINE } = useQuery<PipelineStatus>({
+  const { data: pipeline = EMPTY_PIPELINE } = useQuery<PipelineStatus>({
     queryKey: ['daily-signals-pipeline'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/daily-signals/pipeline')
-        return res.data
+        return res.data ?? EMPTY_PIPELINE
       } catch {
-        return MOCK_PIPELINE
+        return EMPTY_PIPELINE
       }
     },
   })
 
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
   const summary: DailySummary = {
     total_signals_today: signals.length,
-    win_rate_7d: MOCK_SUMMARY.win_rate_7d,
+    win_rate_7d: 0,
     avg_rr: signals.length ? signals.reduce((a, s) => a + s.risk_reward, 0) / signals.length : 0,
     active_signals: signals.filter((s) => s.status === 'ACTIVE').length,
     pipeline_health: pipeline.status === 'deployed' ? 'healthy' : 'degraded',
@@ -317,7 +189,7 @@ export default function DailySignalsPage() {
                 <SelectValue placeholder="Connect Instance" />
               </SelectTrigger>
               <SelectContent>
-                {MOCK_INSTANCES.map((inst) => (
+                {instances.map((inst) => (
                   <SelectItem key={inst.id} value={inst.id}>
                     {inst.name}
                   </SelectItem>

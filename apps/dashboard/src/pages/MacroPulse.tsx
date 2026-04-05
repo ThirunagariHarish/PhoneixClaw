@@ -40,19 +40,7 @@ const Line = RechartsLine as unknown as ComponentType<any>
 type Regime = 'RISK-ON' | 'RISK-OFF' | 'NEUTRAL' | 'HAWKISH' | 'DOVISH'
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-]
-
-const MOCK_CPI_DATA = [
-  { month: 'Sep', value: 3.7 },
-  { month: 'Oct', value: 3.2 },
-  { month: 'Nov', value: 3.1 },
-  { month: 'Dec', value: 3.4 },
-  { month: 'Jan', value: 3.1 },
-  { month: 'Feb', value: 3.2 },
-]
+const EMPTY_CPI_DATA: Array<{ month: string; value: number }> = []
 
 const regimeColors: Record<Regime, string> = {
   'RISK-ON': 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/50',
@@ -74,14 +62,31 @@ export default function MacroPulsePage() {
   const [refreshInterval, setRefreshInterval] = useState('30')
   const queryClient = useQueryClient()
 
-  const { data: regime = { regime: 'RISK-ON' as Regime, confidence: 0.82, updated_at: new Date().toISOString() } } = useQuery({
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
+  const { data: cpiData = EMPTY_CPI_DATA } = useQuery({
+    queryKey: ['macro-pulse-cpi'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/macro-pulse/cpi')
+        return res.data ?? EMPTY_CPI_DATA
+      } catch {
+        return EMPTY_CPI_DATA
+      }
+    },
+  })
+
+  const { data: regime = { regime: 'NEUTRAL' as Regime, confidence: 0, updated_at: new Date().toISOString() } } = useQuery({
     queryKey: ['macro-pulse-regime'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/macro-pulse/regime')
         return res.data
       } catch {
-        return { regime: 'RISK-ON' as Regime, confidence: 0.82, updated_at: new Date().toISOString() }
+        return { regime: 'NEUTRAL' as Regime, confidence: 0, updated_at: new Date().toISOString() }
       }
     },
     refetchInterval: Number(refreshInterval) * 1000,
@@ -149,39 +154,19 @@ export default function MacroPulsePage() {
 
   const mockCalendar = calendar.length
     ? calendar
-    : [
-        { id: '1', date: '2025-03-12', event: 'FOMC Meeting', impact: 'HIGH' },
-        { id: '2', date: '2025-03-13', event: 'CPI Release', impact: 'HIGH' },
-        { id: '3', date: '2025-03-14', event: 'Jobs Report', impact: 'HIGH' },
-        { id: '4', date: '2025-03-20', event: 'GDP Release', impact: 'MEDIUM' },
-      ]
+    : []
 
   const mockIndicators = indicators.length
     ? indicators
-    : [
-        { name: 'CPI YoY', value: '3.2%', trend: 'down' as const },
-        { name: 'Unemployment', value: '3.7%', trend: 'up' as const },
-        { name: 'Fed Funds', value: '4.50%', trend: 'neutral' as const },
-        { name: '10Y Yield', value: '4.25%', trend: 'up' as const },
-        { name: 'DXY', value: '103.8', trend: 'down' as const },
-        { name: 'Gold', value: '$2,045', trend: 'up' as const },
-      ]
+    : []
 
   const mockGeopolitical = geopolitical.length
     ? geopolitical
-    : [
-        { id: '1', title: 'Middle East tensions', severity: 'High' as Severity, sectors: ['Energy', 'Defense'], impact: 'Oil +5%, flight to safety' },
-        { id: '2', title: 'China trade policy', severity: 'Medium' as Severity, sectors: ['Tech', 'Semiconductors'], impact: 'Supply chain volatility' },
-      ]
+    : []
 
   const mockImplications = implications.length
     ? implications
-    : [
-        'Avoid tech stocks today (Fed hawkish)',
-        'Favor energy sector (geopolitical premium)',
-        'Reduce duration in bonds (yield curve steepening)',
-        'Gold as hedge (risk-off sentiment building)',
-      ]
+    : []
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -196,7 +181,7 @@ export default function MacroPulsePage() {
             {regime.regime}
           </Badge>
           <span className="text-sm text-muted-foreground">
-            {(regime.confidence ?? 0.82) * 100}% confidence
+            {(regime.confidence ?? 0) * 100}% confidence
           </span>
           <span className="text-xs text-muted-foreground">
             Updated {formatTime(regime.updated_at ?? new Date().toISOString())}
@@ -225,7 +210,7 @@ export default function MacroPulsePage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_INSTANCES.map((inst) => (
+                  {instances.map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>
                       {inst.name}
                     </SelectItem>
@@ -340,7 +325,7 @@ export default function MacroPulsePage() {
           <FlexCard title="CPI (YoY %)">
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={MOCK_CPI_DATA}>
+                <LineChart data={cpiData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} domain={[2.5, 4]} />

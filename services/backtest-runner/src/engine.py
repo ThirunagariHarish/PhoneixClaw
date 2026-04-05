@@ -73,14 +73,14 @@ class BacktestMetrics:
             "avg_loss": round(avg_loss, 2),
             "profit_factor": round(profit_factor, 2),
             "sharpe_ratio": round(sharpe, 2),
-            "sortino_ratio": 0,  # Placeholder
+            "sortino_ratio": None,
             "max_drawdown": round(max_dd, 2),
             "max_drawdown_pct": round(max_dd / peak * 100, 2) if peak > 0 else 0,
             "total_pnl": round(total_pnl, 2),
             "avg_trade_pnl": round(total_pnl / len(trades), 2),
             "best_trade": round(max(pnls), 2),
             "worst_trade": round(min(pnls), 2),
-            "avg_hold_time_minutes": 0,  # Placeholder
+            "avg_hold_time_minutes": None,
         }
 
 
@@ -167,16 +167,21 @@ class BacktestEngine:
         return {"take_trade": False}
 
     def _simulate_trade(self, data: dict, decision: dict, capital: float) -> dict:
-        """Simulate trade execution with realistic fills."""
-        entry = data.get("price", data.get("close", 100))
-        # Simulated exit at +/- random amount
-        import random
-        pnl = round(random.uniform(-200, 400), 2)
+        """Execute a trade using entry/exit prices from the data bar."""
+        entry = data.get("price", data.get("close", 0))
+        exit_price = data.get("exit_price", data.get("next_close", entry))
+        if entry == 0:
+            raise NotImplementedError(
+                "_simulate_trade requires 'price' or 'close' in data; "
+                "no real market data provided"
+            )
+        side = decision.get("side", "buy")
+        pnl = round((exit_price - entry) if side == "buy" else (entry - exit_price), 2)
         return {
             "symbol": data.get("symbol", "SPY"),
-            "side": decision.get("side", "buy"),
+            "side": side,
             "entry_price": entry,
-            "exit_price": round(entry + (pnl / 10), 2),
+            "exit_price": exit_price,
             "pnl": pnl,
             "timestamp": data.get("timestamp", datetime.now(timezone.utc).isoformat()),
         }

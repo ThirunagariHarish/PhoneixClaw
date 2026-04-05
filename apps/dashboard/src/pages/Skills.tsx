@@ -15,43 +15,38 @@ import { SidePanel } from '@/components/ui/SidePanel'
 import { BookOpen, RefreshCw } from 'lucide-react'
 
 const SKILL_CATEGORIES = ['analysis', 'data', 'execution', 'risk', 'all']
-const MOCK_SKILLS = [
-  { id: '1', name: 'Technical Analysis', category: 'analysis', description: 'RSI, MACD, Bollinger' },
-  { id: '2', name: 'Order Execution', category: 'execution', description: 'Limit, market, stop orders' },
-  { id: '3', name: 'Risk Manager', category: 'risk', description: 'Position sizing, drawdown limits' },
-  { id: '4', name: 'Data Fetcher', category: 'data', description: 'OHLCV, fundamentals' },
-]
-const MOCK_AGENT_CONFIG = {
-  agents_md: '# Agent roles\n- Day Trader\n- Risk Analyzer',
-  soul_md: '# SOUL.md\nAgent personality and behavior.',
-  tools_md: '# TOOLS.md\nAvailable tools and skills.',
+
+const EMPTY_AGENT_CONFIG = {
+  agents_md: '',
+  soul_md: '',
+  tools_md: '',
 }
 
 export default function SkillsPage() {
   const [category, setCategory] = useState('all')
-  const [selectedSkill, setSelectedSkill] = useState<typeof MOCK_SKILLS[0] | null>(null)
+  const [selectedSkill, setSelectedSkill] = useState<{ id: string; name: string; category: string; description: string } | null>(null)
   const [syncing, setSyncing] = useState(false)
 
-  const { data: skills = MOCK_SKILLS } = useQuery({
+  const { data: skills = [] } = useQuery({
     queryKey: ['skills', category],
     queryFn: async () => {
       try {
         const res = await api.get(`/api/v2/skills?category=${category}`)
-        return res.data
+        return res.data ?? []
       } catch {
-        return MOCK_SKILLS.filter((s) => category === 'all' || s.category === category)
+        return []
       }
     },
   })
 
-  const { data: agentConfig = MOCK_AGENT_CONFIG } = useQuery({
+  const { data: agentConfig = EMPTY_AGENT_CONFIG } = useQuery({
     queryKey: ['agent-config'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/skills/agent-config')
-        return res.data
+        return res.data ?? EMPTY_AGENT_CONFIG
       } catch {
-        return MOCK_AGENT_CONFIG
+        return EMPTY_AGENT_CONFIG
       }
     },
   })

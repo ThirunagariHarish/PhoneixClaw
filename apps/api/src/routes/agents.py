@@ -5,7 +5,6 @@ M1.11: Agent management from dashboard.
 Reference: PRD Section 3.4, ArchitecturePlan §3, §6.
 """
 
-import random
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -135,19 +134,24 @@ async def agent_stats(session: DbSession):
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=AgentResponse)
 async def create_agent(payload: AgentCreate, session: DbSession):
     """
-    Create a new agent. Registers in DB and forwards to Bridge Service on the target instance.
-    Agent starts in CREATED state; must go through backtesting before live.
+    Create a new agent. Inserts DB rows, then ships backtesting agent to VPS
+    and starts the backtesting pipeline via the Agent Gateway.
     """
     agent_type = "trend" if payload.type == "sentiment" else payload.type
     instance_id = uuid.UUID(payload.instance_id) if payload.instance_id else None
+
+    channel_name = (payload.config or {}).get("selected_channel", {}).get("channel_name") if isinstance(payload.config.get("selected_channel"), dict) else None
+    analyst_name = payload.name.split(" ")[0] if payload.name else None
 
     agent_id = uuid.uuid4()
     agent = Agent(
         id=agent_id,
         name=payload.name,
         type=agent_type,
-        status="BACKTESTING",
+        status="BACKTESTING" if instance_id else "CREATED",
         instance_id=instance_id,
+        channel_name=channel_name,
+        analyst_name=analyst_name,
         config={
             "description": payload.description,
             "data_source": payload.data_source,
@@ -171,7 +175,7 @@ async def create_agent(payload: AgentCreate, session: DbSession):
     backtest = AgentBacktest(
         id=uuid.uuid4(),
         agent_id=agent_id,
-        status="RUNNING",
+        status="RUNNING" if instance_id else "PENDING",
         strategy_template=f"{agent_type}_default",
         start_date=now - timedelta(days=730),
         end_date=now,
@@ -185,7 +189,131 @@ async def create_agent(payload: AgentCreate, session: DbSession):
     await session.commit()
     await session.refresh(agent)
 
+    if instance_id:
+        import asyncio
+        asyncio.create_task(
+            _ship_and_run_backtest(agent_id, instance_id, backtest.id, payload.config or {})
+        )
+
     return AgentResponse.from_model(agent)
+
+
+async def _ship_and_run_backtest(agent_id: uuid.UUID, instance_id: uuid.UUID, backtest_id: uuid.UUID, config: dict):
+    """Background task: ship backtesting agent to VPS, install Claude if needed, run pipeline."""
+    import logging
+    from shared.db.engine import get_session as _get_session
+    from shared.db.models.claude_code_instance import ClaudeCodeInstance
+    from shared.db.models.system_log import SystemLog
+    from apps.api.src.services.agent_gateway import gateway
+
+    logger = logging.getLogger(__name__)
+
+    async for session in _get_session():
+        try:
+            inst_result = await session.execute(
+                select(ClaudeCodeInstance).where(ClaudeCodeInstance.id == instance_id)
+            )
+            inst = inst_result.scalar_one_or_none()
+            if not inst:
+                raise RuntimeError(f"Instance {instance_id} not found")
+
+            gateway.register_instance(inst.id, inst.host, inst.ssh_port, inst.ssh_username, inst.ssh_key_encrypted)
+
+            async def _log(step: str, msg: str, level: str = "INFO", progress: int | None = None):
+                log = SystemLog(
+                    id=uuid.uuid4(), source="backtest", level=level, service="agent-gateway",
+                    agent_id=str(agent_id), backtest_id=str(backtest_id),
+                    message=msg, step=step, progress_pct=progress,
+                )
+                session.add(log)
+                await session.commit()
+
+            await _log("health", "Checking VPS health...", progress=5)
+            health = await gateway.check_health(inst.id)
+            if not health.reachable:
+                raise RuntimeError("VPS is unreachable")
+
+            if not health.claude_installed:
+                await _log("install", "Installing Claude Code on VPS...", progress=10)
+                install_result = await gateway.install_claude_code(inst.id)
+                if install_result.exit_code != 0:
+                    raise RuntimeError(f"Claude Code install failed: {install_result.stderr}")
+                await _log("install", "Claude Code installed successfully", progress=15)
+
+            await _log("ship", "Shipping backtesting agent to VPS...", progress=20)
+            ship_result = await gateway.ship_agent(inst.id, "backtesting", {
+                "agent_id": str(agent_id),
+                "backtest_id": str(backtest_id),
+                "channel_config": config,
+            })
+            if ship_result.exit_code != 0:
+                raise RuntimeError(f"Ship failed: {ship_result.stderr}")
+
+            await _log("ship", "Backtesting agent shipped", progress=25)
+            await _log("run", "Starting backtesting pipeline on VPS...", progress=30)
+
+            run_result = await gateway.run_backtesting(inst.id, {
+                "agent_id": str(agent_id),
+                "backtest_id": str(backtest_id),
+                "channel_config": config,
+            })
+
+            if run_result.exit_code != 0:
+                await _log("run", f"Backtesting failed: {run_result.stderr}", level="ERROR", progress=100)
+                bt_result = await session.execute(
+                    select(AgentBacktest).where(AgentBacktest.id == backtest_id)
+                )
+                bt = bt_result.scalar_one_or_none()
+                if bt:
+                    bt.status = "FAILED"
+                    bt.error_message = run_result.stderr[:500] if run_result.stderr else "Pipeline failed"
+
+                ag_result = await session.execute(select(Agent).where(Agent.id == agent_id))
+                ag = ag_result.scalar_one_or_none()
+                if ag:
+                    ag.status = "CREATED"
+                await session.commit()
+                return
+
+            await _log("run", "Backtesting pipeline completed", progress=100)
+
+            bt_result = await session.execute(
+                select(AgentBacktest).where(AgentBacktest.id == backtest_id)
+            )
+            bt = bt_result.scalar_one_or_none()
+            if bt and bt.status == "RUNNING":
+                bt.status = "COMPLETED"
+                bt.completed_at = datetime.now(timezone.utc)
+
+            ag_result = await session.execute(select(Agent).where(Agent.id == agent_id))
+            ag = ag_result.scalar_one_or_none()
+            if ag and ag.status == "BACKTESTING":
+                ag.status = "BACKTEST_COMPLETE"
+            await session.commit()
+
+        except Exception as exc:
+            logger.exception("Background backtest failed for agent %s", agent_id)
+            try:
+                log = SystemLog(
+                    id=uuid.uuid4(), source="backtest", level="ERROR", service="agent-gateway",
+                    agent_id=str(agent_id), backtest_id=str(backtest_id),
+                    message=str(exc)[:500], step="error",
+                )
+                session.add(log)
+
+                bt_result = await session.execute(select(AgentBacktest).where(AgentBacktest.id == backtest_id))
+                bt = bt_result.scalar_one_or_none()
+                if bt:
+                    bt.status = "FAILED"
+                    bt.error_message = str(exc)[:500]
+
+                ag_result = await session.execute(select(Agent).where(Agent.id == agent_id))
+                ag = ag_result.scalar_one_or_none()
+                if ag:
+                    ag.status = "CREATED"
+                await session.commit()
+            except Exception:
+                logger.exception("Failed to record backtest failure")
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
@@ -527,59 +655,34 @@ async def complete_agent_backtest(agent_id: str, session: DbSession):
     except Exception as e:
         import traceback
         traceback.print_exc()
+        error_msg = f"Pipeline error: {str(e)[:500]}"
+        now = datetime.now(timezone.utc)
+        bt.status = "FAILED"
+        bt.error_message = error_msg
+        bt.completed_at = now
+        agent.status = "CREATED"
+        agent.updated_at = now
+        await session.commit()
+        return {
+            "backtest_id": str(bt.id),
+            "agent_id": agent_id,
+            "status": "FAILED",
+            "error": error_msg,
+        }
 
-    # Fallback: generate simulated metrics
     now = datetime.now(timezone.utc)
-    total_return = round(random.uniform(5, 45), 2)
-    win_rate = round(random.uniform(0.52, 0.78), 4)
-    sharpe = round(random.uniform(0.8, 2.8), 2)
-    max_dd = round(random.uniform(3, 18), 2)
-    total_trades = random.randint(30, 200)
-
-    curve = []
-    val = 100000
-    for i in range(90):
-        daily_return = random.gauss(total_return / 90 / 100, 0.015)
-        val *= (1 + daily_return)
-        curve.append({
-            "day": i + 1,
-            "date": (now - timedelta(days=90 - i)).strftime("%Y-%m-%d"),
-            "equity": round(val, 2),
-        })
-
-    bt.status = "COMPLETED"
-    bt.total_return = total_return
-    bt.win_rate = win_rate
-    bt.sharpe_ratio = sharpe
-    bt.max_drawdown = max_dd
-    bt.total_trades = total_trades
-    bt.equity_curve = curve
-    bt.metrics = {
-        "rules": [],
-        "overall_channel_metrics": {
-            "total_trades_identified": total_trades,
-            "profitable_trades": int(total_trades * win_rate),
-            "overall_win_rate": win_rate,
-            "avg_win_pct": round(random.uniform(3, 12), 2),
-            "avg_loss_pct": round(random.uniform(-6, -1), 2),
-            "profit_factor": round(random.uniform(1.2, 3.0), 2),
-        },
-    }
+    error_msg = result.get("error", "Pipeline returned no trades")
+    bt.status = "FAILED"
+    bt.error_message = error_msg
     bt.completed_at = now
-
-    agent.status = "BACKTEST_COMPLETE"
+    agent.status = "CREATED"
     agent.updated_at = now
-
     await session.commit()
     return {
-        "id": str(bt.id),
+        "backtest_id": str(bt.id),
         "agent_id": agent_id,
-        "status": "COMPLETED",
-        "total_return": total_return,
-        "win_rate": win_rate,
-        "sharpe_ratio": sharpe,
-        "max_drawdown": max_dd,
-        "total_trades": total_trades,
+        "status": "FAILED",
+        "error": error_msg,
     }
 
 
@@ -1225,3 +1328,68 @@ async def update_agent_manifest(agent_id: str, payload: dict[str, Any], session:
         "manifest": agent.manifest,
         "rules_version": agent.rules_version,
     }
+
+
+# ── Backtest Progress Callback ─────────────────────────────────────────────
+
+
+class BacktestProgressPayload(BaseModel):
+    step: str = Field(..., min_length=1, max_length=100)
+    message: str = Field(..., min_length=1)
+    progress_pct: int | None = Field(default=None, ge=0, le=100)
+    level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARN|ERROR)$")
+    metrics: dict[str, Any] | None = None
+    status: str | None = None
+
+
+@router.post("/{agent_id}/backtest-progress", status_code=201)
+async def report_backtest_progress(agent_id: str, payload: BacktestProgressPayload, session: DbSession):
+    """Callback from VPS backtesting agent to report step-by-step progress."""
+    from shared.db.models.system_log import SystemLog
+
+    bt_result = await session.execute(
+        select(AgentBacktest)
+        .where(AgentBacktest.agent_id == uuid.UUID(agent_id), AgentBacktest.status == "RUNNING")
+        .order_by(desc(AgentBacktest.created_at))
+        .limit(1)
+    )
+    bt = bt_result.scalar_one_or_none()
+    backtest_id = str(bt.id) if bt else None
+
+    log = SystemLog(
+        id=uuid.uuid4(),
+        source="backtest",
+        level=payload.level,
+        service="backtesting-agent",
+        agent_id=agent_id,
+        backtest_id=backtest_id,
+        message=payload.message,
+        step=payload.step,
+        progress_pct=payload.progress_pct,
+        details=payload.metrics or {},
+    )
+    session.add(log)
+
+    if bt and payload.metrics:
+        bt.metrics = {**(bt.metrics or {}), **payload.metrics}
+
+    if payload.status == "COMPLETED" and bt:
+        bt.status = "COMPLETED"
+        bt.completed_at = datetime.now(timezone.utc)
+        agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+        agent = agent_result.scalar_one_or_none()
+        if agent:
+            agent.status = "BACKTEST_COMPLETE"
+            agent.updated_at = datetime.now(timezone.utc)
+
+    if payload.status == "FAILED" and bt:
+        bt.status = "FAILED"
+        bt.error_message = payload.message[:500]
+        agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+        agent = agent_result.scalar_one_or_none()
+        if agent:
+            agent.status = "CREATED"
+            agent.updated_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    return {"logged": True, "backtest_id": backtest_id}

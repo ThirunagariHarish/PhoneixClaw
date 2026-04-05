@@ -83,57 +83,12 @@ interface FlowMetrics {
   institutional_sentiment: FlowDirection
 }
 
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-]
-
-const MOCK_METRICS: FlowMetrics = {
-  whale_alerts_24h: 47,
-  unusual_flow_volume: '$2.4B',
-  dark_pool_activity: '38%',
-  institutional_sentiment: 'ACCUMULATING',
+const EMPTY_FLOW_METRICS: FlowMetrics = {
+  whale_alerts_24h: 0,
+  unusual_flow_volume: '$0',
+  dark_pool_activity: '0%',
+  institutional_sentiment: 'NEUTRAL',
 }
-
-const MOCK_MAG7: Mag7Card[] = [
-  { ticker: 'AAPL', whale_trades: ['$12M call sweep 180C', '$8M put block 175P'], call_put_ratio: 1.42, dark_pool_pct: 35, institutional_flow: 'ACCUMULATING' },
-  { ticker: 'MSFT', whale_trades: ['$15M call block 420C'], call_put_ratio: 1.85, dark_pool_pct: 42, institutional_flow: 'ACCUMULATING' },
-  { ticker: 'GOOGL', whale_trades: ['$6M put sweep 150P'], call_put_ratio: 0.92, dark_pool_pct: 31, institutional_flow: 'NEUTRAL' },
-  { ticker: 'AMZN', whale_trades: ['$22M call block 185C', '$10M stock block'], call_put_ratio: 2.1, dark_pool_pct: 45, institutional_flow: 'ACCUMULATING' },
-  { ticker: 'META', whale_trades: ['$9M put block 480P'], call_put_ratio: 1.12, dark_pool_pct: 38, institutional_flow: 'NEUTRAL' },
-  { ticker: 'NVDA', whale_trades: ['$45M call sweep 900C', '$18M call block 880C'], call_put_ratio: 2.8, dark_pool_pct: 52, institutional_flow: 'ACCUMULATING' },
-  { ticker: 'TSLA', whale_trades: ['$14M put sweep 240P'], call_put_ratio: 0.78, dark_pool_pct: 41, institutional_flow: 'DISTRIBUTING' },
-]
-
-const MOCK_MEME: MemeCard[] = [
-  { ticker: 'GME', whale_trades: ['$3.2M call sweep 28C'], call_put_ratio: 1.65, dark_pool_pct: 28, institutional_flow: 'NEUTRAL', social_sentiment: 78 },
-  { ticker: 'AMC', whale_trades: ['$1.8M put block 4P'], call_put_ratio: 0.85, dark_pool_pct: 22, institutional_flow: 'DISTRIBUTING', social_sentiment: 45 },
-  { ticker: 'BBBY', whale_trades: ['$0.5M call sweep'], call_put_ratio: 1.2, dark_pool_pct: 18, institutional_flow: 'NEUTRAL', social_sentiment: 62 },
-]
-
-const MOCK_SECTORS: SectorFlow[] = [
-  { sector: 'Technology', net_direction: 'ACCUMULATING', top_movers: [{ ticker: 'NVDA', flow_pct: 12.4 }, { ticker: 'AMD', flow_pct: 8.2 }] },
-  { sector: 'Healthcare', net_direction: 'NEUTRAL', top_movers: [{ ticker: 'PFE', flow_pct: -2.1 }, { ticker: 'JNJ', flow_pct: 1.3 }] },
-  { sector: 'Energy', net_direction: 'DISTRIBUTING', top_movers: [{ ticker: 'XOM', flow_pct: -4.2 }, { ticker: 'CVX', flow_pct: -2.8 }] },
-  { sector: 'Financials', net_direction: 'ACCUMULATING', top_movers: [{ ticker: 'JPM', flow_pct: 5.1 }, { ticker: 'BAC', flow_pct: 3.2 }] },
-  { sector: 'Consumer', net_direction: 'NEUTRAL', top_movers: [{ ticker: 'AMZN', flow_pct: 2.4 }, { ticker: 'WMT', flow_pct: -1.1 }] },
-]
-
-const MOCK_INDICES: IndexFlow[] = [
-  { symbol: 'SPY', gex_level: '$4.2B', odte_volume: '2.1M', put_call_skew: 1.12, dark_pool_pct: 44 },
-  { symbol: 'QQQ', gex_level: '$2.8B', odte_volume: '1.8M', put_call_skew: 1.08, dark_pool_pct: 48 },
-  { symbol: 'IWM', gex_level: '$0.6B', odte_volume: '0.4M', put_call_skew: 1.25, dark_pool_pct: 35 },
-  { symbol: 'DIA', gex_level: '$0.9B', odte_volume: '0.3M', put_call_skew: 1.15, dark_pool_pct: 38 },
-]
-
-const MOCK_WHALE_ALERTS: WhaleAlert[] = [
-  { timestamp: '2025-03-03T14:32:00Z', ticker: 'NVDA', type: 'CALL', size: 500, premium: 2.4e6, sentiment: 'BULLISH', exchange: 'CBOE' },
-  { timestamp: '2025-03-03T14:28:00Z', ticker: 'SPY', type: 'PUT', size: 1200, premium: 1.8e6, sentiment: 'BEARISH', exchange: 'PHLX' },
-  { timestamp: '2025-03-03T14:25:00Z', ticker: 'AAPL', type: 'STOCK', size: 25000, premium: 4.5e6, sentiment: 'BULLISH', exchange: 'DARK' },
-  { timestamp: '2025-03-03T14:20:00Z', ticker: 'TSLA', type: 'PUT', size: 800, premium: 1.2e6, sentiment: 'BEARISH', exchange: 'CBOE' },
-  { timestamp: '2025-03-03T14:15:00Z', ticker: 'AMZN', type: 'CALL', size: 600, premium: 3.1e6, sentiment: 'BULLISH', exchange: 'ISE' },
-  { timestamp: '2025-03-03T14:10:00Z', ticker: 'META', type: 'CALL', size: 400, premium: 0.9e6, sentiment: 'NEUTRAL', exchange: 'CBOE' },
-]
 
 function flowColor(dir: FlowDirection | Sentiment) {
   if (dir === 'ACCUMULATING' || dir === 'BULLISH') return 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
@@ -154,75 +109,80 @@ export default function OnChainFlowPage() {
   const [watchedTickers, setWatchedTickers] = useState('SPY,QQQ,NVDA,AAPL,TSLA')
   const queryClient = useQueryClient()
 
-  const { data: metrics = MOCK_METRICS } = useQuery<FlowMetrics>({
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
+  const { data: metrics = EMPTY_FLOW_METRICS } = useQuery<FlowMetrics>({
     queryKey: ['onchain-flow-metrics'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/whale-alerts')
-        return { ...MOCK_METRICS, whale_alerts_24h: Array.isArray(res.data) ? res.data.length : MOCK_METRICS.whale_alerts_24h }
+        return { ...EMPTY_FLOW_METRICS, whale_alerts_24h: Array.isArray(res.data) ? res.data.length : 0 }
       } catch {
-        return MOCK_METRICS
+        return EMPTY_FLOW_METRICS
       }
     },
   })
 
-  const { data: whaleAlerts = MOCK_WHALE_ALERTS } = useQuery<WhaleAlert[]>({
+  const { data: whaleAlerts = [] } = useQuery<WhaleAlert[]>({
     queryKey: ['onchain-flow-whale-alerts'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/whale-alerts')
-        return Array.isArray(res.data) ? res.data : MOCK_WHALE_ALERTS
+        return Array.isArray(res.data) ? res.data : []
       } catch {
-        return MOCK_WHALE_ALERTS
+        return []
       }
     },
     refetchInterval: 30000,
   })
 
-  const { data: mag7 = MOCK_MAG7 } = useQuery<Mag7Card[]>({
+  const { data: mag7 = [] } = useQuery<Mag7Card[]>({
     queryKey: ['onchain-flow-mag7'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/mag7')
-        return res.data?.tickers ?? MOCK_MAG7
+        return res.data?.tickers ?? []
       } catch {
-        return MOCK_MAG7
+        return []
       }
     },
   })
 
-  const { data: meme = MOCK_MEME } = useQuery<MemeCard[]>({
+  const { data: meme = [] } = useQuery<MemeCard[]>({
     queryKey: ['onchain-flow-meme'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/meme')
-        return res.data?.tickers ?? MOCK_MEME
+        return res.data?.tickers ?? []
       } catch {
-        return MOCK_MEME
+        return []
       }
     },
   })
 
-  const { data: sectors = MOCK_SECTORS } = useQuery<SectorFlow[]>({
+  const { data: sectors = [] } = useQuery<SectorFlow[]>({
     queryKey: ['onchain-flow-sectors'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/sectors')
-        return res.data?.sectors ?? MOCK_SECTORS
+        return res.data?.sectors ?? []
       } catch {
-        return MOCK_SECTORS
+        return []
       }
     },
   })
 
-  const { data: indices = MOCK_INDICES } = useQuery<IndexFlow[]>({
+  const { data: indices = [] } = useQuery<IndexFlow[]>({
     queryKey: ['onchain-flow-indices'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/onchain-flow/indices')
-        return res.data?.indices ?? MOCK_INDICES
+        return res.data?.indices ?? []
       } catch {
-        return MOCK_INDICES
+        return []
       }
     },
   })
@@ -413,7 +373,7 @@ export default function OnChainFlowPage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_INSTANCES.map((inst) => (
+                  {instances.map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>{inst.name}</SelectItem>
                   ))}
                 </SelectContent>

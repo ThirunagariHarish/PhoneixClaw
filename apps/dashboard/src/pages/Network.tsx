@@ -1128,20 +1128,10 @@ export default function NetworkPage() {
         ssh_private_key: data.ssh_private_key,
         role: data.role,
         node_type: data.node_type,
+        auto_setup: data.auto_install_claude,
+        anthropic_api_key: data.auto_install_claude ? data.anthropic_api_key.trim() || null : null,
       })
-      const instance = res.data as Instance
-
-      if (data.auto_install_claude && data.anthropic_api_key.trim()) {
-        try {
-          await api.post(`/api/v2/instances/${instance.id}/setup-claude`, {
-            anthropic_api_key: data.anthropic_api_key.trim(),
-          })
-        } catch {
-          // Instance created but setup failed — user can retry from instance detail
-        }
-      }
-
-      return instance
+      return res.data as Instance
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['instances'] }),
     onError: (err: unknown) => { throw err instanceof Error ? err : new Error('Create failed') },

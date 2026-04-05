@@ -21,53 +21,27 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shield, AlertTriangle, Lock, BarChart3, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const MOCK_INSTANCES = [
-  { id: 'inst-1', name: 'Instance A (Paper)' },
-  { id: 'inst-2', name: 'Instance B (Live)' },
-]
-
 type CircuitState = 'NORMAL' | 'WARNING' | 'TRIPPED' | 'COOLDOWN'
 
-const MOCK_CIRCUIT = {
+const EMPTY_CIRCUIT = {
   state: 'NORMAL' as CircuitState,
-  dailyLossPct: -1.2,
+  dailyLossPct: 0,
   thresholdPct: -5,
-  confidence: 0.92,
+  confidence: 0,
   consecutiveLosses: 0,
 }
 
-const MOCK_POSITION_LIMITS = {
-  sectors: [
-    { name: 'Technology', exposure: 32, max: 40 },
-    { name: 'Healthcare', exposure: 18, max: 25 },
-    { name: 'Financials', exposure: 22, max: 30 },
-    { name: 'Energy', exposure: 8, max: 15 },
-  ],
-  tickerConcentration: [
-    { ticker: 'NVDA', pct: 12 },
-    { ticker: 'AAPL', pct: 8 },
-    { ticker: 'MSFT', pct: 7 },
-  ],
-  marginUsagePct: 45,
+const EMPTY_POSITION_LIMITS = {
+  sectors: [] as Array<{ name: string; exposure: number; max: number }>,
+  tickerConcentration: [] as Array<{ ticker: string; pct: number }>,
+  marginUsagePct: 0,
 }
 
-const MOCK_RISK_CHECKS = [
-  { ts: new Date().toISOString(), symbol: 'NVDA', checkType: 'position_limit', result: 'PASS', reason: 'Within limit' },
-  { ts: new Date(Date.now() - 60000).toISOString(), symbol: 'TSLA', checkType: 'sector_exposure', result: 'WARN', reason: 'Tech at 38%' },
-  { ts: new Date(Date.now() - 120000).toISOString(), symbol: 'SPY', checkType: 'daily_loss', result: 'BLOCK', reason: 'Would exceed -5% daily' },
-]
-
-const MOCK_COMPLIANCE = [
-  { id: '1', type: 'wash_sale', message: 'Wash sale: NVDA sold 3 days ago, similar lot', severity: 'High' },
-  { id: '2', type: 'pdt', message: 'PDT warning: 3 day trades this week', severity: 'Medium' },
-  { id: '3', type: 'agent_conflict', message: 'Agent conflict: Trade executor vs Risk Guardian', severity: 'Low' },
-]
-
-const MOCK_HEDGING = {
-  blackSwanStatus: 'ACTIVE',
-  protectivePuts: [{ symbol: 'SPY', strike: 450, cost: 2.3, qty: 10 }],
-  hedgeCostPct: 0.8,
-  portfolioBeta: 1.12,
+const EMPTY_HEDGING = {
+  blackSwanStatus: 'INACTIVE',
+  protectivePuts: [] as Array<{ symbol: string; strike: number; cost: number; qty: number }>,
+  hedgeCostPct: 0,
+  portfolioBeta: 0,
 }
 
 const circuitBadgeClass: Record<CircuitState, string> = {
@@ -84,10 +58,15 @@ export default function RiskCompliancePage() {
   const [maxSectorExposure, setMaxSectorExposure] = useState(40)
   const queryClient = useQueryClient()
 
+  const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['instances'],
+    queryFn: async () => (await api.get('/api/v2/instances')).data ?? [],
+  })
+
   const { data: status = {
-    var: 12500,
-    dailyPnlPct: -0.8,
-    marginUsagePct: 45,
+    var: 0,
+    dailyPnlPct: 0,
+    marginUsagePct: 0,
     circuitBreaker: 'NORMAL' as CircuitState,
   } } = useQuery({
     queryKey: ['risk-status'],
@@ -96,31 +75,31 @@ export default function RiskCompliancePage() {
         const res = await api.get('/api/v2/risk/status')
         return res.data
       } catch {
-        return { var: 12500, dailyPnlPct: -0.8, marginUsagePct: 45, circuitBreaker: 'NORMAL' }
+        return { var: 0, dailyPnlPct: 0, marginUsagePct: 0, circuitBreaker: 'NORMAL' }
       }
     },
   })
 
-  const { data: circuit = MOCK_CIRCUIT } = useQuery({
+  const { data: circuit = EMPTY_CIRCUIT } = useQuery({
     queryKey: ['risk-circuit'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/risk/status')
-        return res.data?.circuit ?? MOCK_CIRCUIT
+        return res.data?.circuit ?? EMPTY_CIRCUIT
       } catch {
-        return MOCK_CIRCUIT
+        return EMPTY_CIRCUIT
       }
     },
   })
 
-  const { data: positionLimits = MOCK_POSITION_LIMITS } = useQuery({
+  const { data: positionLimits = EMPTY_POSITION_LIMITS } = useQuery({
     queryKey: ['risk-position-limits'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/risk/position-limits')
-        return res.data ?? MOCK_POSITION_LIMITS
+        return res.data ?? EMPTY_POSITION_LIMITS
       } catch {
-        return MOCK_POSITION_LIMITS
+        return EMPTY_POSITION_LIMITS
       }
     },
   })
@@ -130,9 +109,9 @@ export default function RiskCompliancePage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/risk/checks')
-        return res.data ?? MOCK_RISK_CHECKS
+        return res.data ?? []
       } catch {
-        return MOCK_RISK_CHECKS
+        return []
       }
     },
   })
@@ -142,21 +121,21 @@ export default function RiskCompliancePage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/risk/compliance')
-        return res.data ?? MOCK_COMPLIANCE
+        return res.data ?? []
       } catch {
-        return MOCK_COMPLIANCE
+        return []
       }
     },
   })
 
-  const { data: hedging = MOCK_HEDGING } = useQuery({
+  const { data: hedging = EMPTY_HEDGING } = useQuery({
     queryKey: ['risk-hedging'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/risk/hedging')
-        return res.data ?? MOCK_HEDGING
+        return res.data ?? EMPTY_HEDGING
       } catch {
-        return MOCK_HEDGING
+        return EMPTY_HEDGING
       }
     },
   })
@@ -181,10 +160,10 @@ export default function RiskCompliancePage() {
     new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   const circuitState = (status.circuitBreaker ?? circuit.state ?? 'NORMAL') as CircuitState
-  const checkItems = Array.isArray(riskChecks) ? riskChecks : MOCK_RISK_CHECKS
-  const complianceItems = Array.isArray(compliance) ? compliance : MOCK_COMPLIANCE
-  const sectors = positionLimits.sectors ?? MOCK_POSITION_LIMITS.sectors
-  const tickerConc = positionLimits.tickerConcentration ?? MOCK_POSITION_LIMITS.tickerConcentration
+  const checkItems = Array.isArray(riskChecks) ? riskChecks : []
+  const complianceItems = Array.isArray(compliance) ? compliance : []
+  const sectors = positionLimits.sectors ?? EMPTY_POSITION_LIMITS.sectors
+  const tickerConc = positionLimits.tickerConcentration ?? EMPTY_POSITION_LIMITS.tickerConcentration
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -194,17 +173,17 @@ export default function RiskCompliancePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           title="Portfolio VaR"
-          value={`$${(status.var ?? 12500).toLocaleString()}`}
+          value={`$${(status.var ?? 0).toLocaleString()}`}
           subtitle="95% 1-day"
         />
         <MetricCard
           title="Daily P&L %"
-          value={`${(status.dailyPnlPct ?? -0.8).toFixed(2)}%`}
-          trend={(status.dailyPnlPct ?? -0.8) >= 0 ? 'up' : 'down'}
+          value={`${(status.dailyPnlPct ?? 0).toFixed(2)}%`}
+          trend={(status.dailyPnlPct ?? 0) >= 0 ? 'up' : 'down'}
         />
         <MetricCard
           title="Margin Usage %"
-          value={`${(status.marginUsagePct ?? 45)}%`}
+          value={`${(status.marginUsagePct ?? 0)}%`}
         />
         <div className="flex flex-col justify-center">
           <p className="text-sm font-medium text-muted-foreground mb-1">Circuit Breaker</p>
@@ -228,7 +207,7 @@ export default function RiskCompliancePage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MOCK_INSTANCES.map((inst) => (
+                  {instances.map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>
                       {inst.name}
                     </SelectItem>
@@ -314,18 +293,18 @@ export default function RiskCompliancePage() {
                   <div
                     className="bg-red-500 h-full"
                     style={{
-                      width: `${Math.min(100, Math.abs((circuit.dailyLossPct ?? -1.2) / (circuit.thresholdPct ?? -5)) * 100)}%`,
+                      width: `${Math.min(100, Math.abs((circuit.dailyLossPct ?? 0) / (circuit.thresholdPct ?? -5)) * 100)}%`,
                     }}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {(circuit.dailyLossPct ?? -1.2).toFixed(1)}% / {(circuit.thresholdPct ?? -5)}%
+                  {(circuit.dailyLossPct ?? 0).toFixed(1)}% / {(circuit.thresholdPct ?? -5)}%
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Confidence</p>
-                  <p className="font-semibold">{((circuit.confidence ?? 0.92) * 100).toFixed(0)}%</p>
+                  <p className="font-semibold">{((circuit.confidence ?? 0) * 100).toFixed(0)}%</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Consecutive losses</p>
@@ -385,10 +364,10 @@ export default function RiskCompliancePage() {
                 <div className="h-4 rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full rounded-full bg-primary"
-                    style={{ width: `${positionLimits.marginUsagePct ?? 45}%` }}
+                    style={{ width: `${positionLimits.marginUsagePct ?? 0}%` }}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">{(positionLimits.marginUsagePct ?? 45)}%</p>
+                <p className="text-xs text-muted-foreground mt-1">{(positionLimits.marginUsagePct ?? 0)}%</p>
               </div>
             </div>
           </FlexCard>
@@ -463,11 +442,11 @@ export default function RiskCompliancePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Hedge cost</p>
-                  <p className="font-semibold">{(hedging.hedgeCostPct ?? 0.8).toFixed(1)}%</p>
+                  <p className="font-semibold">{(hedging.hedgeCostPct ?? 0).toFixed(1)}%</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Portfolio beta</p>
-                  <p className="font-semibold">{hedging.portfolioBeta ?? 1.12}</p>
+                  <p className="font-semibold">{hedging.portfolioBeta ?? 0}</p>
                 </div>
               </div>
             </div>

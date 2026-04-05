@@ -68,15 +68,7 @@ interface CategoryMeta {
   count: number
 }
 
-/* ── Mock data (used when API is empty / offline) ──────────────────────── */
-
-const MOCK_STRATEGIES: Strategy[] = [
-  { id: 's1', name: 'SPY 0DTE Iron Condor', template_id: 'late-day-iron-condor', symbol: 'SPX', category: '0DTE High Win-Rate', description: null, status: 'RUNNING', config: {}, legs: [], backtest_params: {}, skills_required: [], agent_id: 'a1', backtest_pnl: 8200, backtest_sharpe: 1.4, win_rate: 0.58, max_drawdown: -0.06, total_trades: 89, created_at: '2025-02-01' },
-  { id: 's2', name: 'QQQ Momentum Scalp', template_id: 'momentum-scalp', symbol: 'QQQ', category: 'Directional / Momentum', description: null, status: 'PAUSED', config: {}, legs: [], backtest_params: {}, skills_required: [], agent_id: 'a2', backtest_pnl: 12100, backtest_sharpe: 1.8, win_rate: 0.64, max_drawdown: -0.04, total_trades: 67, created_at: '2025-02-10' },
-  { id: 's3', name: 'SPY ORB Agent', template_id: 'opening-range-breakout', symbol: 'SPY', category: 'Directional / Momentum', description: null, status: 'RUNNING', config: {}, legs: [], backtest_params: {}, skills_required: [], agent_id: 'a3', backtest_pnl: 5400, backtest_sharpe: 1.1, win_rate: 0.52, max_drawdown: -0.12, total_trades: 45, created_at: '2025-02-15' },
-  { id: 's4', name: 'NQ Wheel Strategy', template_id: 'wheel-strategy', symbol: 'SPY', category: 'Neutral / Range', description: null, status: 'BACKTESTING', config: {}, legs: [], backtest_params: {}, skills_required: [], agent_id: 'a4', backtest_pnl: 1950, backtest_sharpe: 0.85, win_rate: 0.47, max_drawdown: -0.09, total_trades: 210, created_at: '2025-03-01' },
-  { id: 's5', name: 'AAPL Earnings Straddle', template_id: 'earnings-straddle', symbol: 'NVDA', category: 'Volatility / Event', description: null, status: 'CREATED', config: {}, legs: [], backtest_params: {}, skills_required: [], agent_id: null, backtest_pnl: -340, backtest_sharpe: -0.15, win_rate: 0.41, max_drawdown: -0.18, total_trades: 23, created_at: '2025-03-05' },
-]
+/* ── Data ──────────────────────────────────────────────────────────────── */
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
@@ -480,14 +472,14 @@ export default function StrategiesPage() {
 
   /* ── Data queries ──────────────────────────────────────────────────── */
 
-  const { data: strategies = MOCK_STRATEGIES } = useQuery<Strategy[]>({
+  const { data: strategies = [] } = useQuery<Strategy[]>({
     queryKey: ['strategies'],
     queryFn: async () => {
       try {
         const result = await api.get('/api/v2/strategies')
-        return result.data?.length ? result.data : MOCK_STRATEGIES
+        return result.data ?? []
       } catch {
-        return MOCK_STRATEGIES
+        return []
       }
     },
   })

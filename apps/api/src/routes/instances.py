@@ -22,6 +22,8 @@ class InstanceCreate(BaseModel):
     ssh_private_key: str = Field(..., min_length=10)
     role: str = Field(default="general", pattern="^(backtesting|trading|general)$")
     node_type: str = Field(default="vps", pattern="^(vps|local)$")
+    auto_setup: bool = Field(default=False)
+    anthropic_api_key: str | None = Field(default=None)
 
 
 class InstanceUpdate(BaseModel):
@@ -88,12 +90,92 @@ async def create_instance(payload: InstanceCreate, session: DbSession):
         ssh_key_encrypted=encrypted_key,
         role=payload.role,
         node_type=payload.node_type,
-        status="ONLINE",
+        status="PROVISIONING" if payload.auto_setup else "ONLINE",
     )
     session.add(instance)
     await session.commit()
     await session.refresh(instance)
+
+    if payload.auto_setup:
+        import asyncio
+        asyncio.create_task(
+            _auto_setup_instance(instance.id, encrypted_key, payload)
+        )
+
     return InstanceResponse.from_model(instance)
+
+
+async def _auto_setup_instance(instance_id: uuid.UUID, encrypted_key: str, payload: InstanceCreate):
+    """Background: install Claude Code, set API key, ship backtesting agent."""
+    import logging
+    from apps.api.src.services.agent_gateway import gateway
+    from shared.db.engine import get_session as _get_session
+
+    logger = logging.getLogger(__name__)
+
+    async for session in _get_session():
+        try:
+            gateway.register_instance(
+                instance_id, payload.host, payload.ssh_port,
+                payload.ssh_username, encrypted_key,
+            )
+
+            health = await gateway.check_health(instance_id)
+            if not health.reachable:
+                raise RuntimeError("VPS unreachable")
+
+            if not health.claude_installed:
+                install_result = await gateway.install_claude_code(instance_id)
+                if install_result.exit_code != 0:
+                    raise RuntimeError(f"Claude install failed: {install_result.stderr}")
+
+            if payload.anthropic_api_key:
+                escaped = payload.anthropic_api_key.replace("'", "'\\''")
+                auth_cmd = (
+                    f"export PATH=\"$HOME/.claude/bin:$HOME/.local/bin:$PATH\"; "
+                    f"grep -q 'ANTHROPIC_API_KEY' ~/.bashrc 2>/dev/null && "
+                    f"sed -i 's|^export ANTHROPIC_API_KEY=.*|export ANTHROPIC_API_KEY=\\'{escaped}\\'|' ~/.bashrc || "
+                    f"echo 'export ANTHROPIC_API_KEY=\\'{escaped}\\'' >> ~/.bashrc; "
+                    f"grep -q '.claude/bin' ~/.bashrc 2>/dev/null || "
+                    f"echo 'export PATH=\"$HOME/.claude/bin:$PATH\"' >> ~/.bashrc"
+                )
+                await gateway.run_command(instance_id, auth_cmd)
+
+            ship_result = await gateway.ship_agent(instance_id, "backtesting", {})
+            if ship_result.exit_code != 0:
+                logger.warning("Shipping backtesting agent failed: %s", ship_result.stderr)
+
+            result = await session.execute(
+                select(ClaudeCodeInstance).where(ClaudeCodeInstance.id == instance_id)
+            )
+            inst = result.scalar_one_or_none()
+            if inst:
+                inst.status = "ONLINE"
+                inst.last_heartbeat_at = datetime.now(timezone.utc)
+                new_health = await gateway.check_health(instance_id)
+                inst.claude_version = new_health.claude_version
+                inst.capabilities = {
+                    "python_installed": new_health.python_installed,
+                    "memory_total_mb": new_health.memory_total_mb,
+                    "memory_free_mb": new_health.memory_free_mb,
+                    "disk_free": new_health.disk_free,
+                    "cpu_cores": new_health.cpu_cores,
+                }
+                inst.agent_count = len(new_health.active_agents)
+                await session.commit()
+
+        except Exception as exc:
+            logger.exception("Auto-setup failed for instance %s", instance_id)
+            try:
+                result = await session.execute(
+                    select(ClaudeCodeInstance).where(ClaudeCodeInstance.id == instance_id)
+                )
+                inst = result.scalar_one_or_none()
+                if inst:
+                    inst.status = "ERROR"
+                    await session.commit()
+            except Exception:
+                logger.exception("Failed to mark instance as ERROR")
 
 
 class VerifyInstanceRequest(BaseModel):

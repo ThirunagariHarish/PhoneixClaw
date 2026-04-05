@@ -44,14 +44,6 @@ interface TradeStats {
 
 const STATUS_OPTIONS = ['', 'PENDING', 'RISK_CHECK', 'APPROVED', 'SUBMITTED', 'FILLED', 'REJECTED', 'FAILED']
 
-const MOCK_AGENT_LEADERS: AgentLeaderData[] = [
-  { id: 'ag1', rank: 1, name: 'SPY-Momentum', pnl: 5600, winRate: 0.62, sharpe: 1.68, trades: 45, status: 'running' },
-  { id: 'ag2', rank: 2, name: 'MeanRev-QQQ', pnl: 3850, winRate: 0.55, sharpe: 1.12, trades: 52, status: 'running' },
-  { id: 'ag3', rank: 3, name: 'Breakout-ES', pnl: 3000, winRate: 0.52, sharpe: 0.98, trades: 45, status: 'paper' },
-  { id: 'ag4', rank: 4, name: 'Scalper-NQ', pnl: 1200, winRate: 0.48, sharpe: 0.72, trades: 128, status: 'running' },
-  { id: 'ag5', rank: 5, name: 'Swing-AAPL', pnl: -340, winRate: 0.41, sharpe: -0.15, trades: 17, status: 'paused' },
-]
-
 const columns: Column<Trade>[] = [
   {
     id: 'symbol',
@@ -119,14 +111,14 @@ export default function TradesPage() {
     refetchInterval: 10000,
   })
 
-  const { data: agentLeaders = MOCK_AGENT_LEADERS } = useQuery<AgentLeaderData[]>({
+  const { data: agentLeaders = [] } = useQuery<AgentLeaderData[]>({
     queryKey: ['trade-agent-leaders'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/performance/by-agent')
-        return res.data
+        return res.data ?? []
       } catch {
-        return MOCK_AGENT_LEADERS
+        return []
       }
     },
     refetchInterval: 30000,

@@ -46,18 +46,6 @@ interface AuditEntry {
 }
 
 const ROLES = ['admin', 'manager', 'trader', 'viewer']
-const MOCK_USERS: User[] = [
-  { id: '1', email: 'admin@phoenix.io', name: 'Admin User', role: 'admin', last_login: '2025-03-03T10:00:00Z' },
-  { id: '2', email: 'trader@phoenix.io', name: 'Trader One', role: 'trader', last_login: '2025-03-03T09:30:00Z' },
-]
-const MOCK_KEYS: ApiKey[] = [
-  { id: '1', name: 'Dashboard API', masked: 'phx_••••••••••••abc1', last_used: '2025-03-03T10:15:00Z' },
-  { id: '2', name: 'Webhook', masked: 'phx_••••••••••••def2', last_used: '2025-03-02T18:00:00Z' },
-]
-const MOCK_AUDIT: AuditEntry[] = [
-  { id: '1', user: 'admin@phoenix.io', action: 'LOGIN', resource: 'auth', timestamp: '2025-03-03T10:00:00Z' },
-  { id: '2', user: 'trader@phoenix.io', action: 'CREATE_TRADE', resource: 'trades', timestamp: '2025-03-03T09:45:00Z' },
-]
 
 function makeUserColumns(onEdit: (u: User) => void, onDelete: (u: User) => void): Column<User>[] {
   return [
@@ -98,14 +86,14 @@ export default function AdminPage() {
   const [editForm, setEditForm] = useState({ name: '', role: 'trader', is_active: true })
   const [formError, setFormError] = useState('')
 
-  const { data: users = MOCK_USERS } = useQuery<User[]>({
+  const { data: users = [] } = useQuery<User[]>({
     queryKey: ['admin-users'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/admin/users')
         return Array.isArray(res.data) ? res.data : []
       } catch {
-        return MOCK_USERS
+        return []
       }
     },
   })
@@ -171,19 +159,19 @@ export default function AdminPage() {
     setFormError('')
   }
 
-  const { data: apiKeys = MOCK_KEYS } = useQuery<ApiKey[]>({
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
     queryKey: ['admin-api-keys'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/admin/api-keys')
-        return res.data
+        return res.data ?? []
       } catch {
-        return MOCK_KEYS
+        return []
       }
     },
   })
 
-  const { data: audit = MOCK_AUDIT } = useQuery<AuditEntry[]>({
+  const { data: audit = [] } = useQuery<AuditEntry[]>({
     queryKey: ['admin-audit'],
     queryFn: async () => {
       try {
@@ -197,7 +185,7 @@ export default function AdminPage() {
           timestamp: e.created_at,
         }))
       } catch {
-        return MOCK_AUDIT
+        return []
       }
     },
   })
