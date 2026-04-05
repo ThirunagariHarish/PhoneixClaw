@@ -19,6 +19,7 @@ class Connector(Base):
     """
     A configured data source connector (Discord server, Reddit sub, etc.).
     Stores encrypted credentials and connection configuration.
+    Tags allow categorization (news, trends, signals, market-data, etc.).
     """
     __tablename__ = "connectors"
 
@@ -28,6 +29,7 @@ class Connector(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="disconnected")
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     credentials_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -1,0 +1,42 @@
+{
+  "aggressive-momentum": {
+    "description": "Fast-acting agent for intraday momentum plays. Takes trades quickly, uses wider stops, and aims for larger gains. Prioritises speed of execution — chases entries with a price buffer when necessary.",
+    "default_mode": "aggressive",
+    "preferred_hold": "minutes-to-hours",
+    "entry_style": "chase entries with buffer",
+    "detection": {
+      "avg_hold_hours_max": 2,
+      "win_rate_min": 0.65
+    },
+    "mode_overrides": {
+      "aggressive": { "confidence_threshold": 0.55, "max_concurrent": 5, "stop_loss_pct": 30, "daily_pnl_cap": 600, "daily_loss_limit": 250 },
+      "conservative": { "confidence_threshold": 0.75, "max_concurrent": 2, "stop_loss_pct": 15, "daily_pnl_cap": 200, "daily_loss_limit": 100 }
+    }
+  },
+  "conservative-swing": {
+    "description": "Patient agent for multi-day swing trades. Waits for high-confidence setups, uses tighter stops, and scales in/out over days. Overnight positions are expected — they skip EOD auto-close.",
+    "default_mode": "conservative",
+    "preferred_hold": "days",
+    "entry_style": "limit orders at support",
+    "detection": {
+      "avg_hold_hours_min": 24
+    },
+    "mode_overrides": {
+      "aggressive": { "confidence_threshold": 0.65, "max_concurrent": 4, "stop_loss_pct": 20, "daily_pnl_cap": 400, "daily_loss_limit": 200 },
+      "conservative": { "confidence_threshold": 0.80, "max_concurrent": 2, "stop_loss_pct": 10, "daily_pnl_cap": 150, "daily_loss_limit": 80 }
+    }
+  },
+  "balanced-intraday": {
+    "description": "Balanced approach for intraday options. Moderate position sizes, requires pattern + model alignment before entry. Closes all positions by end of day unless explicitly marked swing.",
+    "default_mode": "conservative",
+    "preferred_hold": "hours",
+    "entry_style": "market orders with small buffer",
+    "detection": {
+      "_comment": "Default character when no other heuristic matches"
+    },
+    "mode_overrides": {
+      "aggressive": { "confidence_threshold": 0.60, "max_concurrent": 5, "stop_loss_pct": 25, "daily_pnl_cap": 500, "daily_loss_limit": 200 },
+      "conservative": { "confidence_threshold": 0.80, "max_concurrent": 2, "stop_loss_pct": 15, "daily_pnl_cap": 200, "daily_loss_limit": 100 }
+    }
+  }
+}

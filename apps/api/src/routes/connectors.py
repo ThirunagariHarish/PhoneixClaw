@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -31,6 +31,7 @@ class ConnectorCreate(BaseModel):
     type: str = Field(..., max_length=30)
     config: dict[str, Any] = Field(default_factory=dict)
     credentials: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
 
 class ConnectorUpdate(BaseModel):
@@ -38,6 +39,7 @@ class ConnectorUpdate(BaseModel):
     config: dict[str, Any] | None = None
     credentials: dict[str, str] | None = None
     is_active: bool | None = None
+    tags: list[str] | None = None
 
 
 class ConnectorAgentLink(BaseModel):
@@ -51,6 +53,7 @@ class ConnectorResponse(BaseModel):
     type: str
     status: str
     config: dict[str, Any]
+    tags: list[str]
     is_active: bool
     last_connected_at: str | None
     error_message: str | None
@@ -64,6 +67,7 @@ class ConnectorResponse(BaseModel):
             type=c.type,
             status=c.status,
             config=c.config or {},
+            tags=c.tags if c.tags else [],
             is_active=c.is_active,
             last_connected_at=c.last_connected_at.isoformat() if c.last_connected_at else None,
             error_message=c.error_message,
@@ -127,12 +131,26 @@ async def discover_channels_endpoint(req: DiscoverChannelsRequest):
 # ── CRUD ─────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[ConnectorResponse])
-async def list_connectors(session: DbSession):
-    """List all configured connectors."""
-    result = await session.execute(
-        select(Connector).order_by(Connector.created_at.desc())
-    )
-    return [ConnectorResponse.from_model(c) for c in result.scalars().all()]
+async def list_connectors(
+    session: DbSession,
+    tags: str | None = Query(None, description="Comma-separated tags to filter by"),
+    connector_type: str | None = Query(None, alias="type"),
+):
+    """List all configured connectors, optionally filtered by tags or type."""
+    query = select(Connector).order_by(Connector.created_at.desc())
+    if connector_type:
+        query = query.where(Connector.type == connector_type)
+    result = await session.execute(query)
+    connectors = result.scalars().all()
+
+    if tags:
+        tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+        connectors = [
+            c for c in connectors
+            if c.tags and any(t.lower() in [ct.lower() for ct in (c.tags or [])] for t in tag_list)
+        ]
+
+    return [ConnectorResponse.from_model(c) for c in connectors]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ConnectorResponse)
@@ -152,6 +170,7 @@ async def create_connector(payload: ConnectorCreate, request: Request, session: 
         type=payload.type,
         config=payload.config,
         credentials_encrypted=encrypted_creds,
+        tags=payload.tags,
         user_id=user_id,
         status="disconnected",
     )
@@ -189,6 +208,8 @@ async def update_connector(connector_id: str, payload: ConnectorUpdate, session:
         connector.config = payload.config
     if payload.is_active is not None:
         connector.is_active = payload.is_active
+    if payload.tags is not None:
+        connector.tags = payload.tags
     if payload.credentials is not None:
         from shared.crypto.credentials import encrypt_credentials
         connector.credentials_encrypted = encrypt_credentials(payload.credentials)
@@ -372,6 +393,54 @@ async def test_connector(connector_id: str, session: DbSession):
             conn_status = "connected"
             detail = "Webhook endpoint is ready to receive signals"
 
+        elif connector.type == "yfinance":
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1d&range=1d",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code == 200:
+                    conn_status = "connected"
+                    detail = "Yahoo Finance data accessible (no API key required)"
+                else:
+                    detail = f"Yahoo Finance returned {resp.status_code}"
+
+        elif connector.type == "polygon":
+            api_key = creds.get("api_key", "")
+            if not api_key:
+                return {"connection_status": "ERROR", "detail": "Missing Polygon API key"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/2024-01-02/2024-01-02?apiKey={api_key}",
+                )
+                if resp.status_code == 200:
+                    conn_status = "connected"
+                    detail = "Polygon API key valid"
+                elif resp.status_code == 403:
+                    detail = "Invalid or expired API key"
+                else:
+                    detail = f"Polygon API returned {resp.status_code}"
+
+        elif connector.type == "alphavantage":
+            api_key = creds.get("api_key", "")
+            if not api_key:
+                return {"connection_status": "ERROR", "detail": "Missing Alpha Vantage API key"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey={api_key}",
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "Global Quote" in data:
+                        conn_status = "connected"
+                        detail = "Alpha Vantage API key valid"
+                    elif "Note" in data or "Information" in data:
+                        detail = "Rate limit hit or invalid key"
+                    else:
+                        detail = "Unexpected Alpha Vantage response"
+                else:
+                    detail = f"Alpha Vantage returned {resp.status_code}"
+
         else:
             conn_status = "connected"
             detail = f"No specific test for {connector.type}"
@@ -389,6 +458,40 @@ async def test_connector(connector_id: str, session: DbSession):
     await session.commit()
 
     return {"connection_status": conn_status, "detail": detail}
+
+
+# ── History pull ─────────────────────────────────────────────────────────────
+
+@router.post("/{connector_id}/pull-history")
+async def pull_connector_history(connector_id: str, session: DbSession):
+    """Trigger historical message pull for a connector. Stores messages in channel_messages table."""
+    result = await session.execute(
+        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    try:
+        from shared.crypto.credentials import decrypt_credentials
+        creds = decrypt_credentials(connector.credentials_encrypted) if connector.credentials_encrypted else {}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not decrypt credentials")
+
+    from services.message_ingestion.src.orchestrator import ingest_history
+    try:
+        summary = await ingest_history(
+            session=session,
+            connector_id=connector.id,
+            connector_type=connector.type,
+            credentials=creds,
+            config=connector.config or {},
+        )
+    except Exception as exc:
+        logger.exception("History pull failed for connector %s", connector_id)
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(exc)[:200]}")
+
+    return {"status": "complete", **summary}
 
 
 # ── Agent linking ────────────────────────────────────────────────────────────

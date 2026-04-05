@@ -5,53 +5,71 @@ Sessions ingest content from YouTube, Discord, or trade logs to build
 trading behavior profiles that can be deployed as autonomous agents.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.db.engine import get_session as get_db_session
+from shared.db.models.learning_session import LearningSession
 
 router = APIRouter(prefix="/api/v2/agent-learning", tags=["agent-learning"])
 
-MOCK_SESSIONS: dict[str, dict[str, Any]] = {
-    "ls-001": {
-        "id": "ls-001",
-        "agent_name": "SMB-Momentum-Learner",
-        "source_type": "youtube_channel",
-        "source_url": "https://youtube.com/@SMBCapital",
-        "status": "READY",
-        "progress": 100,
-        "target_role": "day_trader",
-        "learning_depth": "deep",
-        "auto_deploy": False,
-        "behavior_profile": {
-            "risk_tolerance": "Moderate — 1-2% per trade",
-            "preferred_instruments": ["SPY", "QQQ", "Large-cap momentum stocks"],
-            "trading_style": "Intraday momentum with strict risk management",
-            "entry_patterns": ["Opening range breakout", "VWAP reclaim", "Relative strength confirmation"],
-            "exit_patterns": ["Trailing stop at 20 EMA", "Time-based exit at 3:30 PM", "Target 2:1 R:R"],
-            "time_of_day": "9:30 AM – 11:30 AM, 2:00 PM – 4:00 PM",
-            "position_sizing": "Fixed fractional — 1% risk per trade, scale in up to 3 entries",
-        },
-        "key_concepts": ["Tape reading", "Level 2 analysis", "Risk-first approach", "Sector rotation", "VWAP anchoring"],
-        "created_at": "2026-02-28T14:00:00Z",
-    },
-    "ls-002": {
-        "id": "ls-002",
-        "agent_name": "Discord-Swing-Analyzer",
-        "source_type": "discord_channel",
-        "source_url": "discord://guild/123456/channel/789012",
-        "status": "ANALYZING",
-        "progress": 47,
-        "target_role": "swing_trader",
+_STANDALONE_AGENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
+
+
+def _snapshot_defaults() -> dict[str, Any]:
+    return {
+        "source_url": "",
         "learning_depth": "standard",
-        "auto_deploy": True,
+        "auto_deploy": False,
         "behavior_profile": None,
-        "key_concepts": ["Earnings plays", "Technical breakouts"],
-        "created_at": "2026-03-01T09:30:00Z",
-    },
-}
+        "key_concepts": [],
+        "progress": 0,
+    }
+
+
+def _row_to_api(ls: LearningSession) -> dict[str, Any]:
+    extra = _snapshot_defaults()
+    if ls.config_snapshot:
+        try:
+            parsed = json.loads(ls.config_snapshot)
+            if isinstance(parsed, dict):
+                extra.update(parsed)
+        except json.JSONDecodeError:
+            pass
+    return {
+        "id": str(ls.id),
+        "agent_name": ls.channel_name or "",
+        "source_type": ls.session_type,
+        "source_url": extra.get("source_url", ""),
+        "status": ls.status,
+        "progress": int(extra.get("progress", 0)),
+        "target_role": ls.model_type or "",
+        "learning_depth": extra.get("learning_depth", "standard"),
+        "auto_deploy": bool(extra.get("auto_deploy", False)),
+        "behavior_profile": extra.get("behavior_profile"),
+        "key_concepts": extra.get("key_concepts") or [],
+        "created_at": ls.started_at.isoformat() if ls.started_at else "",
+    }
+
+
+def _merge_snapshot(ls: LearningSession, updates: dict[str, Any]) -> None:
+    base = _snapshot_defaults()
+    if ls.config_snapshot:
+        try:
+            parsed = json.loads(ls.config_snapshot)
+            if isinstance(parsed, dict):
+                base.update(parsed)
+        except json.JSONDecodeError:
+            pass
+    base.update(updates)
+    ls.config_snapshot = json.dumps(base)
 
 
 class SessionCreate(BaseModel):
@@ -64,52 +82,79 @@ class SessionCreate(BaseModel):
 
 
 @router.get("/sessions")
-async def list_sessions():
-    return list(MOCK_SESSIONS.values())
+async def list_sessions(session: AsyncSession = Depends(get_db_session)):
+    result = await session.execute(select(LearningSession).order_by(LearningSession.started_at.desc()))
+    rows = result.scalars().all()
+    return [_row_to_api(ls) for ls in rows]
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
-async def create_session(payload: SessionCreate):
-    session_id = f"ls-{uuid.uuid4().hex[:6]}"
-    session = {
-        "id": session_id,
-        "agent_name": payload.agent_name,
-        "source_type": payload.source_type,
-        "source_url": payload.source_url,
-        "status": "INGESTING",
-        "progress": 0,
-        "target_role": payload.target_role,
-        "learning_depth": payload.learning_depth,
-        "auto_deploy": payload.auto_deploy,
-        "behavior_profile": None,
-        "key_concepts": [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    MOCK_SESSIONS[session_id] = session
-    return session
+async def create_session(
+    payload: SessionCreate,
+    session: AsyncSession = Depends(get_db_session),
+):
+    row = LearningSession(
+        agent_id=_STANDALONE_AGENT_ID,
+        session_type=payload.source_type,
+        status="INGESTING",
+        channel_name=payload.agent_name,
+        model_type=payload.target_role,
+        started_at=datetime.now(timezone.utc),
+    )
+    _merge_snapshot(
+        row,
+        {
+            "source_url": payload.source_url,
+            "learning_depth": payload.learning_depth,
+            "auto_deploy": payload.auto_deploy,
+            "behavior_profile": None,
+            "key_concepts": [],
+            "progress": 0,
+        },
+    )
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return _row_to_api(row)
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    session = MOCK_SESSIONS.get(session_id)
-    if not session:
+async def get_session(session_id: str, session: AsyncSession = Depends(get_db_session)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    return session
+    result = await session.execute(select(LearningSession).where(LearningSession.id == sid))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return _row_to_api(row)
 
 
 @router.post("/sessions/{session_id}/deploy")
-async def deploy_session(session_id: str):
-    session = MOCK_SESSIONS.get(session_id)
-    if not session:
+async def deploy_session(session_id: str, session: AsyncSession = Depends(get_db_session)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session["status"] != "READY":
+    result = await session.execute(select(LearningSession).where(LearningSession.id == sid))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if row.status != "READY":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session must be in READY state to deploy")
-    session["status"] = "DEPLOYED"
+    row.status = "DEPLOYED"
     return {"id": session_id, "status": "DEPLOYED"}
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(session_id: str):
-    if session_id not in MOCK_SESSIONS:
+async def delete_session(session_id: str, session: AsyncSession = Depends(get_db_session)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    del MOCK_SESSIONS[session_id]
+    result = await session.execute(select(LearningSession).where(LearningSession.id == sid))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    await session.delete(row)

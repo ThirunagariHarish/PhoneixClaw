@@ -1,0 +1,182 @@
+Overview
+More options
+The meeting focused on developing a backtesting agent using Cloud code and SDK to automate stock market trading. The team discussed the need to transform raw data from Discord into a usable format, including sentiment analysis and technical indicators. They proposed building a backtesting agent that orchestrates multiple sub-agents for training and decision-making. The agent should handle tasks like data collection, transformation, and model training. The goal is to create an autonomous system that can make trades based on historical data and market conditions, with the potential to scale and adapt over time.
+
+Action Items
+More options
+This list can be reordered. To drag an action item, press space or enter on the drag handle. Use the up and down arrow keys to move the action item. To drop the item, press space or enter again. To cancel drag and drop, press escape.
+
+
+Build a backtesting agent that orchestrates transformation, feature extraction, model training and evaluation as the core sub-process of the product
+
+
+
+
+
+
+
+Implement the backtesting agent using Cloud Code and SDK (attempt Cloud Code first) and run it from the command line
+
+
+
+
+
+
+
+Develop the data transformation pipeline to read Discord messages, collapse chunked trades into single trade rows, compute cumulative profit per trade, and add timestamp, ticker, targets and trade metadata
+
+
+
+
+
+
+
+Configure the backtesting agent to read two years of historical data from Discord (start with one channel: SPX alerts) and convert inputs into time-series rows for training
+
+
+
+
+
+
+
+Prototype a sentiment model that runs in parallel to extract hourly sentiment from Discord channels and output sentiment scores for each time window
+
+
+
+
+
+
+
+Try building agents in Cloud Code (create and host agents on Cloud Code platform) so agents can be scheduled and run persistently
+
+
+
+
+
+
+
+Start daily morning discussions/standups to coordinate progress and overlapping work across the team
+
+
+
+
+
+
+Add action item
+
+Outline
+More options
+Discussion on AI and Cloud Code Implementation
+
+
+•
+Unknown Speaker discusses the challenges of integrating new technologies into existing systems, emphasizing the need for a platform that doesn't work in silos.
+
+
+•
+The conversation highlights the potential of using Cloud code and SDK to simplify and automate tasks, reducing delays and complications.
+
+
+•
+The idea of building autonomous agents that can develop their own skills and make decisions based on code is introduced.
+
+
+•
+The speaker mentions the importance of targeting users and onboarding them through Discord channels and bots to streamline processes.
+
+
+Challenges with Current Technology and Research Directions
+
+
+•
+The speaker identifies issues with the current technology choices, suggesting that open cloud code might be more suitable for personal use.
+
+
+•
+There is a discussion on the need to research and potentially shift to Cloud code to expedite product development.
+
+
+•
+The conversation touches on the differences between Cloud code, agent SDK, and other technologies, emphasizing the need for a cost-effective solution.
+
+
+•
+The speaker proposes focusing on building a backtesting agent as a starting point, using Cloud code and other technologies to achieve this goal.
+
+
+Backtesting Agent and Data Transformation
+
+
+•
+The speaker outlines the steps for building a backtesting agent, including reading past data from Discord and transforming it into a usable format.
+
+
+•
+The importance of cumulative profit calculations and handling trades in chunks is discussed.
+
+
+•
+The conversation includes details on the transformation process, such as extracting relevant data from Discord messages and running sentiment models.
+
+
+•
+The speaker emphasizes the need for accurate data transformation to ensure the backtesting agent's effectiveness.
+
+
+Training and Orchestration of Models
+
+
+•
+The speaker discusses the training phase for the backtesting agent, involving multiple models to achieve high accuracy.
+
+
+•
+The role of LLM (Language Model) training in identifying the best models is highlighted.
+
+
+•
+The conversation covers the need for explainability in the models, allowing users to understand the decision-making process.
+
+
+•
+The speaker mentions the creation of sub-agents to handle specific tasks, ensuring the backtesting agent doesn't lose context.
+
+
+Architecture and Implementation Strategy
+
+
+•
+The speaker proposes an architecture that includes a backtesting agent, sub-agents, and a cloud code agent to manage tasks.
+
+
+•
+The importance of using Cloud code to ensure the project's longevity and scalability is emphasized.
+
+
+•
+The conversation includes details on the integration of Discord and Robinhood accounts to automate trades.
+
+
+•
+The speaker suggests starting with the smallest possible task to ensure a successful implementation and then scaling up.
+
+
+Team Coordination and Next Steps
+
+
+•
+The speaker discusses the need for more hands on deck to accelerate the project's progress.
+
+
+•
+Regular meetings and discussions are proposed to ensure alignment and address any issues.
+
+
+•
+The importance of having a clear understanding of the project's goals and breaking them down into manageable tasks is emphasized.
+
+
+•
+The speaker mentions the need for flexibility and adaptability in the project's approach, considering the evolving requirements and challenges.
+
+

@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Phoenix Agent Manifest",
+  "description": "Declarative definition of a Phoenix trading agent — identity, rules, modes, risk, models, tools, and skills.",
+  "type": "object",
+  "required": ["version", "template", "identity", "risk", "tools"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Manifest schema version"
+    },
+    "template": {
+      "type": "string",
+      "description": "Template identifier, e.g. live-trader-v1, backtesting-v1"
+    },
+    "identity": {
+      "type": "object",
+      "required": ["name", "channel", "analyst"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "channel": { "type": "string", "minLength": 1 },
+        "channel_id": { "type": "string" },
+        "server_id": { "type": "string" },
+        "analyst": { "type": "string", "minLength": 1 },
+        "character": {
+          "type": "string",
+          "enum": ["aggressive-momentum", "conservative-swing", "balanced-intraday"],
+          "default": "balanced-intraday"
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "condition", "weight"],
+        "properties": {
+          "name": { "type": "string" },
+          "condition": { "type": "string", "description": "Condition expression, e.g. 'hour_of_day between 9 and 11'" },
+          "weight": { "type": "number" },
+          "source": { "type": "string", "enum": ["backtesting", "user", "system"], "default": "backtesting" },
+          "enabled": { "type": "boolean", "default": true },
+          "description": { "type": "string" }
+        }
+      },
+      "default": []
+    },
+    "modes": {
+      "type": "object",
+      "properties": {
+        "aggressive": { "$ref": "#/definitions/mode" },
+        "conservative": { "$ref": "#/definitions/mode" }
+      },
+      "default": {
+        "aggressive": { "confidence_threshold": 0.60, "max_concurrent": 5, "stop_loss_pct": 25, "daily_pnl_cap": 500 },
+        "conservative": { "confidence_threshold": 0.80, "max_concurrent": 2, "stop_loss_pct": 15, "daily_pnl_cap": 200 }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["max_position_size_pct", "max_daily_loss_pct"],
+      "properties": {
+        "max_position_size_pct": { "type": "number", "minimum": 0.1, "maximum": 100 },
+        "max_daily_loss_pct": { "type": "number", "minimum": 0.1, "maximum": 100 },
+        "max_concurrent_positions": { "type": "integer", "minimum": 1, "default": 3 },
+        "require_pattern_match": { "type": "boolean", "default": true },
+        "min_pattern_matches": { "type": "integer", "minimum": 0, "default": 2 }
+      }
+    },
+    "models": {
+      "type": "object",
+      "properties": {
+        "primary": { "type": "string", "description": "Best model name from evaluate_models" },
+        "accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "auc_roc": { "type": "number", "minimum": 0, "maximum": 1 },
+        "version": { "type": "string" },
+        "training_trades": { "type": "integer" },
+        "all_models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "score": { "type": "number" },
+              "file": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Tool script names (without .py) that must exist in tools/"
+    },
+    "skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Skill markdown file names that must exist in skills/",
+      "default": []
+    },
+    "knowledge": {
+      "type": "object",
+      "description": "Backtesting-derived knowledge embedded in the agent",
+      "properties": {
+        "top_features": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "name": { "type": "string" }, "importance": { "type": "number" } } }
+        },
+        "analyst_profile": {
+          "type": "object",
+          "properties": {
+            "avg_hold_hours": { "type": "number" },
+            "win_rate": { "type": "number" },
+            "best_tickers": { "type": "array", "items": { "type": "string" } },
+            "best_hours": { "type": "array", "items": { "type": "integer" } },
+            "avg_trades_per_day": { "type": "number" },
+            "is_swing_trader": { "type": "boolean" }
+          }
+        },
+        "channel_summary": { "type": "string" }
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "description": "Encrypted credential references — never stored in plaintext",
+      "properties": {
+        "discord_token": { "type": "string" },
+        "phoenix_api_key": { "type": "string" },
+        "robinhood_username": { "type": "string" },
+        "robinhood_password": { "type": "string" },
+        "robinhood_totp_secret": { "type": "string" }
+      }
+    }
+  },
+  "definitions": {
+    "mode": {
+      "type": "object",
+      "properties": {
+        "confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_concurrent": { "type": "integer", "minimum": 1 },
+        "stop_loss_pct": { "type": "number", "minimum": 1, "maximum": 100 },
+        "daily_pnl_cap": { "type": "number", "minimum": 0 },
+        "daily_loss_limit": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

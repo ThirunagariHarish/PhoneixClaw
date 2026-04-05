@@ -17,13 +17,32 @@ class Agent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    type: Mapped[str] = mapped_column(String(30), nullable=False)  # trading | strategy | monitoring | task
+    type: Mapped[str] = mapped_column(String(30), nullable=False)  # trading | trend
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="CREATED")
-    instance_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("openclaw_instances.id"), nullable=False
+    instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("claude_code_instances.id"), nullable=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    # Claude Code agent fields
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
+    channel_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    analyst_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    model_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_signal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_trade_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Manifest-driven agent framework
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    current_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="conservative")
+    rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

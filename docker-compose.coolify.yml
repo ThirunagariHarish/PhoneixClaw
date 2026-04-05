@@ -57,6 +57,20 @@ services:
           memory: 512M
     restart: unless-stopped
 
+  # ─── Database Migrations ─────────────────────────────────────────────────
+  phoenix-db-migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: >
+      sh -c "cd /app && python -m alembic upgrade head 2>/dev/null || python scripts/init_db.py"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   # ─── Ollama (AI/LLM) ───────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
@@ -91,6 +105,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_EXPAND_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
       - LLM_GATEWAY_URL=http://phoenix-llm-gateway:8050
@@ -99,6 +114,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      phoenix-db-migrate:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -131,20 +148,7 @@ services:
       - "80"
     restart: unless-stopped
 
-  # ─── Bridge & Gateway ──────────────────────────────────────────────────
-  phoenix-bridge:
-    build:
-      context: .
-      dockerfile: openclaw/bridge/Dockerfile
-    environment:
-      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    restart: unless-stopped
-
+  # ─── WebSocket Gateway ──────────────────────────────────────────────────
   phoenix-ws-gateway:
     build:
       context: .
@@ -184,8 +188,6 @@ services:
     environment:
       - REDIS_URL=${REDIS_URL}
       - DATABASE_URL=${DATABASE_URL}
-      - ALPACA_API_KEY=${ALPACA_API_KEY:-}
-      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -248,25 +250,6 @@ services:
       resources:
         limits:
           memory: 1G
-    restart: unless-stopped
-
-  phoenix-skill-sync:
-    build:
-      context: .
-      dockerfile: services/skill-sync/Dockerfile
-    environment:
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - BRIDGE_URL=http://phoenix-bridge:18800
-      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
-    depends_on:
-      minio:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          memory: 128M
     restart: unless-stopped
 
   phoenix-agent-comm:

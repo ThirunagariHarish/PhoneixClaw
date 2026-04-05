@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "template": "live-trader-v1",
+  "identity": {
+    "name": "",
+    "channel": "",
+    "analyst": "",
+    "character": "balanced-intraday"
+  },
+  "rules": [],
+  "modes": {
+    "aggressive": {
+      "confidence_threshold": 0.60,
+      "max_concurrent": 5,
+      "stop_loss_pct": 25,
+      "daily_pnl_cap": 500,
+      "daily_loss_limit": 200
+    },
+    "conservative": {
+      "confidence_threshold": 0.80,
+      "max_concurrent": 2,
+      "stop_loss_pct": 15,
+      "daily_pnl_cap": 200,
+      "daily_loss_limit": 100
+    }
+  },
+  "risk": {
+    "max_position_size_pct": 5.0,
+    "max_daily_loss_pct": 3.0,
+    "max_concurrent_positions": 3,
+    "require_pattern_match": true,
+    "min_pattern_matches": 2
+  },
+  "models": {
+    "primary": "unknown",
+    "accuracy": 0,
+    "version": ""
+  },
+  "tools": [
+    "discord_listener",
+    "inference",
+    "enrich_single",
+    "risk_check",
+    "robinhood_mcp",
+    "technical_analysis",
+    "portfolio_tracker",
+    "position_monitor",
+    "pre_market_analyzer",
+    "decision_engine",
+    "report_to_phoenix"
+  ],
+  "skills": [
+    "discord_monitor.md",
+    "trade_execution.md",
+    "risk_management.md",
+    "position_monitoring.md",
+    "daily_report.md",
+    "swing_trade.md",
+    "pre_market.md"
+  ],
+  "knowledge": {
+    "top_features": [],
+    "analyst_profile": {
+      "avg_hold_hours": 4,
+      "win_rate": 0.5,
+      "best_tickers": [],
+      "best_hours": [],
+      "avg_trades_per_day": 0,
+      "is_swing_trader": false
+    },
+    "channel_summary": ""
+  }
+}

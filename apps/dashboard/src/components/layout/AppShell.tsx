@@ -33,6 +33,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import ChatWidget from '@/components/ChatWidget'
+import { TokenMonitor } from '@/components/TokenMonitor'
 
 const SIDEBAR_COLLAPSED_KEY = 'phoenix-sidebar-collapsed'
 const SIDEBAR_ORDER_KEY = 'phoenix-sidebar-order'
@@ -349,6 +350,11 @@ export default function AppShell() {
             />
           </div>
         </ScrollArea>
+        {!collapsed && (
+          <div className="px-2 pb-2">
+            <TokenMonitor />
+          </div>
+        )}
         <Separator />
         {sidebarFooter(false)}
       </aside>

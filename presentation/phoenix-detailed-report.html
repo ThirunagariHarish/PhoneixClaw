@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProjectPhoenix — Detailed Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  :root {
+    --orange: #f97316;
+    --amber: #f59e0b;
+    --gold: #fbbf24;
+    --dark: #0c0a09;
+    --card: #18181b;
+    --border: #27272a;
+    --text: #fafaf9;
+    --muted: #a1a1aa;
+    --green: #22c55e;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --purple: #a855f7;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--dark);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 40px;
+  }
+
+  h1 {
+    font-size: 2.8em;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin-bottom: 8px;
+  }
+
+  h2 {
+    font-size: 1.8em;
+    font-weight: 700;
+    margin-top: 56px;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--orange);
+    letter-spacing: -0.02em;
+  }
+
+  h3 {
+    font-size: 1.25em;
+    font-weight: 600;
+    color: var(--amber);
+    margin-top: 32px;
+    margin-bottom: 12px;
+  }
+
+  h4 {
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--text);
+    margin-top: 24px;
+    margin-bottom: 8px;
+  }
+
+  p { color: var(--muted); margin-bottom: 14px; }
+
+  strong { color: var(--text); }
+
+  .accent { color: var(--orange); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .blue { color: var(--blue); }
+  .purple { color: var(--purple); }
+
+  .subtitle {
+    font-size: 1.3em;
+    color: var(--muted);
+    margin-bottom: 40px;
+  }
+
+  .divider {
+    width: 80px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--orange), var(--amber));
+    border-radius: 2px;
+    margin: 20px 0;
+  }
+
+  .section-num {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 700;
+    color: var(--orange);
+    border: 1px solid var(--orange);
+    border-radius: 4px;
+    padding: 2px 10px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  ul, ol { padding-left: 24px; margin-bottom: 16px; }
+  li { color: var(--muted); margin-bottom: 6px; }
+  li strong { color: var(--text); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 0.92em;
+  }
+
+  thead th {
+    background: var(--card);
+    color: var(--orange);
+    font-weight: 600;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 2px solid var(--orange);
+  }
+
+  tbody td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  tbody tr:hover td { background: rgba(249,115,22,0.04); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+
+  .card-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+
+  .metric-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+  }
+
+  .metric-value {
+    font-size: 2.2em;
+    font-weight: 800;
+    color: var(--orange);
+  }
+
+  .metric-label {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .highlight {
+    border-left: 3px solid var(--orange);
+    padding: 14px 20px;
+    background: rgba(249,115,22,0.05);
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+  }
+
+  .highlight p { margin: 0; }
+
+  .tag {
+    display: inline-block;
+    font-size: 0.75em;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 6px;
+    margin-right: 4px;
+  }
+
+  .tag-done { background: rgba(34,197,94,0.12); color: var(--green); }
+  .tag-future { background: rgba(168,85,247,0.12); color: var(--purple); }
+
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 30px 36px;
+    margin: 30px 0 50px;
+  }
+
+  .toc h3 { color: var(--text); margin-top: 0; }
+
+  .toc ol { padding-left: 20px; }
+
+  .toc li {
+    font-size: 1em;
+    margin-bottom: 8px;
+    color: var(--orange);
+  }
+
+  .toc li a {
+    color: var(--orange);
+    text-decoration: none;
+  }
+
+  .toc li a:hover { text-decoration: underline; }
+
+  .flow-step {
+    display: flex;
+    gap: 16px;
+    margin: 14px 0;
+    align-items: flex-start;
+  }
+
+  .flow-num {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--orange);
+    color: var(--dark);
+    font-weight: 800;
+    font-size: 0.85em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .cover-section {
+    text-align: center;
+    padding: 80px 0 40px;
+  }
+
+  .cover-section .phoenix-logo {
+    font-size: 4em;
+    display: block;
+    margin-bottom: 16px;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin: 20px 0;
+  }
+
+  svg text { font-family: 'Inter', -apple-system, sans-serif; }
+
+  @media print {
+    body { background: #fff; color: #111; font-size: 11pt; }
+    .container { max-width: 100%; padding: 20px; }
+    h1 { font-size: 2em; }
+    h2 { font-size: 1.5em; page-break-before: always; border-bottom-color: #f97316; }
+    h2:first-of-type { page-break-before: auto; }
+    h3 { color: #b45309; }
+    p, li { color: #333; }
+    strong { color: #111; }
+    .accent { color: #ea580c; }
+    .green { color: #16a34a; }
+    .red { color: #dc2626; }
+    .blue { color: #2563eb; }
+    .purple { color: #9333ea; }
+    .card, .metric-card, .toc { background: #f9fafb; border-color: #e5e7eb; }
+    thead th { background: #f3f4f6; color: #ea580c; border-bottom-color: #ea580c; }
+    tbody td { border-bottom-color: #e5e7eb; color: #333; }
+    .highlight { background: #fff7ed; border-left-color: #ea580c; }
+    .tag-done { background: #dcfce7; color: #16a34a; }
+    .tag-future { background: #f3e8ff; color: #9333ea; }
+    .metric-value { color: #ea580c; }
+    .metric-label, .subtitle { color: #666; }
+    .muted-print { color: #666; }
+    .flow-num { background: #ea580c; color: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .divider { background: #ea580c; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .milestone-bar { background: #e5e7eb; }
+    .milestone-bar-fill { background: #ea580c; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .section-num { border-color: #ea580c; color: #ea580c; }
+  }
+
+  .milestone-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+    margin: 6px 0;
+  }
+
+  .milestone-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--orange), var(--amber));
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- COVER -->
+<div class="cover-section">
+  <span class="phoenix-logo">&#x1F525;</span>
+  <h1>Project<span class="accent">Phoenix</span></h1>
+  <div class="divider" style="margin:16px auto;"></div>
+  <p class="subtitle">The Autonomous AI Trading Firm</p>
+  <p style="font-size:0.9em;">Multi-Agent Intelligence &bull; Backtested Strategies &bull; Autonomous Execution</p>
+  <p style="font-size:0.85em; margin-top:30px; color:var(--muted);">Comprehensive Project Report &bull; March 2026</p>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ol>
+    <li><a href="#section1">Key Idea — Vision &amp; Approach</a></li>
+    <li><a href="#section2">Key Metrics — Revenue Appeal &amp; Economics</a></li>
+    <li><a href="#section3">Architecture — Three-Plane Design</a></li>
+    <li><a href="#section4">End-to-End Flow — Signal to Execution</a></li>
+    <li><a href="#section5">Current Status — Milestones &amp; Deliverables</a></li>
+    <li><a href="#section6">Future Scope — Roadmap &amp; Expansion</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 1: KEY IDEA                                          -->
+<!-- ============================================================ -->
+
+<h2 id="section1"><span class="section-num">01</span> Key Idea — Vision &amp; Approach</h2>
+
+<h3>The Problem</h3>
+<p>The current landscape of automated trading is fundamentally broken. Traditional trading bots fall into two categories — both deeply flawed:</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>Hard-Coded Rule Bots</h4>
+    <p>Rigid if/else logic that cannot adapt to changing market conditions. Requires constant manual updates. Breaks silently when market regimes shift.</p>
+  </div>
+  <div class="card">
+    <h4>Raw LLM Trading Bots</h4>
+    <p>Newer AI bots let large language models make discretionary trading decisions. Unpredictable, untested, and dangerous — hallucinations become real losses.</p>
+  </div>
+</div>
+
+<p>Both approaches share critical weaknesses: no backtesting validation, no risk management layers, single points of failure, and no self-improvement capabilities. They are fundamentally gambling with code instead of trading with discipline.</p>
+
+<h3>The Solution: LLMs as Strategy Engineers</h3>
+
+<div class="highlight">
+  <p><strong class="accent">Core Principle:</strong> In ProjectPhoenix, LLMs are strategy engineers, not discretionary traders. Every AI agent must prove itself through rigorous backtesting before being allowed to trade with real capital.</p>
+</div>
+
+<p>ProjectPhoenix is an <strong>autonomous multi-agent trading platform</strong> that operates like a full trading firm staffed by specialized AI agents. The platform uses a custom web dashboard as a control plane to orchestrate multiple OpenClaw AI instances, each running specialized agents for different functions.</p>
+
+<h3>Key Differentiators</h3>
+
+<table>
+  <thead>
+    <tr><th>Dimension</th><th>Traditional Bots</th><th>ProjectPhoenix</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Decision Making</strong></td><td>Hard-coded rules or raw LLM calls</td><td class="green">Backtested, approved AI agents with validated strategies</td></tr>
+    <tr><td><strong>Architecture</strong></td><td>Single monolith</td><td class="green">Distributed multi-agent instances across multiple VPS nodes</td></tr>
+    <tr><td><strong>Trade Execution</strong></td><td>Direct broker API calls</td><td class="green">Queue-based pipeline with 3-layer risk validation</td></tr>
+    <tr><td><strong>Position Management</strong></td><td>Basic stop-loss orders</td><td class="green">Dedicated monitoring agent paired per trade</td></tr>
+    <tr><td><strong>Strategy Development</strong></td><td>Manual coding by humans</td><td class="green">AI-engineered with automated backtesting and walk-forward validation</td></tr>
+    <tr><td><strong>Self-Improvement</strong></td><td>None — static once deployed</td><td class="green">Dev Agent with reinforcement learning loop</td></tr>
+    <tr><td><strong>Agent Collaboration</strong></td><td>Isolated bots that don't communicate</td><td class="green">Agents talk across instances via pub/sub, broadcast, and consensus</td></tr>
+    <tr><td><strong>User Interaction</strong></td><td>Dashboard only</td><td class="green">Bidirectional: Discord, Telegram, WhatsApp + Dashboard</td></tr>
+    <tr><td><strong>Code Generation</strong></td><td>Human-written only</td><td class="green">Agents generate Python code and predictive models</td></tr>
+  </tbody>
+</table>
+
+<h3>Design Principles</h3>
+
+<ul>
+  <li><strong>Intelligence in OpenClaw:</strong> The dashboard is control and display only. All reasoning, strategy evaluation, and trading logic runs inside OpenClaw AI agents.</li>
+  <li><strong>Queue-Based Execution:</strong> Agents never call broker APIs directly. Trade intents are submitted to a queue and pass through validation and risk checks at every layer before execution.</li>
+  <li><strong>Paired Agent Architecture:</strong> Every trading agent is automatically paired with a monitoring agent responsible for exits, stop-losses, take-profits, and position management.</li>
+  <li><strong>Skill Reuse:</strong> Skills are authored once in a central repository and synced to all OpenClaw instances via MinIO — ensuring consistency and rapid capability expansion.</li>
+  <li><strong>Fail-Safe Defaults:</strong> Circuit breakers, hard stop-losses, daily loss limits, and a global kill switch that can close all positions instantly.</li>
+  <li><strong>Idempotent Operations:</strong> Every trade intent has a unique ID. The execution service deduplicates to prevent double-orders.</li>
+  <li><strong>Secrets Never Leave Backend:</strong> API keys are encrypted with Fernet. The frontend sees masked previews only.</li>
+  <li><strong>Self-Improving System:</strong> A Dev Agent with reinforcement learning monitors performance, detects issues, tunes parameters, and evolves strategies continuously.</li>
+</ul>
+
+<h3>The Trading Firm Analogy</h3>
+<p>Think of ProjectPhoenix not as a trading bot, but as an <strong>entire trading firm</strong> staffed by specialized AI agents:</p>
+<ul>
+  <li><strong class="blue">Research Analysts</strong> — ingest and analyze signals from Discord, Twitter/X, Reddit, Unusual Whales, and news APIs</li>
+  <li><strong class="purple">Strategy Engineers</strong> — design, backtest, and optimize trading strategies using LLM reasoning</li>
+  <li><strong class="accent">Traders</strong> — execute approved strategies in live markets through queue-based pipelines</li>
+  <li><strong class="green">Risk Managers</strong> — monitor every position, enforce limits, and trigger circuit breakers when needed</li>
+  <li><strong class="gold">Dev Agent (CTO)</strong> — monitors the entire operation, fixes bugs, tunes parameters, and improves strategies through reinforcement learning</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- SECTION 2: KEY METRICS                                       -->
+<!-- ============================================================ -->
+
+<h2 id="section2"><span class="section-num">02</span> Key Metrics — Revenue Appeal &amp; Economics</h2>
+
+<h3>Revenue Generation Model</h3>
+<p>ProjectPhoenix generates revenue through <strong>autonomous trading profit at scale</strong> with minimal human intervention. The platform's economics are designed so that each AI agent operates as an independent profit center, with infrastructure costs staying linear while trading capacity scales exponentially.</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h4 style="margin-top:0;">Autonomous 24/5 Trading</h4>
+    <p>AI agents trade market hours without human intervention. Scale from 5 to 200+ agents — each running proven, backtested strategies.</p>
+  </div>
+  <div class="card">
+    <h4 style="margin-top:0;">Multi-Channel Alpha</h4>
+    <p>6 signal sources capture alpha from every corner: Discord, Reddit, Twitter/X, Unusual Whales, News APIs, and Webhooks.</p>
+  </div>
+  <div class="card">
+    <h4 style="margin-top:0;">Multi-Broker Execution</h4>
+    <p>4 brokers provide diversified execution: Alpaca, IBKR, Robinhood, and Tradier — reducing counterparty risk and improving fills.</p>
+  </div>
+  <div class="card">
+    <h4 style="margin-top:0;">Minimal Operating Cost</h4>
+    <p>Full production platform runs on ~$84/month infrastructure. A single successful agent can pay for the entire platform many times over.</p>
+  </div>
+</div>
+
+<h3>Backtest-to-Live Gate Criteria</h3>
+<p>Every agent must pass these rigorous thresholds on <strong>50+ evaluated signals</strong> before being promoted to live trading:</p>
+
+<div class="card-grid" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+  <div class="metric-card">
+    <div class="metric-value">&ge;45%</div>
+    <div class="metric-label">Win Rate</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">&ge;1.2</div>
+    <div class="metric-label">Profit Factor</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">&ge;0.5</div>
+    <div class="metric-label">Sharpe Ratio</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">&le;30%</div>
+    <div class="metric-label">Max Drawdown</div>
+  </div>
+</div>
+
+<p>The backtesting engine computes <strong>15 performance metrics</strong> including Sharpe ratio, Sortino ratio, max drawdown, win rate, profit factor, average win/loss, expectancy, recovery factor, and more. Only strategies that meet all gate criteria are eligible for promotion.</p>
+
+<h3>Speed Performance Benchmarks</h3>
+
+<table>
+  <thead>
+    <tr><th>Operation</th><th>Target Latency</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Signal Ingestion</strong></td><td class="green">&lt; 500ms</td><td>From source detection to connector processing</td></tr>
+    <tr><td><strong>Agent Evaluation</strong></td><td>&lt; 10 seconds</td><td>LLM reasoning + strategy check + decision</td></tr>
+    <tr><td><strong>Execution Queue Processing</strong></td><td class="green">&lt; 500ms</td><td>Trade intent validation and risk check pipeline</td></tr>
+    <tr><td><strong>Order Placement</strong></td><td class="green">&lt; 2 seconds</td><td>Broker API call and order confirmation</td></tr>
+    <tr><td><strong>Total Signal-to-Order</strong></td><td class="accent">&lt; 15 seconds</td><td>Complete end-to-end from signal to broker order</td></tr>
+    <tr><td><strong>API p95 Latency</strong></td><td class="green">&lt; 200ms</td><td>Dashboard API response time</td></tr>
+    <tr><td><strong>Heartbeat Processing</strong></td><td class="green">&lt; 1000ms</td><td>Agent health check round-trip</td></tr>
+  </tbody>
+</table>
+
+<h3>Risk Control Framework</h3>
+<p>Phoenix implements a comprehensive, multi-layered risk management system:</p>
+
+<table>
+  <thead>
+    <tr><th>Risk Control</th><th>Threshold</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Hard Stop-Loss</strong></td><td class="red">-20%</td><td>Per position automatic exit</td></tr>
+    <tr><td><strong>Daily Loss Limit</strong></td><td class="red">-5% per account</td><td>Agent paused for the day</td></tr>
+    <tr><td><strong>Portfolio Circuit Breaker</strong></td><td class="red">-10% in one day</td><td>Global kill switch — all trading halted</td></tr>
+    <tr><td><strong>Max Position per Ticker</strong></td><td>10%</td><td>Single stock concentration limit</td></tr>
+    <tr><td><strong>Max Sector Concentration</strong></td><td>30%</td><td>Sector diversification enforcement</td></tr>
+    <tr><td><strong>Service Down Alert</strong></td><td>2 minutes</td><td>Automatic service restart and alert</td></tr>
+    <tr><td><strong>Agent Error Rate</strong></td><td>&gt;5% in 5 min</td><td>Agent auto-paused for investigation</td></tr>
+    <tr><td><strong>Signal-to-Order Timeout</strong></td><td>&gt;30 seconds</td><td>Alert and investigation triggered</td></tr>
+  </tbody>
+</table>
+
+<p>Risk is enforced through a <strong>3-layer chain of responsibility</strong>: Agent Risk (per-agent limits) &rarr; Execution Risk (per-trade validation) &rarr; Global Risk (portfolio-level circuit breaker). Any layer can reject a trade.</p>
+
+<h3>Scaling Economics</h3>
+
+<table>
+  <thead>
+    <tr><th>Scale</th><th>Users</th><th>Agents</th><th>Infrastructure</th><th>Monthly Cost</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Starter</strong></td><td>1</td><td>5 – 10</td><td>2 Hetzner nodes</td><td class="green">~$56/mo</td></tr>
+    <tr><td><strong>Standard</strong></td><td>1</td><td>20 – 40</td><td>4 Hetzner nodes</td><td class="accent">~$84/mo</td></tr>
+    <tr><td><strong>Professional</strong></td><td>3 – 5</td><td>50 – 100</td><td>6 nodes</td><td>~$200/mo</td></tr>
+    <tr><td><strong>Enterprise</strong></td><td>10+</td><td>200+</td><td>Dedicated servers + NATS</td><td class="purple">~$500+/mo</td></tr>
+  </tbody>
+</table>
+
+<div class="highlight">
+  <p><strong class="accent">Key Economic Insight:</strong> Revenue scales with the number of active trading agents while infrastructure costs grow linearly. Each agent is a self-contained profit center with its own backtested strategy. Adding more agents to the platform increases potential revenue with minimal marginal cost.</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 3: ARCHITECTURE                                      -->
+<!-- ============================================================ -->
+
+<h2 id="section3"><span class="section-num">03</span> Architecture — Three-Plane Design</h2>
+
+<h3>Architecture Overview</h3>
+<p>ProjectPhoenix uses a <strong>three-plane architecture</strong> that separates concerns between control, execution, and shared services:</p>
+
+<div style="text-align:center; margin:30px 0;">
+  <svg viewBox="0 0 800 420" style="width:100%;max-width:800px;">
+    <rect x="20" y="20" width="760" height="110" rx="12" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="6"/>
+    <text x="40" y="48" fill="#f97316" font-size="14" font-weight="700">CONTROL PLANE</text>
+    <rect x="40" y="60" width="120" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="100" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">React Dashboard</text>
+    <text x="100" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">Vite + TypeScript</text>
+    <rect x="180" y="60" width="120" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="240" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">FastAPI Backend</text>
+    <text x="240" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">Python 3.12</text>
+    <rect x="320" y="60" width="110" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="375" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">PostgreSQL 16</text>
+    <text x="375" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">+ TimescaleDB</text>
+    <rect x="450" y="60" width="90" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="495" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">Redis 7</text>
+    <text x="495" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">Streams + Cache</text>
+    <rect x="560" y="60" width="100" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="610" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">Orchestrator</text>
+    <text x="610" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">BullMQ Worker</text>
+    <rect x="680" y="60" width="85" height="50" rx="8" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="722" y="82" text-anchor="middle" fill="#fafaf9" font-size="10" font-weight="600">WS Gateway</text>
+    <text x="722" y="96" text-anchor="middle" fill="#a1a1aa" font-size="8">Real-time</text>
+
+    <rect x="200" y="150" width="400" height="30" rx="6" fill="rgba(249,115,22,0.12)" stroke="#f97316" stroke-width="1.5"/>
+    <text x="400" y="170" text-anchor="middle" fill="#f97316" font-size="11" font-weight="700">Redis Streams Event Bus (10 Topics)</text>
+    <line x1="400" y1="130" x2="400" y2="150" stroke="#f97316" stroke-width="1.5"/>
+    <polygon points="395,148 400,155 405,148" fill="#f97316"/>
+
+    <rect x="20" y="200" width="760" height="110" rx="12" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="6"/>
+    <text x="40" y="228" fill="#a855f7" font-size="14" font-weight="700">EXECUTION PLANE — OpenClaw Instances</text>
+    <rect x="40" y="240" width="160" height="50" rx="8" fill="#18181b" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="120" y="262" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="600">Instance A: Strategy Lab</text>
+    <text x="120" y="276" text-anchor="middle" fill="#a1a1aa" font-size="8">+ Bridge API</text>
+    <rect x="220" y="240" width="160" height="50" rx="8" fill="#18181b" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="300" y="262" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="600">Instance B: Data/Research</text>
+    <text x="300" y="276" text-anchor="middle" fill="#a1a1aa" font-size="8">+ Bridge API</text>
+    <rect x="400" y="240" width="170" height="50" rx="8" fill="#18181b" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="485" y="262" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600">Instance C: Risk/Promote</text>
+    <text x="485" y="276" text-anchor="middle" fill="#a1a1aa" font-size="8">+ Bridge API</text>
+    <rect x="590" y="240" width="170" height="50" rx="8" fill="#18181b" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="675" y="262" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600">Instance D: Live Trading</text>
+    <text x="675" y="276" text-anchor="middle" fill="#a1a1aa" font-size="8">+ Bridge API</text>
+
+    <line x1="400" y1="180" x2="400" y2="200" stroke="#a855f7" stroke-width="1.5"/>
+    <polygon points="395,198 400,205 405,198" fill="#a855f7"/>
+
+    <rect x="20" y="330" width="760" height="80" rx="12" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6"/>
+    <text x="40" y="355" fill="#fbbf24" font-size="14" font-weight="700">SHARED SERVICES</text>
+    <rect x="40" y="365" width="100" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="90" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">MinIO (S3)</text>
+    <rect x="155" y="365" width="120" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="215" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">Execution Service</text>
+    <rect x="290" y="365" width="120" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="350" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">Backtest Runner</text>
+    <rect x="425" y="365" width="110" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="480" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">Connector Mgr</text>
+    <rect x="550" y="365" width="105" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="602" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">LLM Gateway</text>
+    <rect x="670" y="365" width="95" height="34" rx="6" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="717" y="386" text-anchor="middle" fill="#fafaf9" font-size="9" font-weight="600">Observability</text>
+
+    <line x1="400" y1="310" x2="400" y2="330" stroke="#fbbf24" stroke-width="1.5"/>
+    <polygon points="395,328 400,335 405,328" fill="#fbbf24"/>
+  </svg>
+</div>
+
+<h3>Control Plane</h3>
+<p>The control plane is the user-facing layer hosted on a central Coolify server. It provides the dashboard interface, API, database, and orchestration:</p>
+<ul>
+  <li><strong>React Dashboard</strong> (Vite 5 + TypeScript + Tailwind + Radix UI) — 25+ pages covering agents, trades, positions, strategies, skills, market data, analytics, and administration</li>
+  <li><strong>FastAPI Backend</strong> (Python 3.12 + Uvicorn) — 30+ route groups with JWT auth, MFA, RBAC (5 roles, 20 permissions)</li>
+  <li><strong>PostgreSQL 16 + TimescaleDB</strong> — 18 relational tables and 3 hypertables for time-series data</li>
+  <li><strong>Redis 7</strong> — API cache, sessions, BullMQ job queue, Streams event bus, rate limiting, circuit breaker state</li>
+  <li><strong>Orchestrator Worker</strong> — BullMQ-powered event processor that dispatches between services</li>
+  <li><strong>WebSocket Gateway</strong> — Real-time push for trades, positions, agents, heartbeats, and alerts</li>
+</ul>
+
+<h3>Execution Plane</h3>
+<p>The execution plane runs on separate VPS nodes, each hosting an OpenClaw AI instance with a Bridge API sidecar:</p>
+<ul>
+  <li><strong>Instance A — Strategy Lab:</strong> Agents that design, prototype, and backtest new trading strategies</li>
+  <li><strong>Instance B — Data &amp; Research:</strong> Agents focused on data ingestion, signal analysis, and market research</li>
+  <li><strong>Instance C — Risk &amp; Promote:</strong> Agents that evaluate strategies for promotion and manage risk assessment</li>
+  <li><strong>Instance D — Live Trading:</strong> Approved agents executing trades in live markets with paired monitoring agents</li>
+</ul>
+<p>Each instance runs a <strong>Bridge Service</strong> sidecar (port 18800) that exposes REST endpoints for agent CRUD, heartbeat, skill sync, and metrics. The bridge authenticates via shared token.</p>
+
+<h3>Service Registry</h3>
+
+<table>
+  <thead>
+    <tr><th>Service</th><th>Port</th><th>Technology</th><th>Memory</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>phoenix-api</strong></td><td>8011</td><td>FastAPI + Uvicorn</td><td>512 MB</td><td>Backend API (auth, CRUD, business logic)</td></tr>
+    <tr><td><strong>phoenix-dashboard</strong></td><td>3000</td><td>React 18 + Vite 5 + nginx</td><td>256 MB</td><td>Web SPA with 25+ pages</td></tr>
+    <tr><td><strong>phoenix-bridge</strong></td><td>18800</td><td>FastAPI</td><td>—</td><td>OpenClaw sidecar (agent lifecycle, heartbeat)</td></tr>
+    <tr><td><strong>phoenix-ws-gateway</strong></td><td>8031</td><td>FastAPI + WebSocket</td><td>256 MB</td><td>Real-time data push to dashboard</td></tr>
+    <tr><td><strong>phoenix-execution</strong></td><td>8020</td><td>FastAPI</td><td>384 MB</td><td>Trade execution via broker APIs</td></tr>
+    <tr><td><strong>phoenix-orchestrator</strong></td><td>8040</td><td>Python + BullMQ</td><td>512 MB</td><td>Event processing and dispatch</td></tr>
+    <tr><td><strong>phoenix-global-monitor</strong></td><td>8050</td><td>Python</td><td>256 MB</td><td>Circuit breaker, kill switch, portfolio risk</td></tr>
+    <tr><td><strong>phoenix-connector-mgr</strong></td><td>8060</td><td>Python</td><td>384 MB</td><td>Discord, Reddit, Twitter, UW, News, Webhook</td></tr>
+    <tr><td><strong>phoenix-backtest</strong></td><td>8022</td><td>Python + Docker-in-Docker</td><td>1024 MB</td><td>Sandboxed backtesting engine</td></tr>
+    <tr><td><strong>phoenix-skill-sync</strong></td><td>8023</td><td>Python</td><td>128 MB</td><td>Skill distribution from MinIO to instances</td></tr>
+    <tr><td><strong>phoenix-agent-comm</strong></td><td>8024</td><td>Python</td><td>256 MB</td><td>Inter-agent messaging (pub/sub, broadcast, consensus)</td></tr>
+    <tr><td><strong>phoenix-comms</strong></td><td>8025</td><td>Python</td><td>—</td><td>Discord, Telegram, WhatsApp bidirectional</td></tr>
+    <tr><td><strong>phoenix-automation</strong></td><td>—</td><td>Python</td><td>256 MB</td><td>Cron-based automation scheduler</td></tr>
+    <tr><td><strong>phoenix-llm-gateway</strong></td><td>8050</td><td>FastAPI</td><td>—</td><td>LLM proxy to Ollama</td></tr>
+  </tbody>
+</table>
+
+<h3>Event Bus — Redis Streams</h3>
+<p>All inter-service communication flows through Redis Streams with 10 dedicated topics:</p>
+
+<table>
+  <thead>
+    <tr><th>Stream</th><th>Publisher(s)</th><th>Consumer(s)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>stream:trade-intents</strong></td><td>OpenClaw Agents</td><td>Execution Service</td></tr>
+    <tr><td><strong>stream:agent-events</strong></td><td>OpenClaw Bridge</td><td>Orchestrator, Dashboard API</td></tr>
+    <tr><td><strong>stream:position-updates</strong></td><td>Execution Service, Monitoring Agents</td><td>Dashboard API, Global Monitor</td></tr>
+    <tr><td><strong>stream:heartbeats</strong></td><td>OpenClaw Bridge</td><td>Dashboard API</td></tr>
+    <tr><td><strong>stream:agent-messages</strong></td><td>Agent Communication Router</td><td>Target OpenClaw Bridge</td></tr>
+    <tr><td><strong>stream:backtest-progress</strong></td><td>Backtest Runner</td><td>Dashboard API</td></tr>
+    <tr><td><strong>stream:connector-events</strong></td><td>Connector Manager</td><td>Dashboard, OpenClaw Agents</td></tr>
+    <tr><td><strong>stream:dev-agent-events</strong></td><td>Dev Agent</td><td>Dashboard API</td></tr>
+    <tr><td><strong>stream:automation-triggers</strong></td><td>Automation Scheduler</td><td>Orchestrator</td></tr>
+    <tr><td><strong>stream:alerts</strong></td><td>Global Monitor, Dev Agent</td><td>Dashboard API, Notifications</td></tr>
+  </tbody>
+</table>
+
+<h3>Database Architecture</h3>
+<h4>PostgreSQL 16 Tables (18)</h4>
+<p><code>users</code>, <code>trading_accounts</code>, <code>openclaw_instances</code>, <code>agents</code>, <code>agent_backtests</code>, <code>skills</code>, <code>agent_skills</code>, <code>trade_intents</code>, <code>positions</code>, <code>connectors</code>, <code>connector_agents</code>, <code>api_key_entries</code>, <code>tasks</code>, <code>automations</code>, <code>dev_incidents</code>, <code>agent_messages</code>, <code>agent_logs</code>, <code>audit_log</code></p>
+
+<h4>TimescaleDB Hypertables (3)</h4>
+<p><code>market_bars</code> (OHLCV time-series), <code>performance_metrics</code> (agent/strategy metrics), <code>agent_heartbeats</code> (health monitoring)</p>
+
+<h4>MinIO Buckets (5)</h4>
+<p><code>phoenix-backtests</code>, <code>phoenix-skills</code>, <code>phoenix-models</code>, <code>phoenix-code</code>, <code>phoenix-reports</code></p>
+
+<h3>Infrastructure Topology</h3>
+
+<table>
+  <thead>
+    <tr><th>Node</th><th>Role</th><th>Provider</th><th>Spec</th><th>Cost</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Node 1</strong></td><td>Coolify Server (Control Plane)</td><td>Hetzner CX42</td><td>8 vCPU, 16 GB, 160 GB SSD</td><td>~$28/mo</td></tr>
+    <tr><td><strong>Node 2</strong></td><td>OC Instance A: Strategy Lab</td><td>Hetzner CX32</td><td>4 vCPU, 8 GB, 80 GB SSD</td><td>~$14/mo</td></tr>
+    <tr><td><strong>Node 3</strong></td><td>OC Instance B: Data &amp; Research</td><td>Hetzner CX32</td><td>4 vCPU, 8 GB, 80 GB SSD</td><td>~$14/mo</td></tr>
+    <tr><td><strong>Node 4</strong></td><td>OC Instance C+D: Risk + Live</td><td>Hetzner CX42</td><td>8 vCPU, 16 GB, 160 GB SSD</td><td>~$28/mo</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td colspan="3"><strong>Total</strong></td><td><strong>24 vCPU, 48 GB RAM</strong></td><td class="accent"><strong>~$84/mo</strong></td></tr>
+  </tfoot>
+</table>
+
+<p>All nodes connected via <strong>WireGuard VPN</strong> in hub-and-spoke topology. Public ports limited to 22, 80, 443, 51820 on Coolify; only 22 and 51820 on OpenClaw nodes.</p>
+
+<h3>Security</h3>
+<ul>
+  <li><strong>Authentication:</strong> JWT tokens (60-min access, 7-day refresh) with MFA (TOTP) and email verification</li>
+  <li><strong>Authorization:</strong> RBAC with 5 roles and 20 granular permissions</li>
+  <li><strong>Credential Management:</strong> Fernet encryption for all API keys; frontend sees masked previews only</li>
+  <li><strong>Network:</strong> WireGuard VPN, firewall rules, TLS/HTTPS via Traefik</li>
+  <li><strong>API Security:</strong> Rate limiting, input validation, CORS, error handling middleware</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- SECTION 4: END-TO-END FLOW                                   -->
+<!-- ============================================================ -->
+
+<h2 id="section4"><span class="section-num">04</span> End-to-End Flow — Signal to Execution</h2>
+
+<h3>Complete Trade Pipeline</h3>
+<p>This is the step-by-step journey of how a signal becomes a live trade in ProjectPhoenix:</p>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div><strong>Signal Arrives</strong> — A Discord message mentioning a ticker, a tweet from a trader, an Unusual Whales options flow alert, or a Reddit post is detected by the appropriate connector.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div><strong>Ingestion &amp; Normalization</strong> — The Connector Manager receives the raw signal, extracts tickers using NLP (BERT entity extraction), analyzes sentiment, normalizes the data into a standard format, and publishes to the Event Bus via <code>stream:connector-events</code>.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div><strong>Agent Evaluation</strong> — A Strategy Agent in the appropriate OpenClaw instance receives the signal. It applies its backtested strategy, uses LLM reasoning to evaluate the opportunity, checks current market conditions, and decides whether to act.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div><strong>Trade Intent Created</strong> — If the signal passes evaluation, the agent creates a trade intent specifying ticker, direction (buy/sell), quantity, order type, and risk parameters. This is posted to <code>stream:trade-intents</code>.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">5</div>
+  <div><strong>3-Layer Risk Validation</strong> — The trade intent passes through three risk layers:
+    <ul style="margin-top:6px;">
+      <li><strong>Agent Risk:</strong> Per-agent position limits, daily loss limits, ticker concentration</li>
+      <li><strong>Execution Risk:</strong> Per-trade validation, deduplication (unique trade IDs), order sanity checks</li>
+      <li><strong>Global Risk:</strong> Portfolio-level circuit breaker, sector concentration, overall exposure limits</li>
+    </ul>
+    Any layer can reject the trade intent.
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">6</div>
+  <div><strong>Broker Execution</strong> — The Execution Service places the order via the appropriate broker API (Alpaca, IBKR, Robinhood, or Tradier). The operation is idempotent — each trade intent has a unique ID to prevent double-orders.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">7</div>
+  <div><strong>Position Created</strong> — Once the order is filled, a position record is created in the database. A Monitoring Agent is automatically paired with the position to manage exits.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">8</div>
+  <div><strong>Real-Time Dashboard Updates</strong> — Position updates, P&amp;L changes, and status updates are pushed to the dashboard via WebSocket in real-time through <code>stream:position-updates</code>.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">9</div>
+  <div><strong>Position Monitoring</strong> — The paired Monitoring Agent continuously tracks price, checks stop-loss levels, evaluates take-profit targets, and monitors exit conditions. It can close the position independently when criteria are met.</div>
+</div>
+
+<div class="flow-step">
+  <div class="flow-num">10</div>
+  <div><strong>Dev Agent Learning Loop</strong> — After the trade closes, the Dev Agent with reinforcement learning analyzes the outcome, adjusts strategy parameters, re-backtests the improved strategy, and promotes it if it passes the gate criteria again.</div>
+</div>
+
+<h3>Agent Lifecycle State Machine</h3>
+<p>Every agent follows a strict lifecycle with promotion gates and demotion triggers:</p>
+
+<div class="card" style="text-align:center; padding:30px;">
+  <p><strong>Created</strong> &rarr; <strong>Backtesting</strong> (50+ signals) &rarr; <strong>Paper Trading</strong> &rarr; <strong>Live Trading</strong> &rarr; <strong>RL Improvement</strong></p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <h4 style="margin-top:0; color:var(--green);">Promotion Gates</h4>
+    <ul>
+      <li>50+ signals evaluated in backtest</li>
+      <li>Win rate &ge; 45%</li>
+      <li>Profit factor &ge; 1.2</li>
+      <li>Sharpe ratio &ge; 0.5</li>
+      <li>Max drawdown &le; 30%</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4 style="margin-top:0; color:var(--red);">Demotion Triggers</h4>
+    <ul>
+      <li>Daily loss limit breached (-5%)</li>
+      <li>Error rate &gt; 5% in 5 minutes</li>
+      <li>Agent heartbeat lost for 2+ minutes</li>
+      <li>Circuit breaker tripped</li>
+      <li>Manual kill switch activated</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Self-Improvement Loop</h3>
+<p>The Dev Agent operates as the platform's CTO, continuously improving the system:</p>
+<ol>
+  <li><strong>Monitor:</strong> Watches all agent performance metrics, trade outcomes, and error rates in real-time</li>
+  <li><strong>Detect:</strong> Identifies underperforming agents, strategy drift, and system errors using statistical analysis</li>
+  <li><strong>Fix &amp; Tune:</strong> Adjusts strategy parameters, fixes code issues, and optimizes agent configurations</li>
+  <li><strong>Re-Backtest:</strong> Runs the improved strategy through the full backtesting engine to validate changes</li>
+  <li><strong>Re-Deploy:</strong> If the improved strategy passes all gate criteria, promotes it back to live trading</li>
+</ol>
+<p>This creates a <strong>continuous improvement cycle</strong> where agents evolve and adapt to changing market conditions autonomously.</p>
+
+<!-- ============================================================ -->
+<!-- SECTION 5: CURRENT STATUS                                    -->
+<!-- ============================================================ -->
+
+<h2 id="section5"><span class="section-num">05</span> Current Status — Milestones &amp; Deliverables</h2>
+
+<h3>Overview</h3>
+
+<div class="stat-grid">
+  <div class="metric-card">
+    <div class="metric-value">42</div>
+    <div class="metric-label">Milestones Complete</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">26</div>
+    <div class="metric-label">Weeks of Development</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">3</div>
+    <div class="metric-label">Phases Delivered</div>
+  </div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+  <div class="metric-card">
+    <div class="metric-value">14</div>
+    <div class="metric-label">Microservices</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">30+</div>
+    <div class="metric-label">API Routes</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">25+</div>
+    <div class="metric-label">Dashboard Pages</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">300</div>
+    <div class="metric-label">Agent Skills</div>
+  </div>
+</div>
+
+<h3>Phase 1: Foundation (Weeks 1-8) <span class="tag tag-done">COMPLETE</span></h3>
+<p>13 milestones establishing the core platform infrastructure, authentication, dashboard, and first integrations.</p>
+<div class="milestone-bar"><div class="milestone-bar-fill" style="width:100%;"></div></div>
+
+<table>
+  <thead><tr><th>Milestone</th><th>Status</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>M1.1</td><td><span class="tag tag-done">Done</span></td><td>Repository scaffolding &amp; CI/CD pipeline</td></tr>
+    <tr><td>M1.2</td><td><span class="tag tag-done">Done</span></td><td>Infrastructure provisioning (Coolify, VPS, WireGuard, PostgreSQL, Redis, MinIO)</td></tr>
+    <tr><td>M1.3</td><td><span class="tag tag-done">Done</span></td><td>Auth service migration &amp; API gateway (JWT, MFA, RBAC)</td></tr>
+    <tr><td>M1.4</td><td><span class="tag tag-done">Done</span></td><td>Dashboard shell &amp; navigation (12 tabs)</td></tr>
+    <tr><td>M1.5</td><td><span class="tag tag-done">Done</span></td><td>UI component library (Radix UI + Tailwind)</td></tr>
+    <tr><td>M1.6</td><td><span class="tag tag-done">Done</span></td><td>Database schema &amp; Alembic migrations</td></tr>
+    <tr><td>M1.7</td><td><span class="tag tag-done">Done</span></td><td>OpenClaw Bridge Service (agent CRUD, heartbeat, skill sync)</td></tr>
+    <tr><td>M1.8</td><td><span class="tag tag-done">Done</span></td><td>First OpenClaw instance setup</td></tr>
+    <tr><td>M1.9</td><td><span class="tag tag-done">Done</span></td><td>Connector framework core (Discord, Alpaca)</td></tr>
+    <tr><td>M1.10</td><td><span class="tag tag-done">Done</span></td><td>Trades tab &amp; Positions tab</td></tr>
+    <tr><td>M1.11</td><td><span class="tag tag-done">Done</span></td><td>Basic agent CRUD operations</td></tr>
+    <tr><td>M1.12</td><td><span class="tag tag-done">Done</span></td><td>Execution Service &amp; risk checks</td></tr>
+    <tr><td>M1.13</td><td><span class="tag tag-done">Done</span></td><td>Mobile responsive foundation</td></tr>
+  </tbody>
+</table>
+
+<h3>Phase 2: Intelligence (Weeks 9-18) <span class="tag tag-done">COMPLETE</span></h3>
+<p>15 milestones building the AI intelligence layer — skills, backtesting, agent lifecycle, strategies, and monitoring.</p>
+<div class="milestone-bar"><div class="milestone-bar-fill" style="width:100%;"></div></div>
+
+<table>
+  <thead><tr><th>Milestone</th><th>Status</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>M2.1</td><td><span class="tag tag-done">Done</span></td><td>Core skill catalog (30 skills)</td></tr>
+    <tr><td>M2.2</td><td><span class="tag tag-done">Done</span></td><td>Skill sync service (MinIO distribution)</td></tr>
+    <tr><td>M2.3</td><td><span class="tag tag-done">Done</span></td><td>Backtesting engine (signal-driven, walk-forward, 15 metrics)</td></tr>
+    <tr><td>M2.4</td><td><span class="tag tag-done">Done</span></td><td>Agent lifecycle state machine</td></tr>
+    <tr><td>M2.5</td><td><span class="tag tag-done">Done</span></td><td>Trading agent architecture</td></tr>
+    <tr><td>M2.6</td><td><span class="tag tag-done">Done</span></td><td>Strategy agent architecture (15 templates)</td></tr>
+    <tr><td>M2.7</td><td><span class="tag tag-done">Done</span></td><td>Performance tab</td></tr>
+    <tr><td>M2.8</td><td><span class="tag tag-done">Done</span></td><td>All connectors (Reddit, Twitter/X, Unusual Whales, IBKR, Robinhood, Tradier)</td></tr>
+    <tr><td>M2.9</td><td><span class="tag tag-done">Done</span></td><td>Skills &amp; agent config tab</td></tr>
+    <tr><td>M2.10</td><td><span class="tag tag-done">Done</span></td><td>Agent-to-agent communication (pub/sub, broadcast, consensus)</td></tr>
+    <tr><td>M2.11</td><td><span class="tag tag-done">Done</span></td><td>Additional broker connectors</td></tr>
+    <tr><td>M2.12</td><td><span class="tag tag-done">Done</span></td><td>Market Command Center migration</td></tr>
+    <tr><td>M2.13</td><td><span class="tag tag-done">Done</span></td><td>Position monitoring system</td></tr>
+    <tr><td>M2.14</td><td><span class="tag tag-done">Done</span></td><td>Global Position Monitor &amp; circuit breaker</td></tr>
+    <tr><td>M2.15</td><td><span class="tag tag-done">Done</span></td><td>Remaining 85 skills (115 total)</td></tr>
+  </tbody>
+</table>
+
+<h3>Phase 3: Advanced (Weeks 19-26) <span class="tag tag-done">COMPLETE</span></h3>
+<p>14 milestones delivering advanced capabilities — Dev Agent, RL, automations, PWA, and production hardening.</p>
+<div class="milestone-bar"><div class="milestone-bar-fill" style="width:100%;"></div></div>
+
+<table>
+  <thead><tr><th>Milestone</th><th>Status</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>M3.1</td><td><span class="tag tag-done">Done</span></td><td>Dev Agent</td></tr>
+    <tr><td>M3.2</td><td><span class="tag tag-done">Done</span></td><td>Reinforcement learning loop</td></tr>
+    <tr><td>M3.3</td><td><span class="tag tag-done">Done</span></td><td>Dev Dashboard</td></tr>
+    <tr><td>M3.4</td><td><span class="tag tag-done">Done</span></td><td>Task Board &amp; agent roles</td></tr>
+    <tr><td>M3.5</td><td><span class="tag tag-done">Done</span></td><td>Automations (cron + NL parsing)</td></tr>
+    <tr><td>M3.6</td><td><span class="tag tag-done">Done</span></td><td>Bidirectional communication (Telegram, Discord, WhatsApp)</td></tr>
+    <tr><td>M3.7</td><td><span class="tag tag-done">Done</span></td><td>Admin &amp; user management tab</td></tr>
+    <tr><td>M3.8</td><td><span class="tag tag-done">Done</span></td><td>Agent network visualization</td></tr>
+    <tr><td>M3.9</td><td><span class="tag tag-done">Done</span></td><td>Agent code generation &amp; predictive models</td></tr>
+    <tr><td>M3.10</td><td><span class="tag tag-done">Done</span></td><td>Progressive Web App (PWA)</td></tr>
+    <tr><td>M3.11</td><td><span class="tag tag-done">Done</span></td><td>Walk-forward backtesting &amp; strategy optimizer</td></tr>
+    <tr><td>M3.12</td><td><span class="tag tag-done">Done</span></td><td>Observability stack (Prometheus, Grafana, Loki)</td></tr>
+    <tr><td>M3.13</td><td><span class="tag tag-done">Done</span></td><td>Load testing, security hardening &amp; documentation</td></tr>
+    <tr><td>M3.14</td><td><span class="tag tag-done">Done</span></td><td>Production deployment &amp; go-live</td></tr>
+  </tbody>
+</table>
+
+<h3>Technology Stack Summary</h3>
+
+<table>
+  <thead><tr><th>Layer</th><th>Technologies</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Backend</strong></td><td>Python 3.12, FastAPI, Uvicorn, SQLAlchemy (async), Alembic, asyncpg</td></tr>
+    <tr><td><strong>Frontend</strong></td><td>React 18, TypeScript, Vite 5, Tailwind CSS, Radix UI, TanStack Query, Recharts</td></tr>
+    <tr><td><strong>Database</strong></td><td>PostgreSQL 16 + TimescaleDB, Redis 7, MinIO (S3-compatible)</td></tr>
+    <tr><td><strong>Messaging</strong></td><td>Redis Streams, BullMQ, WebSocket, Pub/Sub</td></tr>
+    <tr><td><strong>AI / LLM</strong></td><td>Ollama (self-hosted), LLM Gateway, NLP Pipeline (BERT), Reinforcement Learning</td></tr>
+    <tr><td><strong>Observability</strong></td><td>Prometheus, Grafana (7 dashboards), Loki, Promtail</td></tr>
+    <tr><td><strong>Deployment</strong></td><td>Docker + Compose, Coolify, Hetzner VPS, WireGuard VPN, Nginx, Traefik</td></tr>
+    <tr><td><strong>Testing</strong></td><td>pytest, Playwright (E2E), Locust (load), Vitest (frontend), ruff, mypy</td></tr>
+    <tr><td><strong>Brokers</strong></td><td>Alpaca, Interactive Brokers, Robinhood, Tradier</td></tr>
+  </tbody>
+</table>
+
+<h3>Test Coverage</h3>
+<ul>
+  <li><strong>Unit Tests:</strong> 30+ tests covering shared models, services, circuit breaker, dedup, NLP, metrics</li>
+  <li><strong>Regression Tests:</strong> 9 suites covering auth, connectors, heartbeat, event bus, skill sync, backtest, execution, agent lifecycle, infrastructure</li>
+  <li><strong>E2E Tests (Playwright):</strong> 15 test files covering login flow, navigation, mobile responsive, agents, trades, positions, skills, connectors, market, settings, admin</li>
+  <li><strong>Load Tests (Locust):</strong> WebSocket load testing and API v2 load testing</li>
+  <li><strong>Manual Test Plans:</strong> Documented for UI, integration, and edge cases</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- SECTION 6: FUTURE SCOPE                                      -->
+<!-- ============================================================ -->
+
+<h2 id="section6"><span class="section-num">06</span> Future Scope — Roadmap &amp; Expansion</h2>
+
+<h3>Near-Term Opportunities</h3>
+
+<div class="card-grid">
+  <div class="card" style="border-left:3px solid var(--purple);">
+    <h4 style="margin-top:0; color:var(--purple);">Multi-Tenant SaaS Platform</h4>
+    <p>Productize Phoenix as a subscription service. Tiered pricing (Starter, Pro, Enterprise) with managed agent hosting, white-label dashboards, and API access for third-party integrations.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--blue);">
+    <h4 style="margin-top:0; color:var(--blue);">Agent Marketplace</h4>
+    <p>Create a marketplace where users can share and sell proven trading strategies. Top-performing agents generate passive income for creators through revenue sharing. Performance-verified with transparent backtest results.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--green);">
+    <h4 style="margin-top:0; color:var(--green);">Cryptocurrency DEX Execution</h4>
+    <p>Expand from CEX and traditional brokers to decentralized exchanges. DeFi yield farming strategies, on-chain analysis, and cross-chain execution capabilities.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--amber);">
+    <h4 style="margin-top:0; color:var(--amber);">Native Mobile Application</h4>
+    <p>React Native app with push notifications, biometric authentication, and full agent management. Real-time trade alerts and one-tap kill switch from your pocket.</p>
+  </div>
+</div>
+
+<h3>Medium-Term Development</h3>
+
+<div class="card-grid">
+  <div class="card" style="border-left:3px solid var(--red);">
+    <h4 style="margin-top:0; color:var(--red);">High-Frequency Trading</h4>
+    <p>Sub-second latency execution path. Co-located servers near exchange data centers, FPGA-accelerated order routing, and tick-level strategy support for microsecond-sensitive strategies.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--orange);">
+    <h4 style="margin-top:0; color:var(--orange);">Advanced RL Models</h4>
+    <p>Deep reinforcement learning for dynamic position sizing, multi-asset portfolio optimization, market regime detection, and adaptive risk management that evolves with market conditions.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--blue);">
+    <h4 style="margin-top:0; color:var(--blue);">Social Trading Network</h4>
+    <p>Follow top-performing agents with a public leaderboard. Copy-trading functionality, community-driven strategy development, and performance competitions.</p>
+  </div>
+  <div class="card" style="border-left:3px solid var(--green);">
+    <h4 style="margin-top:0; color:var(--green);">Regulatory Compliance Engine</h4>
+    <p>Built-in compliance for SEC, FINRA, MiFID II, and other international jurisdictions. Automated audit trails, trade reporting, and regulatory filing support.</p>
+  </div>
+</div>
+
+<h3>Long-Term Vision</h3>
+<ul>
+  <li><strong>Expanded Broker Ecosystem:</strong> Options chains, futures contracts, forex pairs — with more brokers including Interactive Brokers advanced features, TD Ameritrade, Schwab, and international exchanges</li>
+  <li><strong>Institutional Grade:</strong> FIX protocol support, prime brokerage integrations, institutional-level risk management and reporting</li>
+  <li><strong>AI Agent Ecosystem:</strong> Open plugin system allowing third-party developers to create specialized agents, skills, and connectors</li>
+  <li><strong>Predictive Analytics Platform:</strong> Market prediction models, alternative data integration (satellite imagery, web scraping, sentiment analysis at scale)</li>
+  <li><strong>Autonomous Fund Management:</strong> The end goal — a fully autonomous fund managed by AI agents, with human oversight focused on risk limits and strategic direction rather than individual trades</li>
+</ul>
+
+<div class="highlight" style="margin-top:30px;">
+  <p><strong class="accent">The Phoenix Vision:</strong> Transform autonomous trading from a developer tool into an accessible platform where anyone can deploy proven, backtested AI trading strategies — creating a future where sophisticated trading intelligence is democratized, not gatekept by Wall Street firms.</p>
+</div>
+
+<!-- FOOTER -->
+<div style="text-align:center; margin-top:80px; padding-top:30px; border-top:1px solid var(--border);">
+  <p style="font-size:1.3em;">&#x1F525; Project<span class="accent">Phoenix</span></p>
+  <p style="font-size:0.85em;">The Autonomous AI Trading Firm</p>
+  <p style="font-size:0.8em; color:var(--muted); margin-top:20px;">Comprehensive Report &bull; March 2026</p>
+</div>
+
+</div>
+</body>
+</html>

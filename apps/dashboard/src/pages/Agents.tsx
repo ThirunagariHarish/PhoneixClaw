@@ -1,5 +1,5 @@
 /**
- * Agents page — manage OpenClaw trading agents.
+ * Agents page — manage Claude Code trading agents.
  * FlexCards for agent overview, 6-step creation wizard, detail panel.
  * M1.11.
  */
@@ -34,6 +34,16 @@ interface AgentData {
   instance_id: string
   config: Record<string, unknown>
   created_at: string
+  channel_name?: string
+  analyst_name?: string
+  model_type?: string
+  model_accuracy?: number
+  daily_pnl?: number
+  total_pnl?: number
+  total_trades?: number
+  win_rate?: number
+  last_signal_at?: string
+  last_trade_at?: string
 }
 
 interface AgentStats {
@@ -41,6 +51,7 @@ interface AgentStats {
   running: number
   paused: number
   backtesting: number
+  daily_pnl?: number
 }
 
 interface BacktestData {
@@ -79,7 +90,7 @@ function getStatusConfig(status: string) {
 
 const AGENT_TYPES = [
   { value: 'trading', label: 'Trading Agent' },
-  { value: 'sentiment', label: 'Sentiment Agent' },
+  { value: 'trend', label: 'Trend Agent' },
 ]
 
 const AGENT_SKILLS = [
@@ -101,6 +112,7 @@ interface ConnectorInfo {
   type: string
   status: string
   config: Record<string, unknown>
+  tags: string[]
   is_active: boolean
   last_connected_at: string | null
   error_message: string | null
@@ -169,6 +181,9 @@ interface WizardFormData {
   max_daily_loss_pct: number
   max_position_pct: number
   stop_loss_pct: number
+  smart_hold_enabled: boolean
+  smart_hold_buffer_pct: number
+  source_config: Record<string, unknown>
 }
 
 const DEFAULT_FORM: WizardFormData = {
@@ -182,6 +197,9 @@ const DEFAULT_FORM: WizardFormData = {
   max_daily_loss_pct: 5,
   max_position_pct: 10,
   stop_loss_pct: 2,
+  smart_hold_enabled: false,
+  smart_hold_buffer_pct: 10,
+  source_config: {},
 }
 
 function MiniEquityCurve({ data }: { data: Array<{ equity: number }> }) {
@@ -255,10 +273,12 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
     staleTime: 60_000,
   })
 
+  const isLocked = agent.status === 'BACKTESTING'
+
   return (
     <div
-      className={`group relative rounded-xl border bg-card overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5 cursor-pointer ${sc.borderColor}`}
-      onClick={onSelect}
+      className={`group relative rounded-xl border bg-card overflow-hidden transition-all duration-200 ${isLocked ? 'opacity-80 cursor-not-allowed' : 'hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5 cursor-pointer'} ${sc.borderColor}`}
+      onClick={isLocked ? undefined : onSelect}
     >
       {/* Status strip */}
       <div className={`h-1 w-full ${sc.bgColor}`}>
@@ -309,14 +329,25 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
         {/* BACKTESTING: spinner */}
         {agent.status === 'BACKTESTING' && <BacktestingSpinner />}
 
-        {/* BACKTEST_COMPLETE: metrics preview */}
+        {/* BACKTEST_COMPLETE: rich metrics preview */}
         {agent.status === 'BACKTEST_COMPLETE' && backtest && (
           <div className="space-y-2">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               <MetricPill label="Return" value={`${backtest.total_return?.toFixed(1)}%`} trend={(backtest.total_return ?? 0) >= 0 ? 'up' : 'down'} />
-              <MetricPill label="Win" value={`${((backtest.win_rate ?? 0) * 100).toFixed(0)}%`} trend={(backtest.win_rate ?? 0) >= 0.5 ? 'up' : 'down'} />
+              <MetricPill label="Win Rate" value={`${((backtest.win_rate ?? 0) * 100).toFixed(0)}%`} trend={(backtest.win_rate ?? 0) >= 0.5 ? 'up' : 'down'} />
               <MetricPill label="Sharpe" value={`${backtest.sharpe_ratio?.toFixed(2)}`} trend={(backtest.sharpe_ratio ?? 0) >= 1.0 ? 'up' : 'neutral'} />
+              <MetricPill label="Trades" value={`${backtest.total_trades}`} trend="neutral" />
             </div>
+            {backtest.metrics?.rules && (
+              <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                <Shield className="h-3 w-3" />
+                {(backtest.metrics.rules as unknown[]).length} rules learned
+                {backtest.metrics?.overall_channel_metrics &&
+                  (backtest.metrics.overall_channel_metrics as Record<string, unknown>).best_ticker &&
+                  ` · Top: ${(backtest.metrics.overall_channel_metrics as Record<string, unknown>).best_ticker}`
+                }
+              </div>
+            )}
             {backtest.equity_curve?.length > 0 && <MiniEquityCurve data={backtest.equity_curve} />}
             <Button
               size="sm"
@@ -341,27 +372,55 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
           </Button>
         )}
 
-        {/* RUNNING: live indicator */}
+        {/* RUNNING: live metrics */}
         {agent.status === 'RUNNING' && (
-          <div className="flex items-center gap-2 rounded-md bg-green-500/5 border border-green-500/20 px-2.5 py-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-            </span>
-            <span className="text-[11px] font-medium text-green-700 dark:text-green-400">Active &middot; Live trading</span>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 rounded-md bg-green-500/5 border border-green-500/20 px-2.5 py-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              </span>
+              <span className="text-[11px] font-medium text-green-700 dark:text-green-400">Active &middot; Live trading</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <MetricPill
+                label="P&L"
+                value={agent.daily_pnl != null ? `$${agent.daily_pnl.toFixed(0)}` : '$0'}
+                trend={agent.daily_pnl != null ? (agent.daily_pnl >= 0 ? 'up' : 'down') : 'neutral'}
+              />
+              <MetricPill
+                label="Trades"
+                value={`${agent.total_trades ?? 0}`}
+                trend="neutral"
+              />
+              <MetricPill
+                label="Win Rate"
+                value={agent.win_rate != null ? `${(agent.win_rate * 100).toFixed(0)}%` : '—'}
+                trend={agent.win_rate != null ? (agent.win_rate >= 0.5 ? 'up' : 'down') : 'neutral'}
+              />
+              <MetricPill
+                label="Conf"
+                value={agent.model_accuracy != null ? `${(agent.model_accuracy * 100).toFixed(0)}%` : '—'}
+                trend="neutral"
+              />
+            </div>
           </div>
         )}
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-1 border-t border-border/50">
           <p className="text-[11px] text-muted-foreground">
-            {new Date(agent.created_at).toLocaleDateString()}
+            {agent.channel_name ? `#${agent.channel_name}` : new Date(agent.created_at).toLocaleDateString()}
           </p>
-          {config.data_source && (
+          {agent.last_signal_at ? (
+            <p className="text-[11px] text-muted-foreground truncate max-w-[50%]">
+              Last signal {new Date(agent.last_signal_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          ) : config.data_source ? (
             <p className="text-[11px] text-muted-foreground truncate max-w-[50%]">
               {String(config.data_source)}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -441,7 +500,7 @@ function StepConnectors({ form, onChange, connectors }: {
 
   const allowed = isTrading
     ? connectors.filter((c) => c.type === 'discord')
-    : connectors.filter((c) => ['discord', 'reddit', 'twitter'].includes(c.type))
+    : connectors.filter((c) => ['discord', 'reddit', 'twitter', 'unusual_whales', 'news_api'].includes(c.type))
 
   const selectConnector = (id: string) => {
     if (isTrading) {
@@ -469,7 +528,7 @@ function StepConnectors({ form, onChange, connectors }: {
 
   const description = isTrading
     ? 'Select a Discord connector and one channel to ingest trading signals from.'
-    : 'Select Discord, Reddit, or Twitter connectors for sentiment analysis. You can pick multiple.'
+    : 'Select data sources for trend analysis. Pick multiple connectors — Discord, Reddit, Twitter, Unusual Whales, or News feeds.'
 
   return (
     <div className="space-y-4">
@@ -571,22 +630,57 @@ function StepInstance({ form, onChange, instances }: {
   onChange: (f: Partial<WizardFormData>) => void
   instances: Array<{ id: string; name: string }>
 }) {
+  const useManaged = form.instance_id === '' || form.instance_id === '__managed__'
   return (
     <div className="space-y-4">
-      <div>
-        <Label>OpenClaw Instance</Label>
-        <p className="text-sm text-muted-foreground mb-2">Select the OpenClaw instance this agent will connect to.</p>
-        <Select value={form.instance_id} onValueChange={(v) => onChange({ instance_id: v })}>
-          <SelectTrigger><SelectValue placeholder="Select instance..." /></SelectTrigger>
-          <SelectContent>
-            {instances.map((inst) => (
-              <SelectItem key={inst.id} value={inst.id}>{inst.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <p className="text-sm text-muted-foreground">
+        Choose where this agent runs. Use a managed pipeline (recommended) or connect to a Claude Code VPS instance for advanced agent capabilities.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => onChange({ instance_id: '__managed__' })}
+          className={`flex flex-col items-start gap-2 rounded-lg border p-4 text-left transition-all ${
+            useManaged ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border hover:border-primary/40'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <div className={`h-4 w-4 rounded-full border-2 ${useManaged ? 'border-primary bg-primary' : 'border-muted-foreground/40'}`} />
+            <span className="font-medium text-sm">Managed Pipeline</span>
+          </div>
+          <p className="text-xs text-muted-foreground">Runs on Phoenix backend. No external instance needed.</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ instance_id: instances[0]?.id ?? '' })}
+          className={`flex flex-col items-start gap-2 rounded-lg border p-4 text-left transition-all ${
+            !useManaged && form.instance_id ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border hover:border-primary/40'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <div className={`h-4 w-4 rounded-full border-2 ${!useManaged && form.instance_id ? 'border-primary bg-primary' : 'border-muted-foreground/40'}`} />
+            <span className="font-medium text-sm">Claude Code VPS</span>
+          </div>
+          <p className="text-xs text-muted-foreground">Run on a Claude Code VPS instance for autonomous trading agent capabilities.</p>
+        </button>
       </div>
-      {instances.length === 0 && (
-        <p className="text-sm text-amber-500">No instances available. Create an instance first.</p>
+
+      {!useManaged && (
+        <div>
+          <Label>Select Instance</Label>
+          <Select value={form.instance_id} onValueChange={(v) => onChange({ instance_id: v })}>
+            <SelectTrigger><SelectValue placeholder="Select instance..." /></SelectTrigger>
+            <SelectContent>
+              {instances.map((inst) => (
+                <SelectItem key={inst.id} value={inst.id}>{inst.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {instances.length === 0 && (
+            <p className="text-sm text-amber-500 mt-2">No instances available. Create an instance first or use Managed Pipeline.</p>
+          )}
+        </div>
       )}
     </div>
   )
@@ -708,6 +802,35 @@ function StepRiskConfig({ form, onChange }: { form: WizardFormData; onChange: (f
         step={0.25}
         unit="%"
       />
+
+      <div className="rounded-lg border p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">Smart Hold</p>
+            <p className="text-xs text-muted-foreground">Allow agent to hold beyond target if trade shows continued strength</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.smart_hold_enabled}
+            onClick={() => onChange({ smart_hold_enabled: !form.smart_hold_enabled })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.smart_hold_enabled ? 'bg-primary' : 'bg-muted'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.smart_hold_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        {form.smart_hold_enabled && (
+          <SliderInput
+            label="Hold Buffer"
+            value={form.smart_hold_buffer_pct}
+            onChange={(v) => onChange({ smart_hold_buffer_pct: v })}
+            min={5}
+            max={30}
+            step={1}
+            unit="%"
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -957,6 +1080,67 @@ function BacktestReviewDialog({ agent, open, onOpenChange }: {
   )
 }
 
+function AgentLeaderboard({ agents }: { agents: AgentData[] }) {
+  const ranked = agents
+    .filter((a) => ['RUNNING', 'PAPER', 'BACKTEST_COMPLETE'].includes(a.status))
+    .map((a) => {
+      const cfg = (a.config || {}) as Record<string, unknown>
+      return {
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        status: a.status,
+        totalReturn: typeof cfg.total_return === 'number' ? cfg.total_return : null,
+        winRate: typeof cfg.win_rate === 'number' ? cfg.win_rate : null,
+        sharpe: typeof cfg.sharpe_ratio === 'number' ? cfg.sharpe_ratio : null,
+      }
+    })
+    .sort((a, b) => (b.totalReturn ?? -999) - (a.totalReturn ?? -999))
+    .slice(0, 5)
+
+  if (ranked.length === 0) return null
+
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+        <TrendingUp className="h-4 w-4 text-primary" />
+        Agent Leaderboard
+      </h3>
+      <div className="space-y-2">
+        {ranked.map((a, i) => (
+          <Link to={`/agents/${a.id}`} key={a.id} className="flex items-center gap-3 rounded-lg bg-muted/50 px-3 py-2 hover:bg-muted/80 transition-colors cursor-pointer">
+            <span className={`text-xs font-bold w-5 text-center ${i === 0 ? 'text-yellow-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-amber-600' : 'text-muted-foreground'}`}>
+              #{i + 1}
+            </span>
+            <div className={`h-2 w-2 rounded-full shrink-0 ${a.type === 'trading' ? 'bg-blue-500' : 'bg-purple-500'}`} />
+            <span className="text-sm font-medium flex-1 truncate">{a.name}</span>
+            <div className="flex items-center gap-4 text-xs">
+              {a.totalReturn !== null && (
+                <span className={a.totalReturn >= 0 ? 'text-emerald-500' : 'text-red-500'}>
+                  {a.totalReturn >= 0 ? '+' : ''}{a.totalReturn.toFixed(1)}%
+                </span>
+              )}
+              {a.winRate !== null && (
+                <span className="text-muted-foreground">
+                  {(a.winRate * 100).toFixed(0)}% WR
+                </span>
+              )}
+              {a.sharpe !== null && (
+                <span className="text-muted-foreground">
+                  {a.sharpe.toFixed(2)} SR
+                </span>
+              )}
+            </div>
+            <Badge variant="outline" className="text-[10px]">
+              {a.type}
+            </Badge>
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AgentsPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -1031,6 +1215,9 @@ export default function AgentsPage() {
         max_daily_loss_pct: form.max_daily_loss_pct,
         max_position_pct: form.max_position_pct,
         stop_loss_pct: form.stop_loss_pct,
+        smart_hold_enabled: form.smart_hold_enabled,
+        smart_hold_buffer_pct: form.smart_hold_buffer_pct,
+        source_config: form.source_config,
       }
       if (form.type === 'trading' && form.selected_channel) {
         config.selected_channel = form.selected_channel
@@ -1038,7 +1225,7 @@ export default function AgentsPage() {
       const payload = {
         name: form.name,
         type: form.type,
-        instance_id: form.instance_id,
+        instance_id: form.instance_id === '__managed__' ? '' : form.instance_id,
         description: form.description,
         skills: form.skills,
         connector_ids: form.connector_ids,
@@ -1082,7 +1269,7 @@ export default function AgentsPage() {
         }
         return form.connector_ids.length > 0
       }
-      case 2: return form.instance_id.length > 0
+      case 2: return form.instance_id === '__managed__' || form.instance_id.length > 0
       case 3: return true // skills are optional
       case 4: return true // risk config has defaults
       case 5: return true // review
@@ -1094,7 +1281,7 @@ export default function AgentsPage() {
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <PageHeader icon={Bot} title="Agents" description="Manage OpenClaw trading and monitoring agents" />
+          <PageHeader icon={Bot} title="Agents" description="Manage Claude Code trading and monitoring agents" />
         </div>
         <Dialog
           open={createOpen}
@@ -1152,12 +1339,18 @@ export default function AgentsPage() {
       </div>
 
       {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
           <MetricCard title="Total Agents" value={stats.total} />
           <MetricCard title="Running" value={stats.running} trend="up" />
           <MetricCard title="Paused" value={stats.paused} trend="neutral" />
           <MetricCard title="Backtesting" value={stats.backtesting} />
+          <MetricCard title="P&L Today" value={`$${(stats.daily_pnl ?? 0).toLocaleString()}`} trend={(stats.daily_pnl ?? 0) >= 0 ? 'up' : 'down'} />
         </div>
+      )}
+
+      {/* Leaderboard */}
+      {agents.filter((a) => ['RUNNING', 'PAPER', 'BACKTEST_COMPLETE'].includes(a.status)).length > 0 && (
+        <AgentLeaderboard agents={agents} />
       )}
 
       {isLoading ? (
@@ -1173,19 +1366,64 @@ export default function AgentsPage() {
           <p className="text-sm">Create your first agent to get started</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-          {agents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              onSelect={() => setSelected(agent)}
-              onPause={() => pauseMutation.mutate(agent.id)}
-              onResume={() => resumeMutation.mutate(agent.id)}
-              onReview={() => setReviewAgent(agent)}
-              onPromote={() => promoteMutation.mutate(agent.id)}
-              onDelete={() => deleteMutation.mutate(agent.id)}
-            />
-          ))}
+        <div className="space-y-8">
+          {/* Trading Agents Section */}
+          {(() => {
+            const tradingAgents = agents.filter((a) => a.type === 'trading')
+            if (tradingAgents.length === 0) return null
+            return (
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="h-2 w-2 rounded-full bg-blue-500" />
+                  <h2 className="text-base font-semibold">Trading Agents</h2>
+                  <span className="text-xs text-muted-foreground ml-1">({tradingAgents.length})</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                  {tradingAgents.map((agent) => (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      onSelect={() => agent.status !== 'BACKTESTING' && navigate(`/agents/${agent.id}`)}
+                      onPause={() => pauseMutation.mutate(agent.id)}
+                      onResume={() => resumeMutation.mutate(agent.id)}
+                      onReview={() => setReviewAgent(agent)}
+                      onPromote={() => promoteMutation.mutate(agent.id)}
+                      onDelete={() => deleteMutation.mutate(agent.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Trend Agents Section */}
+          {(() => {
+            const trendAgents = agents.filter((a) => a.type === 'trend' || a.type === 'sentiment')
+            if (trendAgents.length === 0) return null
+            return (
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="h-2 w-2 rounded-full bg-purple-500" />
+                  <h2 className="text-base font-semibold">Trend Agents</h2>
+                  <span className="text-xs text-muted-foreground ml-1">({trendAgents.length})</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                  {trendAgents.map((agent) => (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      onSelect={() => agent.status !== 'BACKTESTING' && navigate(`/agents/${agent.id}`)}
+                      onPause={() => pauseMutation.mutate(agent.id)}
+                      onResume={() => resumeMutation.mutate(agent.id)}
+                      onReview={() => setReviewAgent(agent)}
+                      onPromote={() => promoteMutation.mutate(agent.id)}
+                      onDelete={() => deleteMutation.mutate(agent.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -1203,7 +1441,7 @@ export default function AgentsPage() {
               <span className="text-muted-foreground">Type</span>
               <span className="capitalize">{selected.type}</span>
               <span className="text-muted-foreground">Instance</span>
-              <span className="font-mono text-xs">{selected.instance_id.slice(0, 8)}...</span>
+              <span className="font-mono text-xs">{selected.instance_id ? `${selected.instance_id.slice(0, 8)}...` : 'Managed Pipeline'}</span>
               <span className="text-muted-foreground">Created</span>
               <span>{new Date(selected.created_at).toLocaleString()}</span>
             </div>

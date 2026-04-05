@@ -1,0 +1,24 @@
+{
+    "agent_name": "{{channel_name}} Agent",
+    "channel_name": "{{channel_name}}",
+    "channel_id": "{{channel_id}}",
+    "server_id": "{{server_id}}",
+    "discord_token": "{{discord_token}}",
+    "analyst_name": "{{analyst_name}}",
+    "phoenix_api_url": "{{phoenix_api_url}}",
+    "phoenix_api_key": "{{phoenix_api_key}}",
+    "agent_id": "",
+    "risk_params": {
+        "max_position_size_pct": 5.0,
+        "max_daily_loss_pct": 3.0,
+        "max_concurrent_positions": 3,
+        "confidence_threshold": 0.65,
+        "require_pattern_match": true,
+        "min_pattern_matches": 2
+    },
+    "model_info": {
+        "model_type": "{{model_type}}",
+        "accuracy": 0,
+        "training_date": "{{training_date}}"
+    }
+}

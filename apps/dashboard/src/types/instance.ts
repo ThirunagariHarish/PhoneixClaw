@@ -2,16 +2,19 @@
  * Instance and network types.
  */
 
-export interface OpenClawInstance {
+export interface ClaudeCodeInstance {
   id: string
   name: string
   host: string
-  port: number
+  ssh_port: number
+  ssh_username: string
   role: string
-  status: 'ONLINE' | 'DEGRADED' | 'OFFLINE'
+  status: string
   node_type: 'vps' | 'local'
   capabilities: Record<string, unknown>
-  last_heartbeat_at?: string
+  claude_version: string | null
+  agent_count: number
+  last_heartbeat_at?: string | null
   created_at: string
 }
 

@@ -34,11 +34,14 @@ interface Connector {
   type: string
   status: string
   config: Record<string, unknown>
+  tags: string[]
   is_active: boolean
   last_connected_at: string | null
   error_message: string | null
   created_at: string
 }
+
+const SUGGESTED_TAGS = ['signals', 'news', 'trends', 'options-flow', 'market-data', 'social'] as const
 
 interface GuildInfo {
   guild_id: string
@@ -57,6 +60,7 @@ interface ChannelInfo {
 type PlatformType =
   | 'discord' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
   | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier'
+  | 'yfinance' | 'polygon' | 'alphavantage'
 
 // ─── Platform Metadata ──────────────────────────────────────────────────────
 
@@ -80,6 +84,9 @@ const PLATFORMS: PlatformMeta[] = [
   { type: 'alpaca',          label: 'Alpaca',          description: 'Commission-free stock & options trading', category: 'broker', icon: TrendingUp,    color: 'text-yellow-500',  bgColor: 'bg-yellow-500/10' },
   { type: 'ibkr',            label: 'Interactive Brokers', description: 'Professional multi-asset broker',     category: 'broker', icon: Landmark,      color: 'text-red-500',     bgColor: 'bg-red-500/10' },
   { type: 'tradier',         label: 'Tradier',         description: 'Options-focused broker',                  category: 'broker', icon: BarChart3,     color: 'text-teal-500',    bgColor: 'bg-teal-500/10' },
+  { type: 'yfinance',        label: 'Yahoo Finance',   description: 'Free historical OHLCV and options data',  category: 'data',   icon: TrendingUp,    color: 'text-violet-500',  bgColor: 'bg-violet-500/10' },
+  { type: 'polygon',         label: 'Polygon.io',      description: 'Real-time and historical market data',    category: 'data',   icon: BarChart3,     color: 'text-cyan-500',    bgColor: 'bg-cyan-500/10' },
+  { type: 'alphavantage',    label: 'Alpha Vantage',   description: 'Free stock API with technical indicators', category: 'data',   icon: Activity,      color: 'text-lime-500',    bgColor: 'bg-lime-500/10' },
 ]
 
 function platformMeta(type: string): PlatformMeta {
@@ -107,7 +114,8 @@ function PlatformSelectStep({
   selected: PlatformType | null
   onSelect: (t: PlatformType) => void
 }) {
-  const dataSources = PLATFORMS.filter((p) => p.category === 'data')
+  const dataSources = PLATFORMS.filter((p) => p.category === 'data' && !['yfinance', 'polygon', 'alphavantage'].includes(p.type))
+  const marketData = PLATFORMS.filter((p) => ['yfinance', 'polygon', 'alphavantage'].includes(p.type))
   const brokers = PLATFORMS.filter((p) => p.category === 'broker')
 
   const renderGroup = (title: string, items: PlatformMeta[]) => (
@@ -145,6 +153,7 @@ function PlatformSelectStep({
   return (
     <div className="space-y-4 py-1">
       {renderGroup('Data Sources', dataSources)}
+      {renderGroup('Market Data', marketData)}
       {renderGroup('Brokers', brokers)}
     </div>
   )
@@ -401,6 +410,14 @@ function AddConnectorWizard({
     display_name: '', api_key: '', sandbox: true,
   })
 
+  // Market data connectors
+  const [yfinanceForm, setYfinanceForm] = useState({ display_name: '' })
+  const [polygonForm, setPolygonForm] = useState({ display_name: '', api_key: '' })
+  const [alphaVantageForm, setAlphaVantageForm] = useState({ display_name: '', api_key: '' })
+
+  // Tags (shared across all connectors)
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+
   useEffect(() => {
     if (open) {
       setPlatform(null)
@@ -419,6 +436,10 @@ function AddConnectorWizard({
       setAlpacaForm({ display_name: '', api_key: '', api_secret: '', mode: 'paper' })
       setIbkrForm({ display_name: '', host: '127.0.0.1', port: '7497', client_id: '1' })
       setTradierForm({ display_name: '', api_key: '', sandbox: true })
+      setYfinanceForm({ display_name: '' })
+      setPolygonForm({ display_name: '', api_key: '' })
+      setAlphaVantageForm({ display_name: '', api_key: '' })
+      setSelectedTags([])
     }
   }, [open])
 
@@ -574,7 +595,28 @@ function AddConnectorWizard({
         }
       }
 
-      await api.post('/api/v2/connectors', { name, type, config, credentials })
+      switch (platform) {
+        case 'yfinance': {
+          name = yfinanceForm.display_name
+          config = { provider: 'yahoo_finance' }
+          break
+        }
+        case 'polygon': {
+          name = polygonForm.display_name
+          credentials = { api_key: polygonForm.api_key }
+          config = { provider: 'polygon' }
+          break
+        }
+        case 'alphavantage': {
+          name = alphaVantageForm.display_name
+          credentials = { api_key: alphaVantageForm.api_key }
+          config = { provider: 'alpha_vantage' }
+          break
+        }
+        default: break
+      }
+
+      await api.post('/api/v2/connectors', { name, type, config, credentials, tags: selectedTags })
       onCreated()
       onOpenChange(false)
     } catch (err: unknown) {
@@ -612,6 +654,12 @@ function AddConnectorWizard({
         return !!(ibkrForm.display_name && ibkrForm.host && ibkrForm.port)
       case 'tradier':
         return !!(tradierForm.display_name && tradierForm.api_key)
+      case 'yfinance':
+        return !!yfinanceForm.display_name
+      case 'polygon':
+        return !!(polygonForm.display_name && polygonForm.api_key)
+      case 'alphavantage':
+        return !!(alphaVantageForm.display_name && alphaVantageForm.api_key)
       default:
         return false
     }
@@ -969,6 +1017,78 @@ function AddConnectorWizard({
               </div>
             </div>
           )}
+
+          {/* Yahoo Finance */}
+          {platform === 'yfinance' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={yfinanceForm.display_name} onChange={(e) => setYfinanceForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Yahoo Finance OHLCV" />
+              </div>
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-600 dark:text-emerald-400">
+                Yahoo Finance requires no API key. Provides free historical OHLCV data, options chains, and fundamental data.
+              </div>
+            </div>
+          )}
+
+          {/* Polygon.io */}
+          {platform === 'polygon' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={polygonForm.display_name} onChange={(e) => setPolygonForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Polygon Market Data" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>API Key</Label>
+                <Input type="password" value={polygonForm.api_key} onChange={(e) => setPolygonForm((f) => ({ ...f, api_key: e.target.value }))} placeholder="Your Polygon.io API key" className="font-mono" />
+                <p className="text-xs text-muted-foreground">Get a free key from polygon.io</p>
+              </div>
+            </div>
+          )}
+
+          {/* Alpha Vantage */}
+          {platform === 'alphavantage' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={alphaVantageForm.display_name} onChange={(e) => setAlphaVantageForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Alpha Vantage Indicators" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>API Key</Label>
+                <Input type="password" value={alphaVantageForm.api_key} onChange={(e) => setAlphaVantageForm((f) => ({ ...f, api_key: e.target.value }))} placeholder="Your Alpha Vantage API key" className="font-mono" />
+                <p className="text-xs text-muted-foreground">Get a free key from alphavantage.co</p>
+              </div>
+            </div>
+          )}
+
+          {/* Tags section — shown for all platforms at step 1+ */}
+          {platform && step >= 1 && (
+            <div className="space-y-2 pt-3 border-t mt-3">
+              <Label>Tags</Label>
+              <p className="text-xs text-muted-foreground">Categorize this connector so agents can filter by type</p>
+              <div className="flex flex-wrap gap-1.5">
+                {SUGGESTED_TAGS.map((tag) => {
+                  const active = selectedTags.includes(tag)
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setSelectedTags((prev) =>
+                        active ? prev.filter((t) => t !== tag) : [...prev, tag]
+                      )}
+                      className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                        active
+                          ? 'border-primary bg-primary/10 text-primary font-medium'
+                          : 'border-border text-muted-foreground hover:border-primary/50'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="gap-2">
@@ -1026,6 +1146,12 @@ function connectorSummary(c: Connector): string {
       return `${cfg.host || '127.0.0.1'}:${cfg.port || 7497}`
     case 'tradier':
       return cfg.sandbox ? 'Sandbox' : 'Production'
+    case 'yfinance':
+      return 'Free OHLCV + options data'
+    case 'polygon':
+      return 'Real-time market data'
+    case 'alphavantage':
+      return 'Technical indicators + OHLCV'
     default:
       return c.type
   }
@@ -1165,6 +1291,11 @@ export default function ConnectorsPage() {
                   <Badge variant="outline" className={`text-xs ${meta.color}`}>
                     {meta.label}
                   </Badge>
+                  {(c.tags || []).map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
+                      {tag}
+                    </Badge>
+                  ))}
                 </div>
 
                 {c.last_connected_at && (

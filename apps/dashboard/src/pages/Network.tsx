@@ -1,6 +1,6 @@
 /**
  * Network / Infrastructure page.
- * - Grid of OpenClaw instance cards with live health status.
+ * - Grid of Claude Code instance cards with live health status.
  * - Click an instance to open a full detail dashboard: system health,
  *   agent list, chat, and activity feed panels.
  * - Connection guide for VPS and local deployments.
@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
@@ -25,9 +26,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
   Server, Plus, Pencil, Trash2, Wifi, Activity, Clock, Bot,
   RefreshCw, CheckCircle2, XCircle, AlertTriangle, Copy,
-  Globe, Monitor, HardDrive, Network, BookOpen, Cpu,
+  Globe, Monitor, HardDrive, Network, BookOpen, Cpu, Terminal,
   Loader2, Check, ArrowLeft, Send, MessageSquare, ScrollText,
-  Play, Pause, ChevronDown, ChevronUp, Zap, Timer,
+  Play, Pause, ChevronDown, ChevronUp, Timer,
 } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -36,14 +37,16 @@ interface Instance {
   id: string
   name: string
   host: string
-  port: number
+  ssh_port: number
+  ssh_username: string
   role: string
   status: string
   node_type: string
   capabilities: Record<string, unknown>
+  claude_version: string | null
   last_heartbeat_at: string | null
   created_at: string
-  agent_count?: number
+  agent_count: number
 }
 
 interface Agent {
@@ -80,20 +83,44 @@ interface AgentMessage {
 interface InstanceFormData {
   name: string
   host: string
-  port: number
+  ssh_port: number
+  ssh_username: string
+  ssh_private_key: string
   role: string
   node_type: string
 }
 
 interface VerifyResult {
   reachable: boolean
-  is_openclaw: boolean
-  detail: string
-  metadata: Record<string, unknown>
+  claude_installed: boolean
+  claude_version: string | null
+  python_installed: boolean
+  memory_free_mb: number
+  disk_free: string
 }
 
-const ROLES = ['general', 'strategy-lab', 'data-research', 'risk-promote', 'live-trading']
-const EMPTY_FORM: InstanceFormData = { name: '', host: '', port: 18800, role: 'general', node_type: 'vps' }
+const ROLES = ['general', 'backtesting', 'trading'] as const
+const EMPTY_FORM: InstanceFormData = {
+  name: '',
+  host: '',
+  ssh_port: 22,
+  ssh_username: 'root',
+  ssh_private_key: '',
+  role: 'general',
+  node_type: 'vps',
+}
+
+function instanceToEditForm(inst: Instance): InstanceFormData {
+  return {
+    name: inst.name,
+    host: inst.host,
+    ssh_port: inst.ssh_port,
+    ssh_username: inst.ssh_username,
+    ssh_private_key: '',
+    role: inst.role,
+    node_type: inst.node_type,
+  }
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -152,7 +179,12 @@ function statusConfig(status: string) {
 }
 
 function roleLabel(role: string) {
-  return role.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  const map: Record<string, string> = {
+    general: 'General',
+    backtesting: 'Backtesting',
+    trading: 'Trading',
+  }
+  return map[role] ?? role.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 function nodeTypeLabel(type: string) {
@@ -191,9 +223,15 @@ function InstanceCard({
 }) {
   const sc = statusConfig(instance.status)
   const agents = instance.agent_count ?? 0
-  const hb = instance.capabilities?.last_heartbeat as Record<string, unknown> | undefined
-  const cpuPercent = hb?.cpu_percent as number | undefined
-  const memMb = hb?.memory_usage_mb as number | undefined
+  const caps = instance.capabilities || {}
+  const memTotal = (caps.memory_total_mb as number) || 0
+  const memUsed = (caps.memory_used_mb as number) || 0
+  const cpuCores = (caps.cpu_cores as number) || 0
+  const ramPct = memTotal > 0 ? (memUsed / memTotal) * 100 : 0
+  const versionShort = instance.claude_version
+    ? instance.claude_version.replace(/\s+/g, ' ').slice(0, 28) + (instance.claude_version.length > 28 ? '…' : '')
+    : null
+  const sshLine = `${instance.ssh_username}@${instance.host}:${instance.ssh_port}`
 
   return (
     <div
@@ -210,10 +248,10 @@ function InstanceCard({
           <div>
             <h3 className="font-semibold text-sm text-foreground">{instance.name}</h3>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xs text-muted-foreground font-mono">
-                {instance.host}:{instance.port}
+              <span className="text-xs text-muted-foreground font-mono truncate max-w-[200px]" title={sshLine}>
+                {sshLine}
               </span>
-              <CopyButton text={`${instance.host}:${instance.port}`} />
+              <CopyButton text={sshLine} />
             </div>
           </div>
         </div>
@@ -223,56 +261,70 @@ function InstanceCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <div className="rounded-lg bg-muted/50 border border-border p-3 text-center">
-          <Bot className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        <div className="rounded-lg bg-muted/50 border border-border p-2.5 text-center">
+          <Terminal className="h-3.5 w-3.5 mx-auto mb-1 text-muted-foreground" />
+          <p className="text-[11px] font-semibold text-foreground leading-tight line-clamp-2 min-h-[2rem]" title={instance.claude_version || undefined}>
+            {versionShort || '—'}
+          </p>
+          <p className="text-[9px] text-muted-foreground mt-0.5">Claude Code</p>
+        </div>
+        <div className="rounded-lg bg-muted/50 border border-border p-2.5 text-center">
+          <Bot className="h-3.5 w-3.5 mx-auto mb-1 text-muted-foreground" />
           <p className="text-lg font-bold text-foreground">{agents}</p>
-          <p className="text-[10px] text-muted-foreground">Agents</p>
+          <p className="text-[9px] text-muted-foreground">Agents</p>
         </div>
-        <div className="rounded-lg bg-muted/50 border border-border p-3 text-center">
-          <Clock className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-          <p className="text-sm font-semibold mt-0.5 text-foreground">{timeAgo(instance.last_heartbeat_at)}</p>
-          <p className="text-[10px] text-muted-foreground">Heartbeat</p>
+        <div className="rounded-lg bg-muted/50 border border-border p-2.5 text-center">
+          <Cpu className="h-3.5 w-3.5 mx-auto mb-1 text-muted-foreground" />
+          <p className="text-sm font-bold text-foreground">{cpuCores > 0 ? cpuCores : '—'}</p>
+          <p className="text-[9px] text-muted-foreground">CPU cores</p>
         </div>
-        <div className="rounded-lg bg-muted/50 border border-border p-3 text-center">
-          {instance.node_type === 'vps'
-            ? <Globe className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-            : <Monitor className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
-          }
-          <p className="text-sm font-semibold mt-0.5 text-foreground">{nodeTypeLabel(instance.node_type)}</p>
-          <p className="text-[10px] text-muted-foreground">Type</p>
+        <div className="rounded-lg bg-muted/50 border border-border p-2.5 text-center">
+          <HardDrive className="h-3.5 w-3.5 mx-auto mb-1 text-muted-foreground" />
+          <p className="text-[11px] font-semibold text-foreground leading-tight">
+            {memTotal > 0 ? `${memUsed} / ${memTotal} MB` : '—'}
+          </p>
+          <p className="text-[9px] text-muted-foreground">RAM</p>
         </div>
       </div>
 
-      {(cpuPercent != null || memMb != null) && (
+      {(cpuCores > 0 || memTotal > 0) && (
         <div className="flex gap-3 mb-4">
-          {cpuPercent != null && (
+          {cpuCores > 0 && (
             <div className="flex-1">
               <div className="flex items-center justify-between text-xs mb-1">
                 <span className="text-muted-foreground flex items-center gap-1"><Cpu className="h-3 w-3" /> CPU</span>
-                <span className="font-medium text-foreground">{cpuPercent.toFixed(1)}%</span>
+                <span className="font-medium text-foreground">{cpuCores} cores</span>
               </div>
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${cpuPercent > 80 ? 'bg-red-500' : cpuPercent > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${Math.min(cpuPercent, 100)}%` }}
-                />
+                <div className="h-full rounded-full bg-emerald-500 transition-all w-full" />
               </div>
             </div>
           )}
-          {memMb != null && (
+          {memTotal > 0 && (
             <div className="flex-1">
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="text-muted-foreground flex items-center gap-1"><HardDrive className="h-3 w-3" /> Mem</span>
-                <span className="font-medium text-foreground">{memMb.toFixed(0)} MB</span>
+                <span className="text-muted-foreground flex items-center gap-1"><HardDrive className="h-3 w-3" /> RAM use</span>
+                <span className="font-medium text-foreground">{ramPct.toFixed(0)}%</span>
               </div>
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${Math.min((memMb / 2048) * 100, 100)}%` }} />
+                <div
+                  className={`h-full rounded-full transition-all ${ramPct > 85 ? 'bg-red-500' : ramPct > 65 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                  style={{ width: `${Math.min(ramPct, 100)}%` }}
+                />
               </div>
             </div>
           )}
         </div>
       )}
+
+      <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-3">
+        <Clock className="h-3 w-3 shrink-0" />
+        <span>Heartbeat {timeAgo(instance.last_heartbeat_at)}</span>
+        <span className="text-border">·</span>
+        {instance.node_type === 'vps' ? <Globe className="h-3 w-3 shrink-0" /> : <Monitor className="h-3 w-3 shrink-0" />}
+        <span>{nodeTypeLabel(instance.node_type)}</span>
+      </div>
 
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground capitalize">{roleLabel(instance.role)}</span>
@@ -295,9 +347,14 @@ function InstanceCard({
 // ─── Add Instance Dialog ───────────────────────────────────────────────────
 
 function AddInstanceDialog({
-  open, onOpenChange, initial, onSubmit, title,
+  open, onOpenChange, initial, onSubmit, title, mode = 'create',
 }: {
-  open: boolean; onOpenChange: (v: boolean) => void; initial: InstanceFormData; onSubmit: (data: InstanceFormData) => Promise<void>; title: string
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  initial: InstanceFormData
+  onSubmit: (data: InstanceFormData) => Promise<void>
+  title: string
+  mode?: 'create' | 'edit'
 }) {
   const [form, setForm] = useState<InstanceFormData>(initial)
   const [saving, setSaving] = useState(false)
@@ -309,74 +366,173 @@ function AddInstanceDialog({
 
   const handleVerify = async () => {
     if (!form.host.trim()) { setError('Host is required to verify'); return }
+    if (!form.ssh_private_key.trim() || form.ssh_private_key.length < 10) {
+      setError('Paste a valid SSH private key (PEM) to verify.')
+      return
+    }
     setVerifying(true); setVerifyResult(null); setError('')
     try {
-      const res = await api.post('/api/v2/instances/verify', { host: form.host, port: form.port })
-      setVerifyResult(res.data)
+      const res = await api.post('/api/v2/instances/verify', {
+        host: form.host.trim(),
+        ssh_port: form.ssh_port,
+        ssh_username: form.ssh_username.trim() || 'root',
+        ssh_private_key: form.ssh_private_key,
+      })
+      setVerifyResult(res.data as VerifyResult)
     } catch {
-      setVerifyResult({ reachable: false, is_openclaw: false, detail: 'Verification request failed', metadata: {} })
+      setVerifyResult({
+        reachable: false,
+        claude_installed: false,
+        claude_version: null,
+        python_installed: false,
+        memory_free_mb: 0,
+        disk_free: '',
+      })
+      setError('Verification request failed.')
     } finally { setVerifying(false) }
   }
 
   const handleSave = async () => {
-    if (!form.name.trim() || !form.host.trim()) { setError('Name and Host are required.'); return }
+    if (!form.name.trim() || !form.host.trim()) { setError('Name and host are required.'); return }
+    if (mode === 'create') {
+      if (!form.ssh_private_key.trim() || form.ssh_private_key.length < 10) {
+        setError('SSH private key is required (min 10 characters).')
+        return
+      }
+    }
     setSaving(true); setError('')
     try { await onSubmit(form); onOpenChange(false) } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Save failed') } finally { setSaving(false) }
   }
 
+  const verifyDetail = verifyResult && [
+    verifyResult.claude_version ? `Claude Code: ${verifyResult.claude_version}` : null,
+    verifyResult.python_installed ? 'Python: OK' : null,
+    verifyResult.memory_free_mb ? `Free RAM: ~${verifyResult.memory_free_mb} MB` : null,
+    verifyResult.disk_free ? `Disk free: ${verifyResult.disk_free}` : null,
+  ].filter(Boolean).join(' · ')
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>Connect an OpenClaw runtime instance running on your VPS or local machine.</DialogDescription>
+          <DialogDescription>
+            {mode === 'create'
+              ? 'Register a host reachable by SSH. The API uses your key to run Claude Code and agent commands on the instance.'
+              : 'Update the display name or role. SSH connection settings are unchanged; remove and re-add the instance to rotate keys.'}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="inst-name">Instance Name</Label>
             <Input id="inst-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g., prod-trading-1" />
           </div>
+
           <div className="space-y-1.5">
-            <Label>Connection</Label>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <Input value={form.host} onChange={(e) => { setForm((f) => ({ ...f, host: e.target.value })); setVerifyResult(null) }} placeholder="IP or hostname" />
-              </div>
-              <div className="w-24">
-                <Input type="number" value={form.port} onChange={(e) => { setForm((f) => ({ ...f, port: Number(e.target.value) || 18800 })); setVerifyResult(null) }} />
-              </div>
-              <Button variant="outline" size="sm" className="shrink-0" onClick={handleVerify} disabled={verifying || !form.host.trim()}>
-                {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
-                <span className="ml-1.5">Verify</span>
-              </Button>
+            <Label>SSH host</Label>
+            <Input
+              value={form.host}
+              disabled={mode === 'edit'}
+              onChange={(e) => { setForm((f) => ({ ...f, host: e.target.value })); setVerifyResult(null) }}
+              placeholder="IP or hostname"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="ssh-port">SSH port</Label>
+              <Input
+                id="ssh-port"
+                type="number"
+                disabled={mode === 'edit'}
+                value={form.ssh_port}
+                onChange={(e) => { setForm((f) => ({ ...f, ssh_port: Number(e.target.value) || 22 })); setVerifyResult(null) }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ssh-user">SSH username</Label>
+              <Input
+                id="ssh-user"
+                disabled={mode === 'edit'}
+                value={form.ssh_username}
+                onChange={(e) => { setForm((f) => ({ ...f, ssh_username: e.target.value })); setVerifyResult(null) }}
+                placeholder="root"
+                className="font-mono"
+              />
             </div>
           </div>
-          {verifyResult && (
+
+          {mode === 'create' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="ssh-key">SSH private key</Label>
+              <Textarea
+                id="ssh-key"
+                value={form.ssh_private_key}
+                onChange={(e) => { setForm((f) => ({ ...f, ssh_private_key: e.target.value })); setVerifyResult(null) }}
+                placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
+                className="font-mono text-xs min-h-[120px]"
+                spellCheck={false}
+              />
+              <p className="text-xs text-muted-foreground">Stored encrypted server-side. Never committed to git.</p>
+            </div>
+          )}
+
+          {mode === 'create' && (
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={handleVerify}
+                disabled={verifying || !form.host.trim() || form.ssh_private_key.length < 10}
+              >
+                {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
+                <span className="ml-1.5">Verify SSH / Claude Code</span>
+              </Button>
+            </div>
+          )}
+
+          {verifyResult && mode === 'create' && (
             <div className={`rounded-lg border p-3 text-sm ${
-              verifyResult.is_openclaw ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                : verifyResult.reachable ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+              verifyResult.claude_installed
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                : verifyResult.reachable
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
                   : 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400'
             }`}>
               <div className="flex items-center gap-2">
-                {verifyResult.is_openclaw ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : verifyResult.reachable ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
+                {verifyResult.claude_installed ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : verifyResult.reachable ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
                 <span className="font-medium">
-                  {verifyResult.is_openclaw ? 'OpenClaw instance detected!' : verifyResult.reachable ? 'Host reachable but not confirmed as OpenClaw' : 'Cannot reach host'}
+                  {verifyResult.claude_installed
+                    ? 'Claude Code detected on host'
+                    : verifyResult.reachable
+                      ? 'SSH OK — Claude Code not detected (install CLI on the host)'
+                      : 'Cannot reach host over SSH'}
                 </span>
               </div>
-              <p className="text-xs mt-1 opacity-80">{verifyResult.detail}</p>
+              {verifyDetail ? <p className="text-xs mt-1 opacity-80">{verifyDetail}</p> : null}
             </div>
           )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Role</Label>
               <Select value={form.role} onValueChange={(v) => setForm((f) => ({ ...f, role: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{ROLES.map((r) => <SelectItem key={r} value={r}><span className="capitalize">{r.replace('-', ' ')}</span></SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Node Type</Label>
-              <Select value={form.node_type} onValueChange={(v) => setForm((f) => ({ ...f, node_type: v }))}>
+              <Select
+                value={form.node_type}
+                onValueChange={(v) => setForm((f) => ({ ...f, node_type: v }))}
+                disabled={mode === 'edit'}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="vps">Cloud VPS</SelectItem>
@@ -390,7 +546,7 @@ function AddInstanceDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} disabled={saving}>
-            {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Connecting...</> : <><Plus className="h-4 w-4 mr-1.5" /> Add Instance</>}
+            {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : mode === 'edit' ? <><Pencil className="h-4 w-4 mr-1.5" /> Save</> : <><Plus className="h-4 w-4 mr-1.5" /> Add Instance</>}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -430,8 +586,8 @@ function ConnectionGuide() {
       <div className="flex items-center gap-3 mb-2">
         <div className="p-2 rounded-lg bg-primary/10 border border-primary/20"><BookOpen className="h-5 w-5 text-primary" /></div>
         <div>
-          <h3 className="text-base font-semibold text-foreground">How to Connect OpenClaw Instances</h3>
-          <p className="text-xs text-muted-foreground">Step-by-step guide for VPS and local deployments</p>
+          <h3 className="text-base font-semibold text-foreground">How to Connect Claude Code Instances</h3>
+          <p className="text-xs text-muted-foreground">SSH access, Claude Code CLI, and registration in Phoenix</p>
         </div>
       </div>
 
@@ -443,30 +599,28 @@ function ConnectionGuide() {
 
         <TabsContent value="vps" className="space-y-4 mt-4">
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={1} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">SSH into your VPS</h4><p className="text-xs text-muted-foreground mb-3">Connect to your server using SSH. Make sure Docker is installed.</p><CodeBlock code="ssh root@your-vps-ip" title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">SSH into your VPS</h4><p className="text-xs text-muted-foreground mb-3">Use a user with sufficient permissions (often <code className="px-1 py-0.5 bg-muted rounded text-[11px]">root</code> or a sudo-capable account). Generate a dedicated key pair for Phoenix and authorize the public key in <code className="px-1 py-0.5 bg-muted rounded text-[11px]">authorized_keys</code>.</p><CodeBlock code="ssh -i ~/.ssh/phoenix_deploy root@your-vps-ip" title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={2} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Install Docker (if not already installed)</h4><p className="text-xs text-muted-foreground mb-3">OpenClaw runs as a Docker container. If you&apos;re using Hostinger VPS, Docker is pre-installed via the Docker Manager.</p><CodeBlock code={`# Ubuntu/Debian\ncurl -fsSL https://get.docker.com | sh\nsudo usermod -aG docker $USER\n\n# Or use your VPS provider's Docker manager (Hostinger, DigitalOcean, etc.)`} title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Install Claude Code on the host</h4><p className="text-xs text-muted-foreground mb-3">Install the official Claude Code CLI on the server so health checks can run <code className="px-1 py-0.5 bg-muted rounded text-[11px]">claude --version</code>. Follow the current install steps from Anthropic for Linux.</p><CodeBlock code={`# Example — use the installer from Anthropic’s docs for your OS\ncurl -fsSL https://claude.ai/install.sh | bash\n# Then confirm:\nclaude --version`} title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={3} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Deploy the OpenClaw container</h4><p className="text-xs text-muted-foreground mb-3">Pull and run the OpenClaw Docker image. The default port is 18800.</p><CodeBlock code={`# Using Docker Compose (recommended)\nmkdir openclaw && cd openclaw\n\ncat > docker-compose.yml << 'EOF'\nversion: '3.8'\nservices:\n  openclaw:\n    image: openclaw/runtime:latest\n    container_name: openclaw-node\n    ports:\n      - "18800:18800"\n    environment:\n      - OPENCLAW_NODE_NAME=my-vps-node\n      - OPENCLAW_API_KEY=\${OPENCLAW_API_KEY}\n    volumes:\n      - openclaw_data:/data\n    restart: unless-stopped\n    healthcheck:\n      test: ["CMD", "curl", "-f", "http://localhost:18800/health"]\n      interval: 30s\n      timeout: 10s\n      retries: 3\n\nvolumes:\n  openclaw_data:\nEOF\n\ndocker compose up -d`} title="docker-compose.yml" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Ensure Python 3 is available</h4><p className="text-xs text-muted-foreground mb-3">Agents and tooling expect <code className="px-1 py-0.5 bg-muted rounded text-[11px]">python3</code> on the PATH.</p><CodeBlock code="python3 --version" title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={4} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Open firewall port</h4><p className="text-xs text-muted-foreground mb-3">Ensure port 18800 is accessible from this dashboard&apos;s server.</p><CodeBlock code={`# UFW (Ubuntu)\nsudo ufw allow 18800/tcp\n\n# Or configure via your VPS provider's firewall panel\n# Hostinger: VPS → Firewall → Add rule → Port 18800 TCP`} title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Network: SSH from the API server</h4><p className="text-xs text-muted-foreground mb-3">The Phoenix API must reach your host on the SSH port (default 22). Allow that port in your cloud firewall / security group — no separate HTTP agent port is required.</p><CodeBlock code={`# UFW (Ubuntu) — example\nsudo ufw allow 22/tcp`} title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><DoneCircle /></div>
-            <div className="flex-1"><h4 className="font-medium text-sm text-foreground mb-1">Add the instance in Phoenix Claw</h4><p className="text-xs text-muted-foreground mb-3">Click &quot;Add Instance&quot; above, enter your VPS IP address and port 18800. Use the &quot;Verify&quot; button to confirm connectivity before saving.</p>
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400"><strong>Tip:</strong> The verify button will ping the health endpoint to confirm it&apos;s a real OpenClaw instance before you add it.</div></div></div>
+            <div className="flex-1"><h4 className="font-medium text-sm text-foreground mb-1">Register the instance</h4><p className="text-xs text-muted-foreground mb-3">Click &quot;Add Instance&quot;, enter host, SSH port, username, and paste the <strong>private</strong> key. Use &quot;Verify SSH / Claude Code&quot; before saving.</p>
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400"><strong>Tip:</strong> Verification opens an SSH session, checks Claude Code and Python, and reports memory and disk — without persisting the instance.</div></div></div>
         </TabsContent>
 
         <TabsContent value="local" className="space-y-4 mt-4">
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={1} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Install Docker Desktop</h4><p className="text-xs text-muted-foreground mb-3">Download and install Docker Desktop for your OS.</p><CodeBlock code={`# macOS (using Homebrew)\nbrew install --cask docker\n\n# Windows: Download from https://docker.com/products/docker-desktop\n# Linux: curl -fsSL https://get.docker.com | sh`} title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Enable SSH on your machine</h4><p className="text-xs text-muted-foreground mb-3">macOS: System Settings → General → Sharing → Remote Login. Linux: install and start <code className="px-1 py-0.5 bg-muted rounded text-[11px]">openssh-server</code>. Use a dedicated key for Phoenix.</p><CodeBlock code={`# macOS: enable Remote Login in GUI, then:\nssh $(whoami)@localhost`} title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={2} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Run OpenClaw locally</h4><p className="text-xs text-muted-foreground mb-3">Start the OpenClaw runtime on your machine.</p><CodeBlock code={`docker run -d \\\\\n  --name openclaw-local \\\\\n  -p 18800:18800 \\\\\n  -e OPENCLAW_NODE_NAME=my-local-node \\\\\n  -v openclaw_data:/data \\\\\n  --restart unless-stopped \\\\\n  openclaw/runtime:latest`} title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Install Claude Code locally</h4><p className="text-xs text-muted-foreground mb-3">Install the Claude Code CLI for your OS and confirm it in a terminal.</p><CodeBlock code="claude --version" title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={3} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Verify it&apos;s running</h4><p className="text-xs text-muted-foreground mb-3">Check that the health endpoint responds.</p><CodeBlock code={`curl http://localhost:18800/health\n# Expected: {"status":"ok","version":"x.x.x"}`} title="Terminal" /></div></div>
-          <div className="flex gap-4"><div className="flex flex-col items-center"><StepCircle n={4} /><StepLine /></div>
-            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Expose for remote access (optional)</h4><p className="text-xs text-muted-foreground mb-3">If your dashboard runs on a different machine, you need to expose the port or use a tunnel.</p><CodeBlock code={`# Option A: Use your local IP (same network)\n# Find IP: ifconfig | grep inet  (macOS/Linux)\n# Then add instance with your-local-ip:18800\n\n# Option B: Use ngrok for remote access\nngrok http 18800\n# Use the ngrok URL as the host`} title="Terminal" /></div></div>
+            <div className="flex-1 pb-6"><h4 className="font-medium text-sm text-foreground mb-1">Reachable from the API</h4><p className="text-xs text-muted-foreground mb-3">If Phoenix API runs in Docker or another host, <code className="px-1 py-0.5 bg-muted rounded text-[11px]">localhost</code> inside that container is not your Mac. Use your LAN IP or host.docker.internal as appropriate.</p><CodeBlock code={`# Find LAN IP (macOS)\nipconfig getifaddr en0`} title="Terminal" /></div></div>
           <div className="flex gap-4"><div className="flex flex-col items-center"><DoneCircle /></div>
-            <div className="flex-1"><h4 className="font-medium text-sm text-foreground mb-1">Add instance in Phoenix Claw</h4><p className="text-xs text-muted-foreground mb-3">Click &quot;Add Instance,&quot; use <code className="px-1 py-0.5 bg-muted rounded text-[11px]">localhost</code> or your local IP, port 18800. Select &quot;Local Machine&quot; as node type.</p>
-              <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-700 dark:text-blue-400"><strong>Note:</strong> For local instances, make sure the Phoenix API server can reach the OpenClaw port. If both run on the same machine, <code className="px-1 py-0.5 bg-muted rounded">localhost</code> works. Otherwise, use your machine&apos;s LAN IP.</div></div></div>
+            <div className="flex-1"><h4 className="font-medium text-sm text-foreground mb-1">Add instance in Phoenix</h4><p className="text-xs text-muted-foreground mb-3">Use SSH host, port, username, and private key like a remote server. Choose &quot;Local Machine&quot; as node type for labeling.</p>
+              <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-700 dark:text-blue-400"><strong>Note:</strong> Registration always uses SSH from the API process — the same rules apply as a cloud VPS.</div></div></div>
         </TabsContent>
       </Tabs>
     </div>
@@ -483,7 +637,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       </div>
       <h3 className="text-lg font-semibold text-foreground mb-2">No instances connected</h3>
       <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-        Connect your first OpenClaw runtime instance to start deploying and managing trading agents.
+        Connect your first Claude Code instance over SSH to deploy and manage trading agents.
       </p>
       <Button onClick={onAdd}><Plus className="h-4 w-4 mr-2" /> Add Your First Instance</Button>
     </div>
@@ -497,12 +651,12 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 function InstanceDetailView({ instance, onBack }: { instance: Instance; onBack: () => void }) {
   const qc = useQueryClient()
   const sc = statusConfig(instance.status)
-  const hb = instance.capabilities?.last_heartbeat as Record<string, unknown> | undefined
-  const cpuPercent = (hb?.cpu_percent as number) ?? null
-  const memMb = (hb?.memory_usage_mb as number) ?? null
-  const activeTasks = (hb?.active_tasks as number) ?? 0
-  const totalPnl = (hb?.total_pnl as number) ?? 0
-  const agentStatuses = (hb?.agents as Array<Record<string, unknown>>) ?? []
+  const caps = instance.capabilities || {}
+  const memTotal = (caps.memory_total_mb as number) ?? 0
+  const memUsed = (caps.memory_used_mb as number) ?? 0
+  const cpuCores = (caps.cpu_cores as number) ?? 0
+  const memPct = memTotal > 0 ? (memUsed / memTotal) * 100 : null
+  const totalPnl = (caps.total_pnl as number) ?? 0
 
   // ── Fetch agents assigned to this instance ──
   const { data: agents = [] } = useQuery<Agent[]>({
@@ -513,6 +667,11 @@ function InstanceDetailView({ instance, onBack }: { instance: Instance; onBack: 
     },
     refetchInterval: 15000,
   })
+
+  const agentStatuses = useMemo(
+    () => agents.map((a) => ({ name: a.name, status: a.status })),
+    [agents],
+  )
 
   // ── Health check ──
   const [checking, setChecking] = useState(false)
@@ -617,9 +776,9 @@ function InstanceDetailView({ instance, onBack }: { instance: Instance; onBack: 
             </div>
             <div>
               <h2 className="text-lg font-semibold text-foreground">{instance.name}</h2>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-mono">{instance.host}:{instance.port}</span>
-                <CopyButton text={`${instance.host}:${instance.port}`} />
+              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                <span className="font-mono">{instance.ssh_username}@{instance.host}:{instance.ssh_port}</span>
+                <CopyButton text={`${instance.ssh_username}@${instance.host}:${instance.ssh_port}`} />
                 <span>|</span>
                 <span className="capitalize">{roleLabel(instance.role)}</span>
                 <span>|</span>
@@ -657,8 +816,10 @@ function InstanceDetailView({ instance, onBack }: { instance: Instance; onBack: 
               <p className="text-sm font-semibold text-foreground">{timeAgo(instance.last_heartbeat_at)}</p>
             </div>
             <div className="rounded-lg bg-muted/50 border border-border p-3">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1"><Zap className="h-3 w-3" /> Active Tasks</div>
-              <p className="text-sm font-semibold text-foreground">{activeTasks}</p>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1"><Terminal className="h-3 w-3" /> Claude Code</div>
+              <p className="text-sm font-semibold text-foreground truncate" title={instance.claude_version || undefined}>
+                {instance.claude_version || '—'}
+              </p>
             </div>
             <div className="rounded-lg bg-muted/50 border border-border p-3">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1"><Bot className="h-3 w-3" /> Agents</div>
@@ -669,17 +830,19 @@ function InstanceDetailView({ instance, onBack }: { instance: Instance; onBack: 
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="text-muted-foreground flex items-center gap-1"><Cpu className="h-3 w-3" /> CPU Usage</span>
-                <span className="font-medium text-foreground">{cpuPercent != null ? `${cpuPercent.toFixed(1)}%` : 'N/A'}</span>
+                <span className="text-muted-foreground flex items-center gap-1"><Cpu className="h-3 w-3" /> CPU</span>
+                <span className="font-medium text-foreground">{cpuCores > 0 ? `${cpuCores} cores` : 'N/A'}</span>
               </div>
-              <ProgressBar value={cpuPercent ?? 0} max={100} color={cpuPercent != null && cpuPercent > 80 ? 'bg-red-500' : cpuPercent != null && cpuPercent > 50 ? 'bg-amber-500' : 'bg-emerald-500'} />
+              <ProgressBar value={cpuCores > 0 ? 100 : 0} max={100} color="bg-emerald-500" />
             </div>
             <div>
               <div className="flex items-center justify-between text-xs mb-1.5">
                 <span className="text-muted-foreground flex items-center gap-1"><HardDrive className="h-3 w-3" /> Memory</span>
-                <span className="font-medium text-foreground">{memMb != null ? `${memMb.toFixed(0)} MB` : 'N/A'}</span>
+                <span className="font-medium text-foreground">
+                  {memTotal > 0 ? `${memUsed} / ${memTotal} MB` : 'N/A'}
+                </span>
               </div>
-              <ProgressBar value={memMb ?? 0} max={2048} color="bg-blue-500" />
+              <ProgressBar value={memPct ?? 0} max={100} color={memPct != null && memPct > 85 ? 'bg-red-500' : memPct != null && memPct > 65 ? 'bg-amber-500' : 'bg-blue-500'} />
             </div>
           </div>
 
@@ -897,13 +1060,27 @@ export default function NetworkPage() {
   }, [instances])
 
   const createMutation = useMutation({
-    mutationFn: async (data: InstanceFormData) => { const res = await api.post('/api/v2/instances', data); return res.data },
+    mutationFn: async (data: InstanceFormData) => {
+      const res = await api.post('/api/v2/instances', {
+        name: data.name.trim(),
+        host: data.host.trim(),
+        ssh_port: data.ssh_port,
+        ssh_username: data.ssh_username.trim() || 'root',
+        ssh_private_key: data.ssh_private_key,
+        role: data.role,
+        node_type: data.node_type,
+      })
+      return res.data
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['instances'] }),
     onError: (err: unknown) => { throw err instanceof Error ? err : new Error('Create failed') },
   })
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: Partial<InstanceFormData> }) => { const res = await api.patch(`/api/v2/instances/${id}`, data); return res.data },
+    mutationFn: async ({ id, data }: { id: string; data: { name: string; role: string } }) => {
+      const res = await api.patch(`/api/v2/instances/${id}`, { name: data.name.trim(), role: data.role })
+      return res.data
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['instances'] }); setEditInstance(null) },
   })
 
@@ -936,7 +1113,7 @@ export default function NetworkPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <PageHeader icon={Network} title="Infrastructure" description="Manage your OpenClaw runtime instances" />
+        <PageHeader icon={Network} title="Infrastructure" description="Manage Claude Code instances (SSH)" />
         <div className="flex items-center gap-2">
           {instances.length > 0 && (
             <Button variant="outline" size="sm" onClick={handleCheckAll} disabled={checkingAll}>
@@ -1011,17 +1188,19 @@ export default function NetworkPage() {
         </TabsContent>
       </Tabs>
 
-      <AddInstanceDialog open={createOpen} onOpenChange={setCreateOpen} initial={EMPTY_FORM} title="Add OpenClaw Instance" onSubmit={async (data) => { await createMutation.mutateAsync(data) }} />
+      <AddInstanceDialog open={createOpen} onOpenChange={setCreateOpen} initial={EMPTY_FORM} title="Add Claude Code Instance" mode="create" onSubmit={async (data) => { await createMutation.mutateAsync(data) }} />
       {editInstance && (
         <AddInstanceDialog
           open={!!editInstance} onOpenChange={(v) => { if (!v) setEditInstance(null) }}
-          initial={{ name: editInstance.name, host: editInstance.host, port: editInstance.port, role: editInstance.role, node_type: editInstance.node_type }}
-          title={`Edit: ${editInstance.name}`} onSubmit={async (data) => { await updateMutation.mutateAsync({ id: editInstance.id, data }) }}
+          initial={instanceToEditForm(editInstance)}
+          mode="edit"
+          title={`Edit: ${editInstance.name}`}
+          onSubmit={async (data) => { await updateMutation.mutateAsync({ id: editInstance.id, data: { name: data.name, role: data.role } }) }}
         />
       )}
       <ConfirmDialog
         open={!!deleteInstance} onOpenChange={(v) => { if (!v) setDeleteInstance(null) }}
-        title="Remove Instance" description={`Remove "${deleteInstance?.name}" from your infrastructure? This only unregisters it — the actual OpenClaw process keeps running on the host.`}
+        title="Remove Instance" description={`Remove "${deleteInstance?.name}" from your infrastructure? This only unregisters it in Phoenix — the remote host is unchanged.`}
         confirmLabel="Remove" variant="destructive"
         onConfirm={async () => { if (deleteInstance) await deleteMutation.mutateAsync(deleteInstance.id); setDeleteInstance(null) }}
       />
