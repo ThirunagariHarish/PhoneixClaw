@@ -13,7 +13,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
@@ -21,6 +21,7 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 
 COPY shared/ shared/
 COPY apps/api/ apps/api/
+COPY agents/ agents/
 COPY pyproject.toml .
 
 RUN pip install --no-deps -e . 2>/dev/null || true
