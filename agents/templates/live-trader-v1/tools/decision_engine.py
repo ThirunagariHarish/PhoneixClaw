@@ -292,6 +292,37 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
 
     # -- Build execution parameters --
     exec_params = _build_execution_params(parsed, enriched, prediction, risk_params, ta_result)
+
+    # -- Step 7: Paper trading mode (route to watchlist instead of broker) --
+    current_mode = config.get("current_mode") or config.get("mode") or "live"
+    if current_mode == "paper":
+        reasoning.append(f"PAPER MODE: {direction.upper()} {ticker} @ ${exec_params.get('entry_price')} "
+                         f"— adding to Robinhood watchlist (confidence={confidence:.3f})")
+        try:
+            from paper_portfolio import add_paper_position
+            paper_result = add_paper_position(
+                ticker=ticker,
+                side=direction,
+                price=exec_params.get("entry_price") or 0,
+                quantity=1,
+                signal_data={
+                    "parsed": parsed,
+                    "confidence": confidence,
+                    "pattern_matches": prediction.get("pattern_matches", 0),
+                    "reasoning": list(reasoning),
+                    "exec_params": exec_params,
+                },
+            )
+            steps.append({"step": "paper_position", "status": "ok", "result": paper_result})
+        except Exception as exc:
+            steps.append({"step": "paper_position", "status": "error", "error": str(exc)[:200]})
+
+        decision = _build_decision("PAPER", None, steps, reasoning, parsed,
+                                   enriched, prediction, risk_result, ta_result)
+        decision["execution"] = exec_params
+        decision["mode"] = "paper"
+        return decision
+
     reasoning.append(f"APPROVED: {direction.upper()} {ticker} — "
                      f"confidence={confidence:.3f}, TA={ta_result.get('overall_verdict', 'N/A') if ta_result else 'N/A'}")
 

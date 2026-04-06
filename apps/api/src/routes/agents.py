@@ -6,6 +6,7 @@ Cloud Tasks), and promoted to Docker-managed trading workers.  All state
 lives in PostgreSQL; no SSH or VPS management.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -411,7 +412,453 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
         }
 
     await session.commit()
-    return {"id": agent_id, "status": agent.status, "config": agent.config}
+
+    # Auto-spawn the live analyst session immediately after approval
+    auto_spawn_result = None
+    try:
+        from apps.api.src.services.agent_gateway import gateway
+        auto_spawn_result = await gateway.create_analyst(uuid.UUID(agent_id))
+        logger.info("Auto-spawned analyst session for %s after approval: %s",
+                    agent_id, auto_spawn_result)
+    except Exception as exc:
+        logger.warning("Failed to auto-spawn analyst for %s: %s", agent_id, exc)
+
+    return {
+        "id": agent_id,
+        "status": agent.status,
+        "config": agent.config,
+        "session": auto_spawn_result,
+    }
+
+
+class SpawnPositionAgentPayload(BaseModel):
+    ticker: str
+    side: str  # "buy" or "sell"
+    entry_price: float
+    qty: int
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    reasoning: str = ""
+    position_id: str | None = None
+
+
+@router.post("/{agent_id}/spawn-position-agent")
+async def spawn_position_agent(agent_id: str, payload: SpawnPositionAgentPayload, session: DbSession):
+    """Spawn a position monitor sub-agent for a newly opened trade.
+
+    Called by the parent analyst agent immediately after a successful order
+    fills. The sub-agent runs as its own Claude Code session and monitors
+    exit conditions until the position is closed.
+    """
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent agent not found")
+
+    from apps.api.src.services.agent_gateway import gateway
+    position_data = payload.model_dump()
+    position_data["position_id"] = position_data.get("position_id") or str(uuid.uuid4())
+
+    session_row_id = await gateway.create_position_agent(uuid.UUID(agent_id), position_data)
+    return {
+        "status": "spawned",
+        "session_row_id": session_row_id,
+        "position_id": position_data["position_id"],
+        "ticker": payload.ticker,
+    }
+
+
+@router.post("/{session_id}/terminate")
+async def terminate_position_agent(session_id: str, payload: dict | None = None):
+    """Self-termination endpoint for position monitor sub-agents."""
+    from apps.api.src.services.agent_gateway import gateway
+    reason = (payload or {}).get("reason", "manual_termination")
+    result = await gateway.terminate_position_agent(uuid.UUID(session_id), reason)
+    return result
+
+
+@router.get("/{agent_id}/position-agents")
+async def list_position_agents(agent_id: str):
+    """List active position monitor sub-agents for an analyst agent."""
+    from apps.api.src.services.agent_gateway import gateway
+    agents = await gateway.list_position_agents(uuid.UUID(agent_id))
+    return {"agent_id": agent_id, "position_agents": agents, "count": len(agents)}
+
+
+@router.put("/{agent_id}/pending-improvements")
+async def stage_pending_improvements(agent_id: str, payload: dict, session: DbSession):
+    """Supervisor agent stages improvements for user approval.
+
+    Body: {"improvements": [{...}, {...}]}
+    """
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    new_improvements = payload.get("improvements", [])
+    existing = agent.pending_improvements or {}
+    existing_items = existing.get("items", []) if isinstance(existing, dict) else []
+    existing_items.extend(new_improvements)
+    agent.pending_improvements = {
+        "items": existing_items,
+        "last_staged_at": datetime.now(timezone.utc).isoformat(),
+    }
+    agent.last_research_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {"agent_id": agent_id, "staged": len(new_improvements), "total_pending": len(existing_items)}
+
+
+@router.get("/{agent_id}/pending-improvements")
+async def get_pending_improvements(agent_id: str, session: DbSession):
+    """List pending improvements for an agent."""
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    pending = agent.pending_improvements or {}
+    return {
+        "agent_id": agent_id,
+        "items": pending.get("items", []) if isinstance(pending, dict) else [],
+        "last_staged_at": pending.get("last_staged_at") if isinstance(pending, dict) else None,
+    }
+
+
+@router.post("/{agent_id}/pending-improvements/{change_id}/approve")
+async def approve_improvement(agent_id: str, change_id: str, session: DbSession):
+    """Apply a single staged improvement to the agent's manifest."""
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    pending = agent.pending_improvements or {}
+    items = pending.get("items", []) if isinstance(pending, dict) else []
+    target = next((i for i in items if i.get("id") == change_id), None)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Improvement not found")
+
+    # Apply the change to the manifest based on type
+    manifest = dict(agent.manifest or {})
+    change_type = target.get("type", "")
+    proposed = target.get("proposed")
+
+    if change_type == "raise_confidence_threshold":
+        risk = manifest.setdefault("risk", {})
+        risk["confidence_threshold"] = proposed
+    elif change_type == "tighten_pattern_match":
+        risk = manifest.setdefault("risk", {})
+        risk["min_pattern_matches"] = proposed
+    elif change_type == "tighten_stop_loss":
+        risk = manifest.setdefault("risk", {})
+        risk["stop_loss_pct"] = proposed
+    # other types: just record the change as a note in manifest history
+
+    history = manifest.setdefault("improvement_history", [])
+    history.append({**target, "approved_at": datetime.now(timezone.utc).isoformat()})
+
+    agent.manifest = manifest
+    agent.rules_version = (agent.rules_version or 1) + 1
+
+    # Remove from pending
+    new_items = [i for i in items if i.get("id") != change_id]
+    agent.pending_improvements = {**pending, "items": new_items}
+    agent.updated_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    return {"status": "approved", "change_id": change_id, "agent_id": agent_id,
+            "new_rules_version": agent.rules_version}
+
+
+@router.post("/{agent_id}/pending-improvements/{change_id}/reject")
+async def reject_improvement(agent_id: str, change_id: str, session: DbSession):
+    """Reject and discard a staged improvement."""
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    pending = agent.pending_improvements or {}
+    items = pending.get("items", []) if isinstance(pending, dict) else []
+    new_items = [i for i in items if i.get("id") != change_id]
+    if len(new_items) == len(items):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Improvement not found")
+
+    agent.pending_improvements = {**pending, "items": new_items}
+    await session.commit()
+    return {"status": "rejected", "change_id": change_id, "agent_id": agent_id}
+
+
+@router.get("/{agent_id}/runtime-info")
+async def get_runtime_info(agent_id: str, session: DbSession):
+    """Phase 5.1: Runtime visibility for an agent's Claude Code session.
+
+    Returns host, PID, working directory, session_id, memory usage, uptime.
+    """
+    import os as _os
+    import socket as _socket
+    from shared.db.models.agent_session import AgentSession
+
+    sess_result = await session.execute(
+        select(AgentSession)
+        .where(AgentSession.agent_id == uuid.UUID(agent_id),
+               AgentSession.status.in_(["running", "starting"]))
+        .order_by(desc(AgentSession.started_at))
+        .limit(1)
+    )
+    sess = sess_result.scalar_one_or_none()
+    if not sess:
+        return {"agent_id": agent_id, "running": False}
+
+    info = {
+        "agent_id": agent_id,
+        "running": True,
+        "session_row_id": str(sess.id),
+        "session_id": sess.session_id,
+        "agent_type": sess.agent_type,
+        "session_role": sess.session_role,
+        "working_directory": sess.working_dir,
+        "started_at": sess.started_at.isoformat() if sess.started_at else None,
+        "host_name": sess.host_name or _socket.gethostname(),
+        "pid": sess.pid or _os.getpid(),
+    }
+
+    if sess.started_at:
+        uptime = (datetime.now(timezone.utc) - sess.started_at).total_seconds()
+        info["uptime_seconds"] = int(uptime)
+
+    # Memory usage (best-effort)
+    try:
+        import psutil  # type: ignore
+        proc = psutil.Process(info["pid"])
+        info["memory_usage_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+    except Exception:
+        info["memory_usage_mb"] = None
+
+    return info
+
+
+@router.post("/{agent_id}/instruct")
+async def instruct_agent(agent_id: str, payload: dict, session: DbSession):
+    """Send an instruction to a running agent via gateway.send_task()."""
+    instruction = (payload or {}).get("instruction", "")
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction required")
+
+    from apps.api.src.services.agent_gateway import gateway
+    result = await gateway.send_task(uuid.UUID(agent_id), instruction)
+    return {"agent_id": agent_id, "result": result}
+
+
+@router.get("/{agent_id}/activity-feed")
+async def activity_feed(agent_id: str, session: DbSession, limit: int = 100):
+    """Unified activity feed: logs + trades + messages sorted by time."""
+    from shared.db.models.agent import AgentLog
+    from shared.db.models.agent_trade import AgentTrade
+    from shared.db.models.agent_message import AgentMessage
+    from shared.db.models.system_log import SystemLog
+
+    aid = uuid.UUID(agent_id)
+    feed: list[dict] = []
+
+    # Agent logs
+    try:
+        logs_result = await session.execute(
+            select(AgentLog)
+            .where(AgentLog.agent_id == aid)
+            .order_by(desc(AgentLog.created_at))
+            .limit(limit)
+        )
+        for log in logs_result.scalars().all():
+            feed.append({
+                "type": "log",
+                "id": str(log.id),
+                "level": log.level,
+                "message": log.message,
+                "timestamp": log.created_at.isoformat() if log.created_at else None,
+            })
+    except Exception:
+        pass
+
+    # System logs
+    try:
+        sys_result = await session.execute(
+            select(SystemLog)
+            .where(SystemLog.agent_id == agent_id)
+            .order_by(desc(SystemLog.created_at))
+            .limit(limit)
+        )
+        for log in sys_result.scalars().all():
+            feed.append({
+                "type": "system_log",
+                "id": str(log.id),
+                "level": log.level,
+                "message": log.message,
+                "step": log.step,
+                "timestamp": log.created_at.isoformat() if log.created_at else None,
+            })
+    except Exception:
+        pass
+
+    # Trades
+    try:
+        trades_result = await session.execute(
+            select(AgentTrade)
+            .where(AgentTrade.agent_id == aid)
+            .order_by(desc(AgentTrade.created_at))
+            .limit(limit)
+        )
+        for trade in trades_result.scalars().all():
+            feed.append({
+                "type": "trade",
+                "id": str(trade.id),
+                "ticker": trade.ticker,
+                "side": trade.side,
+                "entry_price": trade.entry_price,
+                "exit_price": trade.exit_price,
+                "pnl_dollar": trade.pnl_dollar,
+                "status": trade.status,
+                "decision_status": trade.decision_status,
+                "timestamp": trade.created_at.isoformat() if trade.created_at else None,
+            })
+    except Exception:
+        pass
+
+    # Messages (knowledge sharing)
+    try:
+        msgs_result = await session.execute(
+            select(AgentMessage)
+            .where(
+                (AgentMessage.from_agent_id == aid) | (AgentMessage.to_agent_id == aid)
+            )
+            .order_by(desc(AgentMessage.created_at))
+            .limit(limit)
+        )
+        for msg in msgs_result.scalars().all():
+            feed.append({
+                "type": "message",
+                "id": str(msg.id),
+                "intent": msg.intent,
+                "from_agent": str(msg.from_agent_id),
+                "to_agent": str(msg.to_agent_id) if msg.to_agent_id else "broadcast",
+                "body": msg.body,
+                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+            })
+    except Exception:
+        pass
+
+    feed.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+    return feed[:limit]
+
+
+@router.get("/graph")
+async def get_agent_graph(session: DbSession):
+    """Phase 3.1: Agent topology graph data for dashboard visualization."""
+    from shared.db.models.agent_message import AgentMessage
+
+    agents_result = await session.execute(select(Agent))
+    all_agents = list(agents_result.scalars().all())
+
+    nodes = []
+    for agent in all_agents:
+        manifest = agent.manifest or {}
+        nodes.append({
+            "id": str(agent.id),
+            "name": agent.name,
+            "status": agent.status,
+            "type": agent.type,
+            "character": manifest.get("identity", {}).get("character", "unknown"),
+            "tools": manifest.get("tools", []),
+            "channels": [agent.channel_name] if agent.channel_name else [],
+            "win_rate": agent.win_rate,
+            "total_trades": agent.total_trades,
+        })
+
+    # Recent edges from agent_messages (last 24h)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    msgs_result = await session.execute(
+        select(AgentMessage)
+        .where(AgentMessage.created_at >= cutoff)
+        .order_by(desc(AgentMessage.created_at))
+        .limit(500)
+    )
+    edges_dict: dict[tuple, dict] = {}
+    for msg in msgs_result.scalars().all():
+        if not msg.to_agent_id:
+            continue
+        key = (str(msg.from_agent_id), str(msg.to_agent_id))
+        if key not in edges_dict:
+            edges_dict[key] = {
+                "from": key[0],
+                "to": key[1],
+                "type": "knowledge_share",
+                "intent": msg.intent,
+                "count": 0,
+                "last_message_at": msg.created_at.isoformat() if msg.created_at else None,
+            }
+        edges_dict[key]["count"] += 1
+
+    return {"nodes": nodes, "edges": list(edges_dict.values())}
+
+
+@router.post("/supervisor/run")
+async def trigger_supervisor():
+    """Manually trigger the supervisor agent (also called by Claude Code cron at 4:30 PM ET)."""
+    try:
+        from apps.api.src.services.agent_gateway import gateway
+        session_id = await gateway.create_supervisor_agent()
+        return {"status": "started", "session_row_id": session_id}
+    except Exception as exc:
+        logger.exception("Supervisor trigger failed")
+        return {"status": "error", "error": str(exc)[:500]}
+
+
+@router.get("/{agent_id}/paper-portfolio")
+async def get_paper_portfolio(agent_id: str, session: DbSession):
+    """Get paper trading portfolio for an agent.
+
+    Returns simulated positions, P&L, and metrics from the watchlist table.
+    """
+    from shared.db.models.watchlist import Watchlist
+    result = await session.execute(
+        select(Watchlist)
+        .where(Watchlist.agent_id == uuid.UUID(agent_id))
+        .order_by(desc(Watchlist.added_at))
+    )
+    rows = result.scalars().all()
+
+    open_positions = [w for w in rows if w.status == "open"]
+    closed_positions = [w for w in rows if w.status == "closed"]
+
+    total_unrealized = sum(w.simulated_pnl for w in open_positions)
+    total_realized = sum(w.simulated_pnl for w in closed_positions)
+    wins = sum(1 for w in closed_positions if w.simulated_pnl > 0)
+
+    return {
+        "agent_id": agent_id,
+        "open_positions": len(open_positions),
+        "closed_positions": len(closed_positions),
+        "total_unrealized_pnl": round(total_unrealized, 2),
+        "total_realized_pnl": round(total_realized, 2),
+        "win_rate": round(wins / len(closed_positions), 3) if closed_positions else 0.0,
+        "positions": [
+            {
+                "id": str(w.id),
+                "ticker": w.ticker,
+                "side": w.side,
+                "quantity": w.quantity,
+                "entry_price": w.entry_price_at_add,
+                "current_price": w.current_price,
+                "simulated_pnl": w.simulated_pnl,
+                "simulated_pnl_pct": w.simulated_pnl_pct,
+                "status": w.status,
+                "added_at": w.added_at.isoformat() if w.added_at else None,
+                "closed_at": w.closed_at.isoformat() if w.closed_at else None,
+                "signal_data": w.signal_data,
+            }
+            for w in rows
+        ],
+    }
 
 
 @router.post("/{agent_id}/promote")
@@ -990,10 +1437,54 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
 
         if m.get("auto_create_analyst"):
             try:
-                from apps.api.src.services.agent_gateway import gateway
-                await gateway._auto_create_analyst(uuid.UUID(agent_id), {}, None)
+                from apps.api.src.services.agent_gateway import gateway, DATA_DIR
+                # Look up the latest backtest version dir from latest.json
+                from pathlib import Path
+                latest_pointer = DATA_DIR / f"backtest_{agent_id}" / "latest.json"
+                bt_dir = None
+                if latest_pointer.exists():
+                    try:
+                        latest = json.loads(latest_pointer.read_text())
+                        bt_dir = Path(latest.get("output_dir", ""))
+                    except Exception:
+                        pass
+                if bt_dir is None:
+                    bt_dir = DATA_DIR / f"backtest_{agent_id}" / "output"
+                await gateway._auto_create_analyst(uuid.UUID(agent_id), {}, bt_dir)
             except Exception as exc:
                 logger.warning("Auto-create analyst failed for %s: %s", agent_id, exc)
+
+    # Phase 3.1: Notification dispatch for trade events
+    try:
+        m = payload.metrics or {}
+        if payload.step in ("trade_entry", "trade_exit", "agent_wake", "morning_briefing_complete",
+                            "watchlist_add", "paper_trade_add", "paper_trade_close", "risk_alert"):
+            from apps.api.src.services.notification_dispatcher import notification_dispatcher
+            event_type = payload.step
+            # Map a few common variants
+            if payload.step == "paper_trade_add":
+                event_type = "paper_trade"
+            elif payload.step == "paper_trade_close":
+                event_type = "trade_exit"
+
+            # Build context for the template
+            agent_result_n = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+            agent_n = agent_result_n.scalar_one_or_none()
+            ctx = dict(m) if m else {}
+            ctx.setdefault("agent_name", agent_n.name if agent_n else "Agent")
+            ctx.setdefault("channel_name", agent_n.channel_name if agent_n else "")
+
+            await notification_dispatcher.dispatch(
+                event_type=event_type,
+                agent_id=agent_id,
+                title=None,  # Use template
+                body=payload.message,
+                data=ctx,
+                channels=["db", "ws", "whatsapp"],
+            )
+    except Exception as exc:
+        logger.warning("Notification dispatch failed for %s/%s: %s",
+                       agent_id, payload.step, exc)
 
     if payload.status == "FAILED" and bt:
         bt.status = "FAILED"

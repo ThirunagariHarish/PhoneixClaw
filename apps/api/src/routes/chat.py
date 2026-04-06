@@ -60,7 +60,7 @@ async def send_message(
     body: dict,
     session: AsyncSession = Depends(get_session),
 ):
-    """Append a user message and return success. In production, would enqueue for trade pipeline."""
+    """Append a user message and forward it to the agent's running Claude session via send_task."""
     msg = body.get("message", "")
     if not msg:
         return {"ok": False, "detail": "message required"}
@@ -72,4 +72,14 @@ async def send_message(
     )
     session.add(row)
     await session.flush()
-    return {"ok": True, "id": str(row.id)}
+
+    # Forward to running agent via gateway.send_task() if it's a real agent
+    forwarded = None
+    if agent_id != _TRADE_CHAT_AGENT_ID:
+        try:
+            from apps.api.src.services.agent_gateway import gateway
+            forwarded = await gateway.send_task(agent_id, msg)
+        except Exception as exc:
+            forwarded = {"status": "error", "error": str(exc)[:200]}
+
+    return {"ok": True, "id": str(row.id), "forwarded": forwarded}

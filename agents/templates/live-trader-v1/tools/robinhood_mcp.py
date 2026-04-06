@@ -597,6 +597,94 @@ def _tool_get_option_chain(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Watchlist tools (Phase 1.5 — used by paper trading mode)
+# ---------------------------------------------------------------------------
+
+DEFAULT_WATCHLIST_NAME = "Phoenix Paper"
+
+
+def _tool_add_to_watchlist(args: dict) -> dict:
+    """Add one or more symbols to a Robinhood watchlist."""
+    _ensure_login()
+    symbols = args.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    if not symbols:
+        return {"error": "no symbols provided"}
+    watchlist_name = args.get("watchlist_name", DEFAULT_WATCHLIST_NAME)
+
+    if PAPER_MODE:
+        # Even in PAPER_MODE we want to call Robinhood API to actually add symbols
+        # to the user's watchlist (per V2 spec). Fall through if RH lib available.
+        pass
+
+    try:
+        rh = _get_rh()
+        result = _retry(rh.account.post_symbols_to_watchlist, symbols, watchlist_name)
+        return {
+            "status": "added",
+            "symbols": symbols,
+            "watchlist_name": watchlist_name,
+            "result": result,
+        }
+    except Exception as exc:
+        log.warning("add_to_watchlist failed: %s", exc)
+        return {
+            "status": "fallback_only",
+            "symbols": symbols,
+            "watchlist_name": watchlist_name,
+            "error": str(exc)[:200],
+        }
+
+
+def _tool_remove_from_watchlist(args: dict) -> dict:
+    """Remove one or more symbols from a Robinhood watchlist."""
+    _ensure_login()
+    symbols = args.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    if not symbols:
+        return {"error": "no symbols provided"}
+    watchlist_name = args.get("watchlist_name", DEFAULT_WATCHLIST_NAME)
+
+    try:
+        rh = _get_rh()
+        result = _retry(rh.account.delete_symbols_from_watchlist, symbols, watchlist_name)
+        return {
+            "status": "removed",
+            "symbols": symbols,
+            "watchlist_name": watchlist_name,
+            "result": result,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:200]}
+
+
+def _tool_get_watchlist(args: dict) -> dict:
+    """Get all symbols in a Robinhood watchlist."""
+    _ensure_login()
+    watchlist_name = args.get("watchlist_name", DEFAULT_WATCHLIST_NAME)
+
+    try:
+        rh = _get_rh()
+        items = _retry(rh.account.get_watchlist_by_name, watchlist_name)
+        symbols = []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    sym = item.get("symbol") or item.get("instrument", {}).get("symbol")
+                    if sym:
+                        symbols.append(sym)
+        return {
+            "watchlist_name": watchlist_name,
+            "symbols": symbols,
+            "count": len(symbols),
+        }
+    except Exception as exc:
+        return {"watchlist_name": watchlist_name, "symbols": [], "error": str(exc)[:200]}
+
+
+# ---------------------------------------------------------------------------
 # Tool registry & JSON schemas
 # ---------------------------------------------------------------------------
 
@@ -614,6 +702,9 @@ TOOL_HANDLERS: dict[str, Any] = {
     "modify_stop_loss": _tool_modify_stop_loss,
     "place_order_with_buffer": _tool_place_order_with_buffer,
     "get_option_chain": _tool_get_option_chain,
+    "add_to_watchlist": _tool_add_to_watchlist,
+    "remove_from_watchlist": _tool_remove_from_watchlist,
+    "get_watchlist": _tool_get_watchlist,
 }
 
 TOOL_DEFINITIONS: list[dict] = [
@@ -766,6 +857,52 @@ TOOL_DEFINITIONS: list[dict] = [
                 "expiry": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
             },
             "required": ["ticker", "expiry"],
+        },
+    },
+    {
+        "name": "add_to_watchlist",
+        "description": "Add one or more symbols to a Robinhood watchlist (default: 'Phoenix Paper'). Used in PAPER mode instead of placing real orders.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                    "description": "Single ticker or list of tickers to add",
+                },
+                "watchlist_name": {"type": "string", "description": "Watchlist name (default: 'Phoenix Paper')"},
+            },
+            "required": ["symbols"],
+        },
+    },
+    {
+        "name": "remove_from_watchlist",
+        "description": "Remove one or more symbols from a Robinhood watchlist.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+                "watchlist_name": {"type": "string"},
+            },
+            "required": ["symbols"],
+        },
+    },
+    {
+        "name": "get_watchlist",
+        "description": "Get all symbols in a Robinhood watchlist.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "watchlist_name": {"type": "string", "description": "Watchlist name (default: 'Phoenix Paper')"},
+            },
+            "required": [],
         },
     },
 ]

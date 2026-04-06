@@ -42,6 +42,10 @@ class Agent(Base):
     current_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="conservative")
     rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
+    # Phase 4: Supervisor agent staged improvements requiring user approval
+    pending_improvements: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    last_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
@@ -70,6 +74,8 @@ class AgentBacktest(Base):
     sharpe_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_selection: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    backtesting_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

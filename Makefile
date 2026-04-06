@@ -164,20 +164,22 @@ infra-logs: ## Tail infrastructure logs
 db-init: ## Create all database tables (no Alembic, for bootstrapping)
 	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) $(PYTHON) scripts/init_db.py
 
+ALEMBIC_INI := shared/db/migrations/alembic.ini
+
 db-migrate: ## Generate Alembic migration (usage: make db-migrate msg="add xyz")
-	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic revision --autogenerate -m "$(msg)"
+	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic -c $(ALEMBIC_INI) revision --autogenerate -m "$(msg)"
 
 db-upgrade: ## Apply all pending Alembic migrations
-	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic upgrade head
+	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic -c $(ALEMBIC_INI) upgrade head
 
 db-downgrade: ## Revert last Alembic migration
-	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic downgrade -1
+	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic -c $(ALEMBIC_INI) downgrade -1
 
 db-history: ## Show Alembic migration history
-	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic history --verbose
+	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic -c $(ALEMBIC_INI) history --verbose
 
 db-current: ## Show current Alembic revision
-	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic current
+	$(RUN) PYTHONPATH=. DATABASE_URL=$(LOCAL_DB_URL) alembic -c $(ALEMBIC_INI) current
 
 # ─────────────────────────────────────────────
 # Run v2 Stack via Docker Compose

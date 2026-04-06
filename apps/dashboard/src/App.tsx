@@ -36,6 +36,7 @@ import DevSprintBoardPage from '@/pages/DevSprintBoard'
 import AgentDashboardPage from '@/pages/AgentDashboard'
 import LogsPage from '@/pages/Logs'
 import BacktestsPage from '@/pages/Backtests'
+import AgentGraphPage from '@/pages/AgentGraph'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -115,6 +116,7 @@ function AppRoutes() {
         <Route path="dev-sprint" element={<DevSprintBoardPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="backtests" element={<BacktestsPage />} />
+        <Route path="agent-graph" element={<AgentGraphPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

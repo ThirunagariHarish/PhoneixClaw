@@ -47,6 +47,8 @@ from apps.api.src.routes import error_logs as error_logs_routes
 from apps.api.src.routes import ai_expand as ai_expand_routes
 from apps.api.src.routes import token_usage as token_usage_routes
 from apps.api.src.routes import system_logs as system_logs_routes
+from apps.api.src.routes import morning_routine as morning_routine_routes
+from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -109,6 +111,8 @@ app.include_router(error_logs_routes.router)
 app.include_router(ai_expand_routes.router)
 app.include_router(token_usage_routes.router)
 app.include_router(system_logs_routes.router)
+app.include_router(morning_routine_routes.router)
+app.include_router(whatsapp_webhook_routes.router)
 
 
 @app.get("/health")

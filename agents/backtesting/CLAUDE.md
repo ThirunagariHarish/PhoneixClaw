@@ -50,20 +50,18 @@ Splits data into train/val/test sets across 4 data modalities:
 - Text embeddings: `text_train.npy`, `text_val.npy`, `text_test.npy`
 - Categoricals: `categoricals_train.npy`, `categoricals_val.npy`, `categoricals_test.npy`
 
-### Step 5: Training (Sequential — 8 models)
-Run each base model training script ONE AT A TIME. Each writes results to `output/models/`.
-Do NOT run in parallel — PyTorch models need the full container memory.
-Do NOT skip any model due to OOM — scripts are memory-optimised.
+### Step 5: Model Selection (intelligent)
+Run: `python tools/model_selector.py --data output/ --output output/model_selection.json`
 
-- `python tools/train_xgboost.py --data output/ --output output/models/`
-- `python tools/train_lightgbm.py --data output/ --output output/models/`
-- `python tools/train_catboost.py --data output/ --output output/models/`
-- `python tools/train_lstm.py --data output/ --output output/models/`
-- `python tools/train_transformer.py --data output/ --output output/models/`
-- `python tools/train_tft.py --data output/ --output output/models/`
-- `python tools/train_tcn.py --data output/ --output output/models/`
+This analyzes dataset size and features to pick the optimal set of models. Read the output file to see which models to train. Do NOT train all models — only train what the selector picks.
 
-**After base models complete**, run the ensemble models (they need base model predictions):
+### Step 5b: Training (Sequential — selected models only)
+Read `output/model_selection.json` for the `"models"` list. For each model in the list, run:
+`python tools/train_<model_name>.py --data output/ --output output/models/`
+
+Run ONE AT A TIME. Do NOT run in parallel — PyTorch models need full container memory.
+
+**After base models complete**, run the ensemble models listed in `"ensemble"`:
 - `python tools/train_hybrid.py --data output/ --output output/models/`
 - `python tools/train_meta_learner.py --models-dir output/models/ --data output/ --output output/models/`
 

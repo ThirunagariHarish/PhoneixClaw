@@ -5,7 +5,7 @@ AgentSession model — tracks Claude Code agent sessions for the Agent Gateway.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,3 +28,16 @@ class AgentSession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Position sub-agent fields (Phase 1.3)
+    parent_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    position_ticker: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    position_side: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    session_role: Mapped[str] = mapped_column(String(30), nullable=False, default="primary")
+    # session_role: 'primary' | 'position_monitor' | 'research' | 'supervisor'
+
+    # Runtime visibility fields (Phase 5.1)
+    host_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)

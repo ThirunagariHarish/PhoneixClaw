@@ -1,18 +1,21 @@
 """
-Trades API routes: list trades, get trade detail, trade stats.
+Trades API routes: list trades, get trade detail, trade stats, portfolio summary.
 
 M1.10: Trades Tab backend.
 Reference: PRD Section 3.1.
 """
 
 import uuid
+from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, desc
+from sqlalchemy import Float, case, cast, func, select, desc
 
 from apps.api.src.deps import DbSession
 from shared.db.models.trade import TradeIntent
+from shared.db.models.agent_trade import AgentTrade
+from shared.db.models.agent import Agent
 
 router = APIRouter(prefix="/api/v2/trades", tags=["trades"])
 
@@ -96,6 +99,115 @@ async def trade_stats(session: DbSession):
         "rejected": rejected.scalar() or 0,
         "pending": pending.scalar() or 0,
     }
+
+
+@router.get("/portfolio-summary")
+async def portfolio_summary(session: DbSession):
+    """Aggregate portfolio metrics across all agents."""
+    # Total P&L from closed trades
+    total_pnl = await session.execute(
+        select(func.coalesce(func.sum(AgentTrade.pnl_dollar), 0.0))
+        .where(AgentTrade.status == "closed")
+    )
+    # Open positions count
+    open_count = await session.execute(
+        select(func.count(AgentTrade.id)).where(AgentTrade.status == "open")
+    )
+    # Win rate
+    total_closed = await session.execute(
+        select(func.count(AgentTrade.id)).where(AgentTrade.status == "closed")
+    )
+    winning = await session.execute(
+        select(func.count(AgentTrade.id)).where(
+            AgentTrade.status == "closed", AgentTrade.pnl_dollar > 0
+        )
+    )
+    total_closed_val = total_closed.scalar() or 0
+    winning_val = winning.scalar() or 0
+
+    # Today's P&L
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min).replace(tzinfo=timezone.utc)
+    today_pnl = await session.execute(
+        select(func.coalesce(func.sum(AgentTrade.pnl_dollar), 0.0))
+        .where(AgentTrade.exit_time >= today_start, AgentTrade.status == "closed")
+    )
+
+    # Per-agent breakdown
+    agent_stats = await session.execute(
+        select(
+            AgentTrade.agent_id,
+            func.count(AgentTrade.id).label("total_trades"),
+            func.count(case((AgentTrade.status == "open", 1))).label("open_positions"),
+            func.coalesce(func.sum(case((AgentTrade.status == "closed", AgentTrade.pnl_dollar))), 0.0).label("total_pnl"),
+            func.coalesce(func.sum(case(
+                (AgentTrade.exit_time >= today_start, AgentTrade.pnl_dollar)
+            )), 0.0).label("today_pnl"),
+        )
+        .group_by(AgentTrade.agent_id)
+    )
+    agent_rows = agent_stats.all()
+
+    # Enrich with agent names
+    agent_ids = [r.agent_id for r in agent_rows]
+    agents_result = await session.execute(
+        select(Agent.id, Agent.name).where(Agent.id.in_(agent_ids))
+    ) if agent_ids else None
+    name_map = {str(r.id): r.name for r in agents_result.all()} if agents_result else {}
+
+    per_agent = []
+    for r in agent_rows:
+        per_agent.append({
+            "agent_id": str(r.agent_id),
+            "agent_name": name_map.get(str(r.agent_id), "Unknown"),
+            "total_trades": r.total_trades,
+            "open_positions": r.open_positions,
+            "total_pnl": float(r.total_pnl),
+            "today_pnl": float(r.today_pnl),
+        })
+
+    return {
+        "total_pnl": float(total_pnl.scalar() or 0),
+        "today_pnl": float(today_pnl.scalar() or 0),
+        "open_positions": open_count.scalar() or 0,
+        "total_closed_trades": total_closed_val,
+        "win_rate": winning_val / total_closed_val if total_closed_val > 0 else 0.0,
+        "per_agent": per_agent,
+    }
+
+
+@router.get("/today")
+async def today_trades(session: DbSession, limit: int = Query(100, ge=1, le=500)):
+    """Get all trades entered or exited today."""
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min).replace(tzinfo=timezone.utc)
+    result = await session.execute(
+        select(AgentTrade)
+        .where(
+            (AgentTrade.entry_time >= today_start) | (AgentTrade.exit_time >= today_start)
+        )
+        .order_by(desc(AgentTrade.created_at))
+        .limit(limit)
+    )
+    trades = result.scalars().all()
+    return [
+        {
+            "id": str(t.id),
+            "agent_id": str(t.agent_id),
+            "ticker": t.ticker,
+            "side": t.side,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "quantity": t.quantity,
+            "pnl_dollar": t.pnl_dollar,
+            "pnl_pct": t.pnl_pct,
+            "status": t.status,
+            "decision_status": t.decision_status,
+            "model_confidence": t.model_confidence,
+            "reasoning": t.reasoning,
+            "entry_time": t.entry_time.isoformat() if t.entry_time else None,
+            "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+        }
+        for t in trades
+    ]
 
 
 @router.get("/{trade_id}", response_model=TradeResponse)

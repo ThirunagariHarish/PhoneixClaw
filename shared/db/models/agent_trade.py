@@ -28,4 +28,6 @@ class AgentTrade(Base):
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     signal_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
     broker_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decision_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", index=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

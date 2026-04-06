@@ -25,7 +25,7 @@ import {
   LayoutDashboard, TrendingUp, BarChart3, Bot, Target, Plug, BookOpen,
   LineChart, Settings, Shield, ListTodo, Moon, Sun, LogOut, Zap,
   Activity, Fish, MessageCircle, ShieldCheck, Bell, PanelLeftClose, PanelLeft,
-  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical,
+  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -50,6 +50,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/skills', icon: BookOpen, label: 'Skills' },
       { to: '/performance', icon: BarChart3, label: 'Performance' },
       { to: '/backtests', icon: FlaskConical, label: 'Backtests' },
+      { to: '/agent-graph', icon: Network, label: 'Agent Graph' },
     ],
   },
   {

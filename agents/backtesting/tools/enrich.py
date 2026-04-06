@@ -1,13 +1,22 @@
 """Market enrichment pipeline: add ~200 attributes to each trade row.
 
+Optimized with:
+- Parallel yfinance downloads (ThreadPoolExecutor)
+- Disk-based price cache to skip re-downloads on re-runs
+- Batch download for multiple tickers
+
 Usage:
     python tools/enrich.py --input output/transformed.parquet --output output/enriched.parquet
 """
 
+from __future__ import annotations
+
 import argparse
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -30,6 +39,117 @@ def _safe_download(ticker: str, start: str, end: str) -> pd.DataFrame:
     except Exception as e:
         print(f"  [yfinance] FAILED {ticker} ({start} → {end}): {e}")
         return pd.DataFrame()
+
+
+def _parallel_download(tickers: list[str], start: str, end: str,
+                       cache_dir: Path | None = None, max_workers: int = 6) -> dict[str, pd.DataFrame]:
+    """Download multiple tickers in parallel using ThreadPoolExecutor.
+
+    If cache_dir is provided, checks for cached parquet files first and
+    saves downloaded data to disk for future re-runs.
+    """
+    results = {}
+    to_download = []
+
+    # Check disk cache first
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for ticker in tickers:
+            safe_name = ticker.replace("^", "_").replace("/", "_")
+            cached_path = cache_dir / f"{safe_name}.parquet"
+            if cached_path.exists():
+                try:
+                    df = pd.read_parquet(cached_path)
+                    if not df.empty:
+                        results[ticker] = df
+                        continue
+                except Exception:
+                    pass
+            to_download.append(ticker)
+    else:
+        to_download = list(tickers)
+
+    if not to_download:
+        print(f"  All {len(tickers)} tickers loaded from cache")
+        return results
+
+    print(f"  Downloading {len(to_download)} tickers in parallel (max_workers={max_workers})...")
+
+    def _fetch(tk):
+        return tk, _safe_download(tk, start, end)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch, tk): tk for tk in to_download}
+        done_count = 0
+        for future in as_completed(futures):
+            tk, data = future.result()
+            results[tk] = data
+            done_count += 1
+            # Save to disk cache
+            if cache_dir and not data.empty:
+                safe_name = tk.replace("^", "_").replace("/", "_")
+                try:
+                    data.to_parquet(cache_dir / f"{safe_name}.parquet")
+                except Exception:
+                    pass
+            if done_count % 10 == 0:
+                print(f"    Downloaded {done_count}/{len(to_download)} tickers")
+
+    print(f"  Download complete: {len(results)} tickers ready")
+    return results
+
+
+def _parallel_download_intraday(tickers: list[str], start: str, end: str,
+                                cache_dir: Path | None = None, max_workers: int = 4) -> dict[str, pd.DataFrame]:
+    """Download 5-minute intraday data for multiple tickers in parallel."""
+    results = {}
+    to_download = []
+
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for ticker in tickers:
+            safe_name = ticker.replace("^", "_").replace("/", "_")
+            cached_path = cache_dir / f"{safe_name}_5m.parquet"
+            if cached_path.exists():
+                try:
+                    df = pd.read_parquet(cached_path)
+                    if not df.empty:
+                        results[ticker] = df
+                        continue
+                except Exception:
+                    pass
+            to_download.append(ticker)
+    else:
+        to_download = list(tickers)
+
+    if not to_download:
+        return results
+
+    print(f"  Downloading {len(to_download)} intraday tickers in parallel...")
+
+    def _fetch_intra(tk):
+        try:
+            import yfinance as yf
+            data = yf.download(tk, start=start, end=end, interval="5m", progress=False)
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            return tk, data
+        except Exception:
+            return tk, pd.DataFrame()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_intra, tk): tk for tk in to_download}
+        for future in as_completed(futures):
+            tk, data = future.result()
+            results[tk] = data
+            if cache_dir and not data.empty:
+                safe_name = tk.replace("^", "_").replace("/", "_")
+                try:
+                    data.to_parquet(cache_dir / f"{safe_name}_5m.parquet")
+                except Exception:
+                    pass
+
+    return results
 
 
 def _calc_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -727,7 +847,7 @@ def main():
     df = pd.read_parquet(args.input)
     print(f"Enriching {len(df)} trades...")
 
-    # ── Pre-download: fetch each ticker exactly once with the widest date range ──
+    # ── Pre-download: fetch all tickers in parallel with disk caching ──
     import time
     t0 = time.time()
 
@@ -744,30 +864,30 @@ def main():
     )
     all_tickers = sorted(set(trade_tickers + context_tickers))
 
+    # Disk cache dir sits next to the output file
+    output_parent = Path(args.output).parent
+    price_cache_dir = output_parent / "price_cache"
+
     cache = {
         "_global_start": global_start,
         "_global_end": global_end,
         "_global_start_5m": str(all_dates.min() - timedelta(days=5)),
     }
 
+    # Parallel download: daily data for all tickers (6 concurrent threads)
     print(f"  Pre-downloading daily data for {len(all_tickers)} tickers ({global_start} → {global_end}) ...")
-    for i, tk in enumerate(all_tickers):
-        cache[f"daily_{tk}"] = _safe_download(tk, global_start, global_end)
-        if (i + 1) % 10 == 0:
-            print(f"    Downloaded {i + 1}/{len(all_tickers)} tickers")
+    daily_data = _parallel_download(all_tickers, global_start, global_end,
+                                    cache_dir=price_cache_dir, max_workers=6)
+    for tk, data in daily_data.items():
+        cache[f"daily_{tk}"] = data
 
+    # Parallel download: 5-minute intraday data for trade tickers
+    intra_start = cache["_global_start_5m"]
     print(f"  Pre-downloading 5m intraday data for {len(trade_tickers)} trade tickers ...")
-    for i, tk in enumerate(trade_tickers):
-        try:
-            import yfinance as yf_intra
-            intra = yf_intra.download(tk, start=cache["_global_start_5m"], end=global_end, interval="5m", progress=False)
-            if isinstance(intra.columns, pd.MultiIndex):
-                intra.columns = intra.columns.get_level_values(0)
-            cache[f"_intra5m_{tk}"] = intra
-        except Exception:
-            cache[f"_intra5m_{tk}"] = pd.DataFrame()
-        if (i + 1) % 10 == 0:
-            print(f"    Downloaded {i + 1}/{len(trade_tickers)} intraday tickers")
+    intra_data = _parallel_download_intraday(trade_tickers, intra_start, global_end,
+                                             cache_dir=price_cache_dir, max_workers=4)
+    for tk, data in intra_data.items():
+        cache[f"_intra5m_{tk}"] = data
 
     print(f"  Pre-download done in {time.time() - t0:.1f}s ({len(cache)} cache entries)")
 

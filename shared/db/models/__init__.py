@@ -25,6 +25,7 @@ from shared.db.models.token_usage import TokenUsage
 from shared.db.models.trade import Position, TradeIntent
 from shared.db.models.trading_account import TradingAccount
 from shared.db.models.user import User
+from shared.db.models.watchlist import Watchlist
 
 __all__ = [
     "Base",
@@ -55,4 +56,5 @@ __all__ = [
     "ErrorLog",
     "LearningSession",
     "SystemLog",
+    "Watchlist",
 ]

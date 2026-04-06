@@ -1,0 +1,100 @@
+"""MAG-7 correlation tracker for position monitoring.
+
+Tracks AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA. If MAG-7 moves
+strongly against the position direction, increases exit urgency.
+
+Usage:
+    python mag7_correlation.py --side buy --output mag7.json
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAG7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]
+
+
+def check_mag7(side: str) -> dict:
+    """Check MAG-7 movement vs the position direction."""
+    result = {
+        "side": side,
+        "exit_urgency": 0,
+        "mag7_changes": {},
+        "spy_change_pct": None,
+        "qqq_change_pct": None,
+        "direction": "neutral",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        import yfinance as yf
+
+        # Use SPY and QQQ as fast proxy + each MAG-7 stock
+        tickers = ["SPY", "QQQ"] + MAG7
+        data = yf.download(tickers, period="2d", progress=False, group_by="ticker")
+        if data.empty:
+            return result
+
+        changes = []
+        for tk in tickers:
+            try:
+                if tk in data.columns.get_level_values(0):
+                    df = data[tk]
+                else:
+                    df = data
+                if len(df) >= 2 and "Close" in df.columns:
+                    last = float(df["Close"].iloc[-1])
+                    prev = float(df["Close"].iloc[-2])
+                    pct = (last - prev) / prev * 100 if prev > 0 else 0
+                    if tk == "SPY":
+                        result["spy_change_pct"] = round(pct, 2)
+                    elif tk == "QQQ":
+                        result["qqq_change_pct"] = round(pct, 2)
+                    else:
+                        result["mag7_changes"][tk] = round(pct, 2)
+                        changes.append(pct)
+            except (KeyError, IndexError):
+                continue
+
+        # Average MAG-7 change
+        if changes:
+            avg_mag7 = sum(changes) / len(changes)
+            result["avg_mag7_change_pct"] = round(avg_mag7, 2)
+            result["direction"] = "bullish" if avg_mag7 > 0 else "bearish"
+
+            # Score exit urgency
+            if side == "buy" and avg_mag7 < -1.0:
+                result["exit_urgency"] += 20
+                result["alert"] = f"MAG-7 selling off ({avg_mag7:.1f}%) while you're long"
+            elif side == "sell" and avg_mag7 > 1.0:
+                result["exit_urgency"] += 20
+                result["alert"] = f"MAG-7 rallying ({avg_mag7:.1f}%) while you're short"
+
+        # Tech-heavy QQQ check
+        qqq = result.get("qqq_change_pct") or 0
+        if side == "buy" and qqq < -1.5:
+            result["exit_urgency"] += 10
+        elif side == "sell" and qqq > 1.5:
+            result["exit_urgency"] += 10
+
+    except Exception as e:
+        result["error"] = str(e)[:200]
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="MAG-7 correlation check")
+    parser.add_argument("--side", required=True, choices=["buy", "sell"])
+    parser.add_argument("--output", default="mag7.json")
+    args = parser.parse_args()
+
+    result = check_mag7(args.side)
+    Path(args.output).write_text(json.dumps(result, indent=2, default=str))
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()

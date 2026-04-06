@@ -25,6 +25,24 @@ class MessageType(str, Enum):
     CONSENSUS = "CONSENSUS"
 
 
+class KnowledgeIntent(str, Enum):
+    """Standard intents for inter-agent knowledge sharing.
+
+    Used as the `intent` field on AgentMessage for type-safe filtering.
+    """
+    MARKET_BRIEFING = "market_briefing"
+    POSITION_UPDATE = "position_update"
+    RISK_ALERT = "risk_alert"
+    EXIT_SIGNAL = "exit_signal"
+    STRATEGY_INSIGHT = "strategy_insight"
+    HEADLINE_ALERT = "headline_alert"
+    UNUSUAL_FLOW = "unusual_flow"
+    SELL_SIGNAL = "sell_signal"
+    MORNING_RESEARCH = "morning_research"
+    PATTERN_ALERT = "pattern_alert"
+    MARKET_REGIME = "market_regime"
+
+
 @dataclass
 class MessageEnvelope:
     from_agent: str

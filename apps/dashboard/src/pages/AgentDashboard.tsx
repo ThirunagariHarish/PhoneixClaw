@@ -26,7 +26,7 @@ import {
   Shield, TrendingUp, List, ScrollText, BookOpen,
   ChevronDown, ChevronUp, Check, X,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
-  FileJson, FileSpreadsheet, FileDown, Brain,
+  FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -183,22 +183,96 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
    ================================================================ */
 function TradesTab({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [filter, setFilter] = useState<string>('all')
   const { data: trades = [] } = useQuery<Trade[]>({
     queryKey: ['trades', id],
     queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/live-trades`)).data } catch { return [] } },
     refetchInterval: 10000,
   })
 
+  const filtered = filter === 'all' ? trades : trades.filter(t => {
+    if (filter === 'executed') return t.status === 'executed' || t.status === 'closed'
+    if (filter === 'rejected') return t.status === 'rejected' || t.status === 'skipped'
+    if (filter === 'watchlisted') return t.status === 'watchlisted' || t.status === 'watching'
+    if (filter === 'open') return t.status === 'open' || t.status === 'active'
+    return true
+  })
+
+  const executed = trades.filter(t => t.status === 'executed' || t.status === 'closed')
+  const totalPnl = executed.reduce((s, t) => s + (t.pnl_dollar ?? 0), 0)
+  const wins = executed.filter(t => (t.pnl_dollar ?? 0) > 0).length
+  const winRate = executed.length > 0 ? (wins / executed.length) * 100 : 0
+  const avgHold = (() => {
+    const durations = executed.filter(t => t.entry_time && t.exit_time).map(t => {
+      return (new Date(t.exit_time!).getTime() - new Date(t.entry_time).getTime()) / (1000 * 60 * 60)
+    })
+    return durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0
+  })()
+
+  const filters = [
+    { key: 'all', label: 'All', count: trades.length },
+    { key: 'executed', label: 'Executed', count: trades.filter(t => t.status === 'executed' || t.status === 'closed').length },
+    { key: 'open', label: 'Open', count: trades.filter(t => t.status === 'open' || t.status === 'active').length },
+    { key: 'rejected', label: 'Rejected', count: trades.filter(t => t.status === 'rejected' || t.status === 'skipped').length },
+    { key: 'watchlisted', label: 'Watchlisted', count: trades.filter(t => t.status === 'watchlisted' || t.status === 'watching').length },
+  ]
+
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium">Total P&L</p>
+            <p className={cn('text-xl font-bold font-mono', totalPnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium">Win Rate</p>
+            <p className="text-xl font-bold">{winRate.toFixed(1)}%</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium">Avg Hold</p>
+            <p className="text-xl font-bold">{avgHold < 1 ? `${(avgHold * 60).toFixed(0)}m` : `${avgHold.toFixed(1)}h`}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <p className="text-[10px] uppercase text-muted-foreground font-medium">Total Trades</p>
+            <p className="text-xl font-bold">{trades.length}</p>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Trade History ({trades.length})</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-medium">Trade History</CardTitle>
+            <div className="flex gap-1">
+              {filters.map(f => (
+                <Button
+                  key={f.key}
+                  size="sm"
+                  variant={filter === f.key ? 'default' : 'outline'}
+                  className="text-[10px] h-6 px-2"
+                  onClick={() => setFilter(f.key)}
+                >
+                  {f.label} ({f.count})
+                </Button>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
         <CardContent>
-          {trades.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No trades recorded yet.</p>
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No trades in this category.</p>
           ) : (
             <div className="space-y-1">
-              {trades.map(t => (
+              {filtered.map(t => (
                 <div key={t.id}>
                   <div className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => setExpanded(expanded === t.id ? null : t.id)}>
                     <div className="w-16 text-xs text-muted-foreground">{t.entry_time ? new Date(t.entry_time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}</div>
@@ -248,7 +322,7 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatHistory.length])
 
   const sendMut = useMutation({
-    mutationFn: async (msg: string) => (await api.post(`/api/v2/agents/${id}/chat`, { message: msg })).data,
+    mutationFn: async (msg: string) => (await api.post(`/api/v2/chat/send`, { message: msg, agent_id: id })).data,
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['agent-chat', id] }); setMessage('') },
     onError: () => toast.error('Failed to send message'),
   })
@@ -1130,6 +1204,111 @@ function BacktestingSection({ id, status }: { id: string; status: string }) {
 }
 
 /* ================================================================
+   RUNTIME TAB
+   ================================================================ */
+interface RuntimeInfo {
+  agent_id: string
+  running: boolean
+  session_row_id?: string
+  session_id?: string | null
+  agent_type?: string | null
+  session_role?: string | null
+  working_directory?: string | null
+  started_at?: string | null
+  host_name?: string | null
+  pid?: number | null
+  uptime_seconds?: number | null
+  memory_usage_mb?: number | null
+}
+
+function RuntimeTab({ id }: { id: string }) {
+  const { data: runtime } = useQuery<RuntimeInfo>({
+    queryKey: ['runtime-info', id],
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/runtime-info`)).data } catch { return null } },
+    refetchInterval: 10000,
+  })
+
+  const { data: logs = [] } = useQuery<Array<{ id: string; level: string; message: string; created_at: string }>>({
+    queryKey: ['agent-logs-recent', id],
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/logs?limit=20`)).data } catch { return [] } },
+    refetchInterval: 10000,
+  })
+
+  const formatUptime = (secs: number | null) => {
+    if (!secs) return '—'
+    if (secs < 60) return `${secs}s`
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`
+    const h = Math.floor(secs / 3600)
+    const m = Math.floor((secs % 3600) / 60)
+    return `${h}h ${m}m`
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1"><Server className="h-3.5 w-3.5" /><p className="text-[10px] uppercase font-medium">Status</p></div>
+            <p className="text-lg font-bold">{runtime?.running ? 'Running' : 'Stopped'}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1"><Clock className="h-3.5 w-3.5" /><p className="text-[10px] uppercase font-medium">Uptime</p></div>
+            <p className="text-lg font-bold">{formatUptime(runtime?.uptime_seconds ?? null)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1"><Cpu className="h-3.5 w-3.5" /><p className="text-[10px] uppercase font-medium">Memory</p></div>
+            <p className="text-lg font-bold">{runtime?.memory_usage_mb != null ? `${runtime.memory_usage_mb.toFixed(0)} MB` : '—'}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1"><Cpu className="h-3.5 w-3.5" /><p className="text-[10px] uppercase font-medium">PID</p></div>
+            <p className="text-lg font-bold font-mono">{runtime?.pid ?? '—'}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Server className="h-4 w-4" />Session Details</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm">
+            <div><span className="text-muted-foreground text-xs">Session ID</span><p className="font-mono text-xs truncate">{runtime?.session_id || '—'}</p></div>
+            <div><span className="text-muted-foreground text-xs">Agent Type</span><p className="font-mono text-xs">{runtime?.agent_type || '—'}</p></div>
+            <div><span className="text-muted-foreground text-xs">Host</span><p className="font-mono text-xs truncate">{runtime?.host_name || '—'}</p></div>
+            <div><span className="text-muted-foreground text-xs">Working Directory</span><p className="font-mono text-xs truncate">{runtime?.working_directory || '—'}</p></div>
+            <div><span className="text-muted-foreground text-xs">Started At</span><p className="text-xs">{runtime?.started_at ? new Date(runtime.started_at).toLocaleString() : '—'}</p></div>
+            <div><span className="text-muted-foreground text-xs">Session Role</span><p className="font-mono text-xs">{runtime?.session_role || '—'}</p></div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Terminal className="h-4 w-4" />Recent Logs</CardTitle></CardHeader>
+        <CardContent>
+          {logs.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">No recent logs.</p>
+          ) : (
+            <div className="space-y-1 max-h-[400px] overflow-y-auto font-mono text-xs">
+              {logs.map(l => (
+                <div key={l.id} className="flex gap-2 py-0.5 border-b border-muted/30">
+                  <span className="text-muted-foreground whitespace-nowrap w-14 shrink-0">{l.created_at ? new Date(l.created_at).toLocaleTimeString() : ''}</span>
+                  <Badge variant={l.level === 'error' ? 'destructive' : l.level === 'warning' ? 'secondary' : 'outline'} className="text-[9px] h-4 w-12 justify-center shrink-0">{l.level}</Badge>
+                  <span className="truncate">{l.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* ================================================================
    LIVE SECTION (wraps all live sub-tabs)
    ================================================================ */
 function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
@@ -1142,6 +1321,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
         <TabsTrigger value="intelligence" className="text-xs"><Shield className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Intel</TabsTrigger>
         <TabsTrigger value="logs" className="text-xs"><ScrollText className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Logs</TabsTrigger>
         <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
+        <TabsTrigger value="runtime" className="text-xs"><Terminal className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Runtime</TabsTrigger>
       </TabsList>
 
       <TabsContent value="portfolio" className="mt-4"><PortfolioTab id={id} agent={agent} /></TabsContent>
@@ -1150,6 +1330,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
       <TabsContent value="intelligence" className="mt-4"><IntelligenceTab id={id} /></TabsContent>
       <TabsContent value="logs" className="mt-4"><LogsTab id={id} /></TabsContent>
       <TabsContent value="rules" className="mt-4"><RulesTab id={id} /></TabsContent>
+      <TabsContent value="runtime" className="mt-4"><RuntimeTab id={id} /></TabsContent>
     </Tabs>
   )
 }
