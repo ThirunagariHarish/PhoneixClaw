@@ -808,6 +808,20 @@ function BacktestReviewDialog({ agent, open, onOpenChange }: {
     enabled: !!agent && open,
   })
 
+  const { data: artifacts } = useQuery<Record<string, unknown>>({
+    queryKey: ['agent-backtest-artifacts', agent?.id],
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${agent!.id}/backtest-artifacts`)).data } catch { return null } },
+    enabled: !!agent && open,
+  })
+
+  const totalTrades = backtest?.total_trades || (artifacts?.total_trades as number) || (artifacts?.preprocessing_summary as Record<string, number>)?.total_rows || 0
+  const winRate = backtest?.win_rate ?? (artifacts?.win_rate as number | null)
+  const totalReturn = backtest?.total_return ?? (artifacts?.total_return as number | null)
+  const sharpeRatio = backtest?.sharpe_ratio ?? (artifacts?.sharpe_ratio as number | null)
+  const maxDrawdown = backtest?.max_drawdown ?? (artifacts?.max_drawdown as number | null)
+  const modelResults = (artifacts?.all_model_results as Array<Record<string, unknown>>) || []
+  const bestModel = modelResults.length > 0 ? modelResults.reduce((a, b) => ((a.auc_roc as number) ?? 0) >= ((b.auc_roc as number) ?? 0) ? a : b) : null
+
   const approveMutation = useMutation({
     mutationFn: async ({ mode }: { mode: 'paper' | 'live' }) => {
       await api.post(`/api/v2/agents/${agent!.id}/approve`, { trading_mode: mode })
@@ -846,10 +860,10 @@ function BacktestReviewDialog({ agent, open, onOpenChange }: {
             {/* Summary metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Total Return', value: backtest.total_return != null ? `${backtest.total_return.toFixed(2)}%` : 'N/A', good: (backtest.total_return ?? 0) > 0, icon: TrendingUp },
-                { label: 'Win Rate', value: `${((backtest.win_rate ?? 0) * 100).toFixed(1)}%`, good: (backtest.win_rate ?? 0) >= 0.5, icon: CheckCircle2 },
-                { label: 'Sharpe Ratio', value: backtest.sharpe_ratio != null ? backtest.sharpe_ratio.toFixed(2) : 'N/A', good: (backtest.sharpe_ratio ?? 0) >= 1.0, icon: Activity },
-                { label: 'Max Drawdown', value: backtest.max_drawdown != null ? `${backtest.max_drawdown.toFixed(2)}%` : 'N/A', good: (backtest.max_drawdown ?? 0) < 10, icon: Shield },
+                { label: 'Total Return', value: totalReturn != null ? `${totalReturn.toFixed(2)}%` : 'N/A', good: (totalReturn ?? 0) > 0, icon: TrendingUp },
+                { label: 'Win Rate', value: `${((winRate ?? 0) * 100).toFixed(1)}%`, good: (winRate ?? 0) >= 0.5, icon: CheckCircle2 },
+                { label: 'Sharpe Ratio', value: sharpeRatio != null ? sharpeRatio.toFixed(2) : 'N/A', good: (sharpeRatio ?? 0) >= 1.0, icon: Activity },
+                { label: 'Max Drawdown', value: maxDrawdown != null ? `${maxDrawdown.toFixed(2)}%` : 'N/A', good: (maxDrawdown ?? 0) < 10, icon: Shield },
               ].map((m) => (
                 <div key={m.label} className={`rounded-lg border p-3 ${m.good ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
                   <div className="flex items-center gap-1.5 mb-1">
@@ -865,17 +879,35 @@ function BacktestReviewDialog({ agent, open, onOpenChange }: {
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-lg border p-3">
                 <p className="text-[11px] text-muted-foreground uppercase">Total Trades</p>
-                <p className="text-base font-bold font-mono">{backtest.total_trades}</p>
+                <p className="text-base font-bold font-mono">{totalTrades}</p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-[11px] text-muted-foreground uppercase">Profit Factor</p>
-                <p className="text-base font-bold font-mono">{(backtest.metrics as Record<string, number>)?.profit_factor?.toFixed(2) ?? 'N/A'}</p>
+                <p className="text-base font-bold font-mono">{(backtest?.metrics as Record<string, number>)?.profit_factor?.toFixed(2) ?? 'N/A'}</p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-[11px] text-muted-foreground uppercase">Avg Trade P&L</p>
-                <p className="text-base font-bold font-mono">${(backtest.metrics as Record<string, number>)?.avg_trade_pnl?.toFixed(2) ?? 'N/A'}</p>
+                <p className="text-base font-bold font-mono">${(backtest?.metrics as Record<string, number>)?.avg_trade_pnl?.toFixed(2) ?? 'N/A'}</p>
               </div>
             </div>
+
+            {/* Best model info from artifacts */}
+            {bestModel && (
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
+                  <p className="text-[11px] text-muted-foreground uppercase">Best Model</p>
+                  <p className="text-base font-bold font-mono text-blue-400">{String(bestModel.model_name)}</p>
+                </div>
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
+                  <p className="text-[11px] text-muted-foreground uppercase">Accuracy</p>
+                  <p className="text-base font-bold font-mono text-blue-400">{((bestModel.accuracy as number) * 100).toFixed(1)}%</p>
+                </div>
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
+                  <p className="text-[11px] text-muted-foreground uppercase">AUC-ROC</p>
+                  <p className="text-base font-bold font-mono text-blue-400">{(bestModel.auc_roc as number)?.toFixed(3) ?? 'N/A'}</p>
+                </div>
+              </div>
+            )}
 
             {/* Equity curve */}
             {curve.length > 1 && (

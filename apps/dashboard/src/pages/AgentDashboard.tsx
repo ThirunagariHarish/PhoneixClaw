@@ -1059,13 +1059,21 @@ function BacktestingSection({ id, status }: { id: string; status: string }) {
     <div className="space-y-4">
       <BacktestPipelineProgress id={id} status={status} artifacts={artifacts} />
 
-      {artifacts.total_trades > 0 && (
+      {(artifacts.total_trades > 0 || artifacts.all_model_results.length > 0 || (artifacts.preprocessing_summary as Record<string, number>)?.total_rows > 0) && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          <MetricCard title="Total Trades" value={artifacts.total_trades} />
+          <MetricCard title="Total Trades" value={artifacts.total_trades || (artifacts.preprocessing_summary as Record<string, number>)?.total_rows || 0} />
           <MetricCard title="Win Rate" value={artifacts.win_rate != null ? `${(artifacts.win_rate * 100).toFixed(1)}%` : '—'} trend={artifacts.win_rate != null ? (artifacts.win_rate >= 0.5 ? 'up' : 'down') : undefined} />
           <MetricCard title="Sharpe Ratio" value={artifacts.sharpe_ratio?.toFixed(2) ?? '—'} trend={artifacts.sharpe_ratio != null ? (artifacts.sharpe_ratio >= 1 ? 'up' : 'neutral') : undefined} />
           <MetricCard title="Max Drawdown" value={artifacts.max_drawdown != null ? `${artifacts.max_drawdown.toFixed(1)}%` : '—'} />
           <MetricCard title="Total Return" value={artifacts.total_return != null ? `${artifacts.total_return.toFixed(1)}%` : '—'} trend={artifacts.total_return != null ? (artifacts.total_return >= 0 ? 'up' : 'down') : undefined} />
+          {artifacts.all_model_results.length > 0 && (() => {
+            const best = artifacts.all_model_results.reduce((a, b) => (a.auc_roc ?? 0) >= (b.auc_roc ?? 0) ? a : b)
+            return <>
+              <MetricCard title="Best Model" value={best.model_name} />
+              <MetricCard title="AUC-ROC" value={best.auc_roc?.toFixed(3) ?? '—'} trend={(best.auc_roc ?? 0) >= 0.7 ? 'up' : 'neutral'} />
+              <MetricCard title="Accuracy" value={best.accuracy != null ? `${(best.accuracy * 100).toFixed(1)}%` : '—'} trend={(best.accuracy ?? 0) >= 0.6 ? 'up' : 'neutral'} />
+            </>
+          })()}
         </div>
       )}
 

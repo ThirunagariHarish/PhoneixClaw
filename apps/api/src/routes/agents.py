@@ -1148,6 +1148,23 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
             except Exception:
                 pass
 
+    if not patterns:
+        enriched_for_patterns = _find_file(
+            work_dir / "enriched.parquet",
+            output_dir / "enriched.parquet",
+        )
+        if enriched_for_patterns:
+            try:
+                import pandas as _pd
+                import sys
+                sys.path.insert(0, str(repo_root / "agents" / "backtesting" / "tools"))
+                from discover_patterns import discover_patterns as _discover
+                _edf = _pd.read_parquet(enriched_for_patterns)
+                if len(_edf) > 0:
+                    patterns = _discover(_edf)
+            except Exception:
+                pass
+
     downloadable_files: list[dict] = []
     for scan_root in [work_dir, output_dir]:
         if scan_root.exists():
@@ -1163,16 +1180,50 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
                         "size_human": _human_size(fpath.stat().st_size),
                     })
 
+    # --- Compute summary metrics from files when DB typed columns are null ---
+    computed_total_trades = bt.total_trades or 0
+    computed_win_rate = bt.win_rate
+    computed_total_return = bt.total_return
+    computed_sharpe = bt.sharpe_ratio
+    computed_drawdown = bt.max_drawdown
+
+    if computed_total_trades == 0 or computed_win_rate is None:
+        enriched_file = _find_file(
+            work_dir / "enriched.parquet",
+            output_dir / "enriched.parquet",
+        )
+        if enriched_file:
+            try:
+                import pandas as _pd
+                edf = _pd.read_parquet(enriched_file)
+                computed_total_trades = len(edf)
+                if "is_profitable" in edf.columns:
+                    computed_win_rate = round(float(edf["is_profitable"].mean()), 4)
+                if "pnl_pct" in edf.columns:
+                    computed_total_return = round(float(edf["pnl_pct"].sum()), 4)
+            except Exception:
+                pass
+
+    if computed_total_trades == 0 and preprocessing_summary:
+        computed_total_trades = preprocessing_summary.get("total_rows", 0)
+
+    if all_model_results and (computed_sharpe is None or computed_drawdown is None):
+        best = max(all_model_results, key=lambda r: r.get("auc_roc", 0))
+        if computed_sharpe is None:
+            computed_sharpe = best.get("sharpe_ratio", 0.0)
+        if computed_drawdown is None:
+            computed_drawdown = best.get("max_drawdown_pct", 0.0)
+
     return {
         "backtest_id": str(bt.id),
         "status": bt.status,
         "progress_pct": bt.progress_pct or 0,
         "current_step": bt.current_step,
-        "total_trades": bt.total_trades,
-        "win_rate": bt.win_rate,
-        "sharpe_ratio": bt.sharpe_ratio,
-        "max_drawdown": bt.max_drawdown,
-        "total_return": bt.total_return,
+        "total_trades": computed_total_trades,
+        "win_rate": computed_win_rate,
+        "sharpe_ratio": computed_sharpe,
+        "max_drawdown": computed_drawdown,
+        "total_return": computed_total_return,
         "feature_names": feature_names,
         "feature_count": len(feature_names),
         "all_model_results": all_model_results,
