@@ -28,6 +28,25 @@ V3_ADD_COLUMNS_SQL = [
     "ALTER TABLE agent_backtests ADD COLUMN IF NOT EXISTS progress_pct INTEGER NOT NULL DEFAULT 0",
 ]
 
+# Migrations 008-013: columns that create_all won't add to pre-existing tables
+V4_ADD_COLUMNS_SQL = [
+    "ALTER TABLE agent_trades ADD COLUMN IF NOT EXISTS decision_status VARCHAR(20) NOT NULL DEFAULT 'accepted'",
+    "ALTER TABLE agent_trades ADD COLUMN IF NOT EXISTS rejection_reason TEXT",
+    "ALTER TABLE agent_backtests ADD COLUMN IF NOT EXISTS model_selection JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE agent_backtests ADD COLUMN IF NOT EXISTS backtesting_version INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS parent_agent_id UUID",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS position_ticker VARCHAR(20)",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS position_side VARCHAR(10)",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS session_role VARCHAR(30) NOT NULL DEFAULT 'primary'",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS host_name VARCHAR(100)",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS pid INTEGER",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_type VARCHAR(50) NOT NULL DEFAULT 'info'",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS channels_sent JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS data JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_improvements JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_research_at TIMESTAMP WITH TIME ZONE",
+]
+
 
 async def create_all_tables():
     from sqlalchemy import text
@@ -82,6 +101,13 @@ async def create_all_tables():
             except Exception as e:
                 print(f"  (skipped: {e})")
         print("V3 new columns ensured.")
+
+        for sql in V4_ADD_COLUMNS_SQL:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                print(f"  (skipped: {e})")
+        print("V4 new columns ensured (migrations 008-013).")
 
     await engine.dispose()
     print("DB tables ready.")
