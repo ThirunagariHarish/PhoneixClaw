@@ -37,10 +37,14 @@ RUN pip install --no-deps -e . 2>/dev/null || true
 
 RUN mkdir -p /app/data && chown -R phoenix:phoenix /app/data
 
+# Auto-migration entrypoint: ensures DB schema matches models on every boot.
+COPY apps/api/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 ENV PYTHONPATH=/app
 EXPOSE 8011
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8011/health || exit 1
 
-CMD ["uvicorn", "apps.api.src.main:app", "--host", "0.0.0.0", "--port", "8011"]
+ENTRYPOINT ["/app/entrypoint.sh"]
