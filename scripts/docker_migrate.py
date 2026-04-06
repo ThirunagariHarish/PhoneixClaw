@@ -8,7 +8,7 @@ import os
 import sys
 
 
-CURRENT_MIGRATION = "007"
+CURRENT_MIGRATION = "013"
 
 V3_CLEANUP_SQL = [
     "ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_instance_id_fkey",

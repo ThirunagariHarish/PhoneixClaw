@@ -62,7 +62,8 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    command: ["python", "scripts/docker_migrate.py"]
+    entrypoint: ["python", "scripts/docker_migrate.py"]
+    command: []
     environment:
       - DATABASE_URL=${DATABASE_URL}
     depends_on:
