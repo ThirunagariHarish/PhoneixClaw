@@ -367,6 +367,7 @@ def create_live_agent(config_path: str, models_dir: str, output_dir: str):
     _render_claude_md(manifest, output)
     _write_config(manifest, config, output)
     _write_claude_settings(output)
+    _copy_commands(output)
     (output / "trades.log").write_text("")
 
     print(f"Live agent created at {output}")
@@ -458,6 +459,15 @@ def _write_claude_settings(output: Path):
     claude_dir.mkdir(exist_ok=True)
     with open(claude_dir / "settings.json", "w") as f:
         json.dump(CLAUDE_SETTINGS, f, indent=2)
+
+
+def _copy_commands(output: Path):
+    """Copy slash commands from the live-trader template into the agent bundle."""
+    commands_src = TEMPLATE_DIR / ".claude" / "commands"
+    if commands_src.exists() and commands_src.is_dir():
+        commands_dst = output / ".claude" / "commands"
+        shutil.copytree(commands_src, commands_dst, dirs_exist_ok=True)
+        print(f"Copied {len(list(commands_dst.glob('*.md')))} slash commands to {commands_dst}")
 
 
 def _render_claude_md(manifest: dict, output: Path):

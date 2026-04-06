@@ -362,6 +362,13 @@ class AgentGateway:
         if settings_src.exists():
             shutil.copy2(settings_src, claude_settings_dst / "settings.json")
 
+        commands_src = LIVE_TEMPLATE / ".claude" / "commands"
+        if commands_src.exists():
+            commands_dst = claude_settings_dst / "commands"
+            if commands_dst.exists():
+                shutil.rmtree(commands_dst)
+            shutil.copytree(commands_src, commands_dst)
+
         bt_work_dir = DATA_DIR / f"backtest_{agent.id}"
         models_src = bt_work_dir / "output" / "models"
         if models_src.exists():
