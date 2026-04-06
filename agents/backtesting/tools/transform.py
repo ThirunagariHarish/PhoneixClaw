@@ -121,7 +121,17 @@ async def fetch_discord_history(token: str, channel_id: str, lookback_days: int 
             if before:
                 params["before"] = before
 
-            resp = await client.get(base_url, headers=headers, params=params)
+            for attempt in range(3):
+                try:
+                    resp = await client.get(base_url, headers=headers, params=params)
+                    break
+                except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+                    if attempt == 2:
+                        print(f"Discord API connection failed after 3 attempts: {exc}")
+                        return messages
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+
             if resp.status_code == 429:
                 import asyncio
                 retry_after = resp.json().get("retry_after", 5)
@@ -294,7 +304,27 @@ def main():
     parser.add_argument("--config", required=True, help="Path to config.json")
     parser.add_argument("--output", required=True, help="Output parquet path")
     parser.add_argument("--messages-file", help="Use pre-fetched messages JSON instead of Discord API")
+    parser.add_argument("--force", action="store_true", help="Re-run even if output exists")
     args = parser.parse_args()
+
+    output_path = Path(args.output)
+
+    if not args.force and output_path.exists():
+        try:
+            existing = pd.read_parquet(output_path)
+            if len(existing) > 0:
+                win_rate = existing["is_profitable"].mean() if "is_profitable" in existing.columns else 0
+                print(f"Transformed {len(existing)} complete trades (already cached, {win_rate:.1%} win rate)")
+                try:
+                    from report_to_phoenix import report_progress
+                    report_progress("transform", f"Transformed {len(existing)} trades (cached)", 15, {
+                        "total_trades": len(existing),
+                    })
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
 
     with open(args.config) as f:
         config = json.load(f)
@@ -341,7 +371,6 @@ def main():
         df["channel"] = channel_name
 
     # Save
-    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, index=False)
     print(f"Saved {len(df)} trades to {output_path}")
@@ -350,7 +379,10 @@ def main():
     if len(df) > 0 and "is_profitable" in df.columns:
         win_rate = df["is_profitable"].mean()
         avg_pnl = df["pnl_pct"].mean() if "pnl_pct" in df.columns else 0
-        print(f"Win rate: {win_rate:.1%}, Avg P&L: {avg_pnl:.2%}")
+        print(f"Transformed {len(df)} complete trades from {len(raw_messages)} messages ({win_rate:.1%} win rate)")
+        print(f"Avg P&L: {avg_pnl:.2%}")
+    else:
+        print(f"Saved {len(df)} trades to {output_path}")
 
     try:
         from report_to_phoenix import report_progress
