@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 
@@ -38,6 +39,30 @@ def _load_config() -> dict:
     return {}
 
 
+def _do_http_post(url: str, payload: dict, headers: dict, timeout: int = 5):
+    """Fire-and-forget HTTP POST (runs in a daemon thread)."""
+    try:
+        import httpx
+        resp = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+        if resp.status_code >= 400:
+            print(f"[report_to_phoenix] HTTP {resp.status_code}: {resp.text[:200]}")
+    except ImportError:
+        import urllib.request
+        import urllib.error
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json", **headers},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.URLError as e:
+            print(f"[report_to_phoenix] URLError: {e}")
+    except Exception as e:
+        print(f"[report_to_phoenix] Error: {e}")
+
+
 def report_progress(
     step: str,
     message: str,
@@ -45,8 +70,13 @@ def report_progress(
     metrics: dict | None = None,
     status: str | None = None,
     config: dict | None = None,
+    blocking: bool = False,
 ):
-    """Report backtesting or live agent progress to the Phoenix API."""
+    """Report backtesting or live agent progress to the Phoenix API.
+
+    By default runs in a background daemon thread so the caller never blocks
+    on network I/O.  Pass blocking=True for CLI / shutdown paths.
+    """
     if config is None:
         config = _load_config()
 
@@ -67,36 +97,18 @@ def report_progress(
     if status:
         payload["status"] = status
 
-    try:
-        import httpx
-        resp = httpx.post(
-            f"{api_url}/api/v2/agents/{agent_id}/backtest-progress",
-            json=payload,
-            headers={"X-Agent-Key": api_key},
-            timeout=10,
-        )
-        if resp.status_code >= 400:
-            print(f"[report_to_phoenix] HTTP {resp.status_code}: {resp.text[:200]}")
-    except ImportError:
-        import urllib.request
-        import urllib.error
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            f"{api_url}/api/v2/agents/{agent_id}/backtest-progress",
-            data=data,
-            headers={"Content-Type": "application/json", "X-Agent-Key": api_key},
-            method="POST",
-        )
-        try:
-            urllib.request.urlopen(req, timeout=10)
-        except urllib.error.URLError as e:
-            print(f"[report_to_phoenix] URLError: {e}")
-    except Exception as e:
-        print(f"[report_to_phoenix] Error: {e}")
+    url = f"{api_url}/api/v2/agents/{agent_id}/backtest-progress"
+    headers = {"X-Agent-Key": api_key}
+
+    if blocking:
+        _do_http_post(url, payload, headers)
+    else:
+        t = threading.Thread(target=_do_http_post, args=(url, payload, headers), daemon=True)
+        t.start()
 
 
 def report_heartbeat(config: dict | None = None):
-    """Send a heartbeat to the Phoenix API."""
+    """Send a heartbeat to the Phoenix API (non-blocking)."""
     if config is None:
         config = _load_config()
 
@@ -107,16 +119,12 @@ def report_heartbeat(config: dict | None = None):
     if not api_url or not agent_id:
         return
 
-    try:
-        import httpx
-        httpx.post(
-            f"{api_url}/api/v2/agents/{agent_id}/heartbeat",
-            json={"status": "alive"},
-            headers={"X-Agent-Key": api_key},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    url = f"{api_url}/api/v2/agents/{agent_id}/heartbeat"
+    payload = {"status": "alive"}
+    headers = {"X-Agent-Key": api_key}
+
+    t = threading.Thread(target=_do_http_post, args=(url, payload, headers), daemon=True)
+    t.start()
 
 
 def main():

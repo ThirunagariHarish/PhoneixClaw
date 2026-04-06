@@ -106,26 +106,87 @@ async def _run_pipeline(
         ("enrich",            "enrich.py",                 22),
         ("text_embeddings",   "compute_text_embeddings.py", 25),
         ("preprocess",        "preprocess.py",             28),
-        ("train_xgboost",     "train_xgboost.py",         35),
-        ("train_lightgbm",    "train_lightgbm.py",        38),
-        ("train_catboost",    "train_catboost.py",         41),
-        ("train_rf",          "train_rf.py",               44),
-        ("train_lstm",        "train_lstm.py",             47),
-        ("train_transformer", "train_transformer.py",      50),
-        ("train_tft",         "train_tft.py",              53),
-        ("train_tcn",         "train_tcn.py",              56),
-        ("train_hybrid",      "train_hybrid.py",           60),
-        ("train_meta_learner", "train_meta_learner.py",    63),
-        ("evaluate",          "evaluate_models.py",        68),
-        ("explainability",    "build_explainability.py",   75),
-        ("patterns",          "discover_patterns.py",      80),
-        ("llm_patterns",      "analyze_patterns_llm.py",   85),
-        ("create_live_agent", "create_live_agent.py",      95),
+    ]
+
+    parallel_training_steps = [
+        ("train_xgboost",     "train_xgboost.py"),
+        ("train_lightgbm",    "train_lightgbm.py"),
+        ("train_catboost",    "train_catboost.py"),
+        ("train_rf",          "train_rf.py"),
+        ("train_lstm",        "train_lstm.py"),
+        ("train_transformer", "train_transformer.py"),
+        ("train_tft",         "train_tft.py"),
+        ("train_tcn",         "train_tcn.py"),
+    ]
+
+    post_training_steps = [
+        ("train_hybrid",       "train_hybrid.py",           60),
+        ("train_meta_learner", "train_meta_learner.py",     63),
+        ("evaluate",           "evaluate_models.py",        68),
+        ("explainability",     "build_explainability.py",   75),
+        ("patterns",           "discover_patterns.py",      80),
+        ("llm_patterns",       "analyze_patterns_llm.py",   85),
+        ("create_live_agent",  "create_live_agent.py",      95),
     ]
 
     async for session in _get_session():
         try:
+            # Phase 1: sequential preprocessing
             for step_name, script, pct in steps:
+                script_path = BACKTESTING_TOOLS / script
+                if not script_path.exists():
+                    logger.warning("Step %s script not found: %s", step_name, script_path)
+                    continue
+
+                args = step_args.get(step_name, [])
+                await _update_progress(session, agent_id, backtest_id, step_name, pct, f"Running {step_name}...")
+
+                exit_code, stdout, stderr = await _run_script(script_path, args, env_extra)
+
+                if exit_code != 0:
+                    error_msg = (stderr or stdout or "Unknown error")[:500]
+                    logger.error("Step %s failed (exit %d): %s", step_name, exit_code, error_msg)
+                    await _mark_failed(session, agent_id, backtest_id, step_name, error_msg)
+                    return
+
+                logger.info("Step %s completed for agent %s", step_name, agent_id)
+
+            # Phase 2: parallel base model training
+            await _update_progress(session, agent_id, backtest_id, "training", 30,
+                                   f"Training {len(parallel_training_steps)} models in parallel...")
+
+            async def _train_one(step_name: str, script: str):
+                script_path = BACKTESTING_TOOLS / script
+                if not script_path.exists():
+                    logger.warning("Step %s script not found: %s", step_name, script_path)
+                    return step_name, 0, "", ""
+                args = step_args.get(step_name, [])
+                ec, so, se = await _run_script(script_path, args, env_extra)
+                return step_name, ec, so, se
+
+            results = await asyncio.gather(
+                *[_train_one(sn, sc) for sn, sc in parallel_training_steps],
+                return_exceptions=True,
+            )
+
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.error("Training task raised exception: %s", res)
+                    await _mark_failed(session, agent_id, backtest_id, "training", str(res)[:500])
+                    return
+                step_name, exit_code, stdout, stderr = res
+                if exit_code != 0:
+                    error_msg = (stderr or stdout or "Unknown error")[:500]
+                    logger.error("Step %s failed (exit %d): %s", step_name, exit_code, error_msg)
+                    await _mark_failed(session, agent_id, backtest_id, step_name, error_msg)
+                    return
+                logger.info("Step %s completed for agent %s", step_name, agent_id)
+
+            await _update_progress(session, agent_id, backtest_id, "training_done", 56,
+                                   "All base models trained")
+
+            # Phase 3: sequential post-training steps
+            for step_name, script, pct in post_training_steps:
                 script_path = BACKTESTING_TOOLS / script
                 if not script_path.exists():
                     logger.warning("Step %s script not found: %s", step_name, script_path)

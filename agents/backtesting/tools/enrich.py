@@ -101,12 +101,12 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     entry_date = entry_time.date() if hasattr(entry_time, "date") else entry_time
 
     # Get historical data (cached per ticker)
-    end_str = str(entry_date)
-    start_str = str(entry_date - timedelta(days=400))
-    cache_key = f"{ticker}_{start_str}_{end_str}"
+    cache_key = f"daily_{ticker}"
 
     if cache_key not in cache:
-        cache[cache_key] = _safe_download(ticker, start_str, end_str)
+        global_start = cache.get("_global_start", str(entry_date - timedelta(days=400)))
+        global_end = cache.get("_global_end", str(entry_date))
+        cache[cache_key] = _safe_download(ticker, global_start, global_end)
 
     hist = cache[cache_key]
     if hist.empty or len(hist) < 30:
@@ -409,9 +409,9 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
 
     # ── Category 5: Market Context ──────────────────────────────────────
     for ctx_ticker, prefix in [("SPY", "spy"), ("QQQ", "qqq"), ("IWM", "iwm"), ("DIA", "dia")]:
-        ctx_key = f"{ctx_ticker}_{start_str}_{end_str}"
+        ctx_key = f"daily_{ctx_ticker}"
         if ctx_key not in cache:
-            cache[ctx_key] = _safe_download(ctx_ticker, start_str, end_str)
+            cache[ctx_key] = _safe_download(ctx_ticker, cache.get("_global_start", ""), cache.get("_global_end", ""))
         ctx = cache[ctx_key]
         if not ctx.empty and len(ctx) >= 2:
             ctx = ctx[ctx.index.date <= entry_date]
@@ -427,9 +427,9 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
         "XLU": "utilities", "XLP": "consumer_staples", "XLB": "materials", "XLRE": "real_estate",
     }
     for sect_ticker, sect_name in sector_etfs.items():
-        sect_key = f"{sect_ticker}_{start_str}_{end_str}"
+        sect_key = f"daily_{sect_ticker}"
         if sect_key not in cache:
-            cache[sect_key] = _safe_download(sect_ticker, start_str, end_str)
+            cache[sect_key] = _safe_download(sect_ticker, cache.get("_global_start", ""), cache.get("_global_end", ""))
         sect = cache[sect_key]
         if not sect.empty and len(sect) >= 2:
             sect = sect[sect.index.date <= entry_date]
@@ -438,18 +438,18 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
 
     # Fixed income / gold proxies
     for proxy_ticker, proxy_prefix in [("TLT", "tlt"), ("GLD", "gld")]:
-        p_key = f"{proxy_ticker}_{start_str}_{end_str}"
+        p_key = f"daily_{proxy_ticker}"
         if p_key not in cache:
-            cache[p_key] = _safe_download(proxy_ticker, start_str, end_str)
+            cache[p_key] = _safe_download(proxy_ticker, cache.get("_global_start", ""), cache.get("_global_end", ""))
         p_data = cache[p_key]
         if not p_data.empty and len(p_data) >= 2:
             p_data = p_data[p_data.index.date <= entry_date]
             if len(p_data) >= 2:
                 attrs[f"{proxy_prefix}_return_1d"] = (p_data["Close"].iloc[-1] - p_data["Close"].iloc[-2]) / p_data["Close"].iloc[-2]
 
-    vix_key = f"^VIX_{start_str}_{end_str}"
+    vix_key = "daily_^VIX"
     if vix_key not in cache:
-        cache[vix_key] = _safe_download("^VIX", start_str, end_str)
+        cache[vix_key] = _safe_download("^VIX", cache.get("_global_start", ""), cache.get("_global_end", ""))
     vix = cache[vix_key]
     if not vix.empty:
         vix = vix[vix.index.date <= entry_date]
@@ -464,7 +464,7 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
             attrs["vix_above_30"] = float(vix["Close"].iloc[-1] > 30)
 
     # Correlation with SPY
-    spy_key = f"SPY_{start_str}_{end_str}"
+    spy_key = "daily_SPY"
     if spy_key in cache and not cache[spy_key].empty and len(close) >= 20:
         spy_close = cache[spy_key]
         spy_close = spy_close[spy_close.index.date <= entry_date]["Close"]
@@ -503,12 +503,14 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     attrs["is_opex_week"] = float(abs(attrs["days_to_opex"]) <= 5)
 
     # ── Category 7: Sentiment & Events ────────────────────────────────
-    # FinBERT sentiment on the original Discord message
+    # FinBERT sentiment on the original Discord message (reuse model from cache)
     msg_text = row.get("raw_message", row.get("content", ""))
     if msg_text and isinstance(msg_text, str):
         try:
-            from shared.nlp.sentiment_classifier import SentimentClassifier
-            _clf = SentimentClassifier()
+            if "_sentiment_clf" not in cache:
+                from shared.nlp.sentiment_classifier import SentimentClassifier
+                cache["_sentiment_clf"] = SentimentClassifier()
+            _clf = cache["_sentiment_clf"]
             sent = _clf.classify(msg_text)
             attrs["sentiment_score"] = sent.score
             attrs["sentiment_confidence"] = sent.confidence
@@ -522,11 +524,18 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
             attrs["sentiment_bullish"] = np.nan
             attrs["sentiment_bearish"] = np.nan
 
-    # Earnings calendar (yfinance)
+    # Earnings calendar (yfinance) — cached per ticker
     try:
-        import yfinance as yf
-        yf_ticker = yf.Ticker(ticker)
-        cal = yf_ticker.calendar
+        fund_key = f"_fundamentals_{ticker}"
+        if fund_key not in cache:
+            import yfinance as yf
+            yf_ticker = yf.Ticker(ticker)
+            cache[fund_key] = {
+                "calendar": yf_ticker.calendar,
+                "recommendations": yf_ticker.recommendations,
+            }
+        fund = cache[fund_key]
+        cal = fund["calendar"]
         if cal is not None:
             earn_date = None
             if isinstance(cal, dict):
@@ -540,10 +549,8 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
                 attrs["days_to_earnings"] = (earn_dt - entry_date).days
                 attrs["earnings_within_7d"] = float(abs(attrs["days_to_earnings"]) <= 7)
                 attrs["earnings_within_14d"] = float(abs(attrs["days_to_earnings"]) <= 14)
-        # Analyst recommendations
-        recs = yf_ticker.recommendations
+        recs = fund["recommendations"]
         if recs is not None and not recs.empty:
-            # Filter to recs before entry date for no look-ahead
             if hasattr(recs.index, 'date'):
                 recs = recs[recs.index.date <= entry_date]
             recent = recs.tail(5)
@@ -617,14 +624,31 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     else:
         attrs["is_quad_witching_week"] = 0.0
 
-    # ── Category 8: Options Data ──────────────────────────────────────
-    try:
-        import asyncio
-        from shared.unusual_whales.client import UnusualWhalesClient
-        uw = UnusualWhalesClient()
-        _loop = asyncio.new_event_loop()
-        # Options flow
-        flow = _loop.run_until_complete(uw.get_options_flow(ticker=ticker))
+    # ── Category 8: Options Data (cached per ticker) ──────────────────
+    uw_key = f"_uw_{ticker}"
+    if uw_key not in cache:
+        try:
+            import asyncio
+            from shared.unusual_whales.client import UnusualWhalesClient
+            if "_uw_client" not in cache:
+                cache["_uw_client"] = UnusualWhalesClient()
+                cache["_uw_loop"] = asyncio.new_event_loop()
+            uw = cache["_uw_client"]
+            _loop = cache["_uw_loop"]
+            uw_data = {}
+            uw_data["flow"] = _loop.run_until_complete(uw.get_options_flow(ticker=ticker))
+            uw_data["gex"] = _loop.run_until_complete(uw.get_gex(ticker))
+            try:
+                uw_data["chain"] = _loop.run_until_complete(uw.get_option_chain(ticker))
+            except Exception:
+                uw_data["chain"] = None
+            cache[uw_key] = uw_data
+        except Exception:
+            cache[uw_key] = None
+
+    uw_data = cache.get(uw_key)
+    if uw_data:
+        flow = uw_data.get("flow")
         if flow:
             total_premium = sum(float(f.premium or 0) for f in flow[:50])
             call_premium = sum(float(f.premium or 0) for f in flow[:50]
@@ -634,53 +658,52 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
             attrs["options_call_premium_pct"] = call_premium / total_premium if total_premium > 0 else 0.5
             attrs["options_put_call_ratio"] = put_premium / call_premium if call_premium > 0 else np.nan
             attrs["options_flow_count"] = len(flow)
-        # GEX
-        gex = _loop.run_until_complete(uw.get_gex(ticker))
+        gex = uw_data.get("gex")
         if gex and gex.total_gex is not None:
             attrs["gex_value"] = float(gex.total_gex)
             attrs["gex_positive"] = float(attrs.get("gex_value", 0) > 0)
-        # IV rank & Greeks from options chain
-        try:
-            chain = _loop.run_until_complete(uw.get_option_chain(ticker))
-            contracts = chain.contracts if chain else []
-            if contracts:
-                ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
-                if ivs:
-                    current_iv = ivs[0]
-                    iv_min, iv_max = min(ivs), max(ivs)
-                    attrs["iv_current"] = current_iv
-                    attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
-                                        if iv_max > iv_min else 0.5)
-                    attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
-                # Average Greeks from near-the-money contracts
-                entry_price = float(row.get("entry_price", 0))
-                atm = [c for c in contracts if entry_price > 0 and
-                       abs(c.strike - entry_price) < entry_price * 0.05]
-                if not atm:
-                    atm = contracts[:5]
-                if atm:
-                    attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
-                    attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
-                    attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
-                    attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
-        except Exception:
-            pass
-        _loop.run_until_complete(uw.close())
-        _loop.close()
-    except Exception:
-        pass
+        chain = uw_data.get("chain")
+        contracts = chain.contracts if chain else []
+        if contracts:
+            ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
+            if ivs:
+                current_iv = ivs[0]
+                iv_min, iv_max = min(ivs), max(ivs)
+                attrs["iv_current"] = current_iv
+                attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
+                                    if iv_max > iv_min else 0.5)
+                attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
+            entry_price = float(row.get("entry_price", 0))
+            atm = [c for c in contracts if entry_price > 0 and
+                   abs(c.strike - entry_price) < entry_price * 0.05]
+            if not atm:
+                atm = contracts[:5]
+            if atm:
+                attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
+                attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
+                attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
+                attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
 
-    # ── Category 9: Intraday Features (5m bars if available) ──────────
-    try:
-        import yfinance as yf_intra
-        entry_str = str(entry_date)
-        intra_start = str(entry_date - timedelta(days=5))
-        intra_hist = yf_intra.download(ticker, start=intra_start, end=entry_str, interval="5m", progress=False)
-        if isinstance(intra_hist.columns, pd.MultiIndex):
-            intra_hist.columns = intra_hist.columns.get_level_values(0)
-        if not intra_hist.empty and len(intra_hist) >= 20:
-            ic = intra_hist["Close"]
-            iv = intra_hist["Volume"]
+    # ── Category 9: Intraday Features (5m bars, cached per ticker) ────
+    intra_key = f"_intra5m_{ticker}"
+    if intra_key not in cache:
+        try:
+            import yfinance as yf_intra
+            intra_start = cache.get("_global_start_5m", str(entry_date - timedelta(days=5)))
+            intra_end = cache.get("_global_end", str(entry_date))
+            intra_hist = yf_intra.download(ticker, start=intra_start, end=intra_end, interval="5m", progress=False)
+            if isinstance(intra_hist.columns, pd.MultiIndex):
+                intra_hist.columns = intra_hist.columns.get_level_values(0)
+            cache[intra_key] = intra_hist
+        except Exception:
+            cache[intra_key] = pd.DataFrame()
+
+    intra_hist = cache[intra_key]
+    if not intra_hist.empty:
+        intra_slice = intra_hist[intra_hist.index.date <= entry_date]
+        if len(intra_slice) >= 20:
+            ic = intra_slice["Close"]
+            iv = intra_slice["Volume"]
             intra_rsi = _calc_rsi(ic, 14)
             attrs["intraday_rsi_14"] = intra_rsi.iloc[-1] if not intra_rsi.empty else np.nan
             i_macd, i_sig, i_hist = _calc_macd(ic)
@@ -691,8 +714,6 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
                 attrs["price_vs_intraday_vwap"] = (ic.iloc[-1] - intra_vwap) / intra_vwap if intra_vwap > 0 else np.nan
             if len(iv) >= 20:
                 attrs["intraday_vol_ratio"] = float(iv.iloc[-1] / iv.iloc[-20:].mean()) if iv.iloc[-20:].mean() > 0 else np.nan
-    except Exception:
-        pass
 
     return attrs
 
@@ -706,7 +727,50 @@ def main():
     df = pd.read_parquet(args.input)
     print(f"Enriching {len(df)} trades...")
 
-    cache = {}
+    # ── Pre-download: fetch each ticker exactly once with the widest date range ──
+    import time
+    t0 = time.time()
+
+    all_dates = pd.to_datetime(df["entry_time"]).dt.date
+    global_min_date = all_dates.min() - timedelta(days=400)
+    global_max_date = all_dates.max() + timedelta(days=1)
+    global_start = str(global_min_date)
+    global_end = str(global_max_date)
+
+    trade_tickers = sorted(df["ticker"].dropna().unique().tolist())
+    context_tickers = (
+        ["SPY", "QQQ", "IWM", "DIA", "^VIX", "TLT", "GLD"]
+        + ["XLF", "XLK", "XLE", "XLV", "XLI", "XLC", "XLU", "XLP", "XLB", "XLRE"]
+    )
+    all_tickers = sorted(set(trade_tickers + context_tickers))
+
+    cache = {
+        "_global_start": global_start,
+        "_global_end": global_end,
+        "_global_start_5m": str(all_dates.min() - timedelta(days=5)),
+    }
+
+    print(f"  Pre-downloading daily data for {len(all_tickers)} tickers ({global_start} → {global_end}) ...")
+    for i, tk in enumerate(all_tickers):
+        cache[f"daily_{tk}"] = _safe_download(tk, global_start, global_end)
+        if (i + 1) % 10 == 0:
+            print(f"    Downloaded {i + 1}/{len(all_tickers)} tickers")
+
+    print(f"  Pre-downloading 5m intraday data for {len(trade_tickers)} trade tickers ...")
+    for i, tk in enumerate(trade_tickers):
+        try:
+            import yfinance as yf_intra
+            intra = yf_intra.download(tk, start=cache["_global_start_5m"], end=global_end, interval="5m", progress=False)
+            if isinstance(intra.columns, pd.MultiIndex):
+                intra.columns = intra.columns.get_level_values(0)
+            cache[f"_intra5m_{tk}"] = intra
+        except Exception:
+            cache[f"_intra5m_{tk}"] = pd.DataFrame()
+        if (i + 1) % 10 == 0:
+            print(f"    Downloaded {i + 1}/{len(trade_tickers)} intraday tickers")
+
+    print(f"  Pre-download done in {time.time() - t0:.1f}s ({len(cache)} cache entries)")
+
     enriched_rows = []
     n_success = 0
     n_empty = 0
@@ -721,6 +785,14 @@ def main():
 
         if (idx + 1) % 50 == 0:
             print(f"  Enriched {idx + 1}/{len(df)} trades (success={n_success}, skipped={n_empty})...")
+
+    # Cleanup UW client
+    if "_uw_client" in cache and "_uw_loop" in cache:
+        try:
+            cache["_uw_loop"].run_until_complete(cache["_uw_client"].close())
+            cache["_uw_loop"].close()
+        except Exception:
+            pass
 
     enriched_df = pd.DataFrame(enriched_rows)
     result = pd.concat([df.reset_index(drop=True), enriched_df], axis=1)
@@ -867,7 +939,7 @@ def _build_candle_windows(df: pd.DataFrame, cache: dict) -> np.ndarray | None:
             windows.append(np.zeros((BARS, FEATURES_PER_BAR), dtype=np.float32))
             continue
 
-        cache_key = f"5m_{ticker}_{entry_time.date()}"
+        cache_key = f"_intra5m_{ticker}"
         if cache_key not in cache:
             start = (entry_time - timedelta(days=5)).strftime("%Y-%m-%d")
             end = (entry_time + timedelta(days=1)).strftime("%Y-%m-%d")
