@@ -2,7 +2,9 @@
  * AgentDashboard — Mission Control for a single agent.
  * Route: /agents/:id
  *
- * Tabs: Portfolio | Trades | Chat | Intelligence | Logs | Rules
+ * Top-level: Live | Backtesting
+ * Live tabs: Portfolio | Trades | Chat | Intelligence | Logs | Rules
+ * Backtesting tabs: Overview | Models | Features | Downloads
  */
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
@@ -11,7 +13,6 @@ import api from '@/lib/api'
 import { useRealtimeQuery } from '@/hooks/use-websocket'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { StatusBadge } from '@/components/ui/StatusBadge'
-import { DataTable, type Column } from '@/components/ui/DataTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -19,12 +20,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AreaChart } from '@/components/tremor/AreaChart'
 import {
   ArrowLeft, Bot, Pause, Play, Send, MessageSquare, User,
-  Shield, Settings, TrendingUp, List, ScrollText, BookOpen,
-  ChevronDown, ChevronUp, Check, X, AlertTriangle,
+  Shield, TrendingUp, List, ScrollText, BookOpen,
+  ChevronDown, ChevronUp, Check, X,
+  Download, FlaskConical, Zap, Database, Columns3, BarChart3,
+  FileJson, FileSpreadsheet, FileDown, Brain,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -78,6 +80,26 @@ interface Rule {
   source?: string; enabled?: boolean; description?: string
 }
 
+interface ModelResult {
+  model_name: string; accuracy?: number; precision?: number
+  recall?: number; f1_score?: number; auc_roc?: number
+  profit_factor?: number; sharpe_ratio?: number; max_drawdown_pct?: number
+  score?: number; feature_importances?: Record<string, number>
+}
+
+interface BacktestArtifacts {
+  backtest_id: string; status: string; progress_pct: number
+  current_step: string | null
+  total_trades: number; win_rate: number | null; sharpe_ratio: number | null
+  max_drawdown: number | null; total_return: number | null
+  feature_names: string[]; feature_count: number
+  all_model_results: ModelResult[]; preprocessing_summary: Record<string, unknown>
+  explainability: Record<string, unknown>; patterns: Array<Record<string, unknown>>
+  downloadable_files: Array<{ name: string; size_bytes: number; size_human: string }>
+  metrics: Record<string, unknown>
+  completed_at: string | null; created_at: string | null
+}
+
 const LIVE = new Set(['LIVE', 'PAPER', 'RUNNING'])
 
 /* ================================================================
@@ -112,8 +134,7 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
   })
 
   return (
-    <TabsContent value="portfolio" className="space-y-4 mt-4">
-      {/* Account summary */}
+    <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         <MetricCard title="Total P&L" value={`$${(agent.total_pnl ?? 0).toLocaleString()}`} trend={(agent.total_pnl ?? 0) >= 0 ? 'up' : 'down'} />
         <MetricCard title="Today P&L" value={`$${(agent.daily_pnl ?? 0).toLocaleString()}`} trend={(agent.daily_pnl ?? 0) >= 0 ? 'up' : 'down'} />
@@ -121,7 +142,6 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
         <MetricCard title="Win Rate" value={`${((agent.win_rate ?? 0) * 100).toFixed(1)}%`} />
       </div>
 
-      {/* Equity curve */}
       {pnlCurve.length > 0 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Cumulative P&L</CardTitle></CardHeader>
@@ -131,7 +151,6 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
         </Card>
       )}
 
-      {/* Open positions */}
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Open Positions ({positions.length})</CardTitle></CardHeader>
         <CardContent>
@@ -155,7 +174,7 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
           )}
         </CardContent>
       </Card>
-    </TabsContent>
+    </div>
   )
 }
 
@@ -171,7 +190,7 @@ function TradesTab({ id }: { id: string }) {
   })
 
   return (
-    <TabsContent value="trades" className="space-y-4 mt-4">
+    <div className="space-y-4">
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Trade History ({trades.length})</CardTitle></CardHeader>
         <CardContent>
@@ -208,7 +227,7 @@ function TradesTab({ id }: { id: string }) {
           )}
         </CardContent>
       </Card>
-    </TabsContent>
+    </div>
   )
 }
 
@@ -243,8 +262,8 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
   const handleSend = () => { const t = message.trim(); if (t && !sendMut.isPending) sendMut.mutate(t) }
 
   return (
-    <TabsContent value="chat" className="mt-4">
-      <Card className="flex flex-col" style={{ height: 'calc(100vh - 320px)', minHeight: '400px' }}>
+    <div>
+      <Card className="flex flex-col" style={{ height: 'calc(100vh - 380px)', minHeight: '400px' }}>
         <CardHeader className="pb-2 shrink-0">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-primary" />
@@ -252,7 +271,6 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col overflow-hidden p-4 pt-0">
-          {/* Quick commands */}
           <div className="flex gap-1.5 mb-3 flex-wrap shrink-0">
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'switch_mode', mode: 'aggressive' })}>Aggressive</Button>
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'switch_mode', mode: 'conservative' })}>Conservative</Button>
@@ -260,7 +278,6 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'resume' })}>Resume</Button>
           </div>
 
-          {/* Messages */}
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-4">
             {chatHistory.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
@@ -284,9 +301,6 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
                       </div>
                     </div>
                   )}
-                  {msg.message_type === 'tool_trace' && (
-                    <div className="mb-1 px-2 py-1 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-mono">Tool: {(msg.metadata as Record<string, unknown>)?.tool_name as string ?? 'unknown'}</div>
-                  )}
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                   <p className={cn('text-[10px] mt-1', msg.role === 'user' ? 'text-primary-foreground/60' : 'text-muted-foreground')}>
                     {new Date(msg.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
@@ -297,14 +311,13 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
             <div ref={bottomRef} />
           </div>
 
-          {/* Input */}
           <div className="flex gap-2 shrink-0">
             <Input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }} placeholder={`Message ${agentName}...`} disabled={sendMut.isPending} className="flex-1" />
             <Button size="icon" onClick={handleSend} disabled={!message.trim() || sendMut.isPending}><Send className="h-4 w-4" /></Button>
           </div>
         </CardContent>
       </Card>
-    </TabsContent>
+    </div>
   )
 }
 
@@ -329,8 +342,7 @@ function IntelligenceTab({ id }: { id: string }) {
   const models = manifest.models as Record<string, unknown> | undefined
 
   return (
-    <TabsContent value="intelligence" className="space-y-4 mt-4">
-      {/* Model info */}
+    <div className="space-y-4">
       {models && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Model</CardTitle></CardHeader>
@@ -345,7 +357,6 @@ function IntelligenceTab({ id }: { id: string }) {
         </Card>
       )}
 
-      {/* Analyst profile */}
       {analystProfile && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Analyst Profile</CardTitle></CardHeader>
@@ -370,7 +381,6 @@ function IntelligenceTab({ id }: { id: string }) {
         </Card>
       )}
 
-      {/* Rules */}
       {rules.length > 0 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Shield className="h-4 w-4 text-primary" />Learned Rules ({rules.length})</CardTitle></CardHeader>
@@ -394,7 +404,6 @@ function IntelligenceTab({ id }: { id: string }) {
         </Card>
       )}
 
-      {/* Top features */}
       {topFeatures.length > 0 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Predictive Features</CardTitle></CardHeader>
@@ -424,7 +433,7 @@ function IntelligenceTab({ id }: { id: string }) {
           </CardContent>
         </Card>
       )}
-    </TabsContent>
+    </div>
   )
 }
 
@@ -459,7 +468,7 @@ function LogsTab({ id }: { id: string }) {
   }
 
   return (
-    <TabsContent value="logs" className="space-y-4 mt-4">
+    <div className="space-y-4">
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center gap-3">
@@ -492,7 +501,7 @@ function LogsTab({ id }: { id: string }) {
           </div>
         </CardContent>
       </Card>
-    </TabsContent>
+    </div>
   )
 }
 
@@ -536,29 +545,12 @@ function RulesTab({ id }: { id: string }) {
   })
 
   const hasChanges = editRules != null || editRisk != null
-
-  const toggleRule = (idx: number) => {
-    const r = [...(editRules ?? rules)]
-    r[idx] = { ...r[idx], enabled: !r[idx].enabled }
-    setEditRules(r)
-  }
-
-  const deleteRule = (idx: number) => {
-    const r = [...(editRules ?? rules)]
-    r.splice(idx, 1)
-    setEditRules(r)
-  }
-
-  const addRule = () => {
-    if (!newRule.name || !newRule.condition) return
-    setEditRules([...(editRules ?? rules), { ...newRule }])
-    setNewRule({ name: '', condition: '', weight: 0, source: 'user', enabled: true, description: '' })
-    setShowAddRule(false)
-  }
+  const toggleRule = (idx: number) => { const r = [...(editRules ?? rules)]; r[idx] = { ...r[idx], enabled: !r[idx].enabled }; setEditRules(r) }
+  const deleteRule = (idx: number) => { const r = [...(editRules ?? rules)]; r.splice(idx, 1); setEditRules(r) }
+  const addRule = () => { if (!newRule.name || !newRule.condition) return; setEditRules([...(editRules ?? rules), { ...newRule }]); setNewRule({ name: '', condition: '', weight: 0, source: 'user', enabled: true, description: '' }); setShowAddRule(false) }
 
   return (
-    <TabsContent value="rules" className="space-y-4 mt-4">
-      {/* Rules table */}
+    <div className="space-y-4">
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center gap-3">
@@ -581,7 +573,6 @@ function RulesTab({ id }: { id: string }) {
               <div className="flex gap-2"><Button size="sm" className="text-xs h-7" onClick={addRule}>Add</Button><Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowAddRule(false)}>Cancel</Button></div>
             </div>
           )}
-
           <div className="space-y-1.5">
             {activeRules.map((rule, i) => (
               <div key={i} className={cn('flex items-center gap-3 rounded-lg border p-2', rule.enabled === false && 'opacity-50')}>
@@ -603,7 +594,6 @@ function RulesTab({ id }: { id: string }) {
         </CardContent>
       </Card>
 
-      {/* Risk config */}
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Risk Parameters</CardTitle></CardHeader>
         <CardContent>
@@ -623,7 +613,6 @@ function RulesTab({ id }: { id: string }) {
         </CardContent>
       </Card>
 
-      {/* Mode settings */}
       {Object.keys(modes).length > 0 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Mode Settings</CardTitle></CardHeader>
@@ -643,32 +632,17 @@ function RulesTab({ id }: { id: string }) {
           </CardContent>
         </Card>
       )}
-    </TabsContent>
+    </div>
   )
 }
 
 /* ================================================================
-   BACKTEST PROGRESS PANEL
+   BACKTESTING — PIPELINE PROGRESS
    ================================================================ */
 
 interface BacktestLogEntry {
-  id: string
-  step: string
-  message: string
-  progress_pct: number | null
-  level: string
-  created_at: string
-  details?: Record<string, unknown>
-}
-
-interface BacktestInfo {
-  id: string
-  status: string
-  current_step: string | null
-  progress_pct: number
-  metrics: Record<string, unknown>
-  created_at: string | null
-  completed_at: string | null
+  id: string; step: string; message: string; progress_pct: number | null
+  level: string; created_at: string; details?: Record<string, unknown>
 }
 
 const PIPELINE_STEPS = [
@@ -682,35 +656,19 @@ const PIPELINE_STEPS = [
   { key: 'create_live_agent', label: 'Create Agent', pct: 95 },
 ]
 
-function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
-  const { data: backtest } = useQuery<BacktestInfo>({
-    queryKey: ['backtest-info', id],
-    queryFn: async () => {
-      try { return (await api.get(`/api/v2/agents/${id}/backtest`)).data }
-      catch { return null }
-    },
-    enabled: !!id,
-    refetchInterval: status === 'BACKTESTING' ? 5000 : 30000,
-  })
-
+function BacktestPipelineProgress({ id, status, artifacts }: { id: string; status: string; artifacts?: BacktestArtifacts }) {
   const { data: logs = [] } = useQuery<BacktestLogEntry[]>({
     queryKey: ['backtest-logs', id],
-    queryFn: async () => {
-      try { return (await api.get(`/api/v2/agents/${id}/logs?source=backtest&limit=50`)).data }
-      catch { return [] }
-    },
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/logs?source=backtest&limit=50`)).data } catch { return [] } },
     enabled: !!id,
     refetchInterval: status === 'BACKTESTING' ? 5000 : 30000,
   })
 
-  const progressPct = backtest?.progress_pct ?? 0
-  const currentStep = backtest?.current_step ?? ''
+  const progressPct = artifacts?.progress_pct ?? 0
+  const currentStep = artifacts?.current_step ?? ''
   const isRunning = status === 'BACKTESTING'
-  const isComplete = status === 'BACKTEST_COMPLETE' || backtest?.status === 'COMPLETED'
-
-  const activeStepIdx = PIPELINE_STEPS.findIndex(s =>
-    currentStep.toLowerCase().includes(s.key)
-  )
+  const isComplete = status === 'BACKTEST_COMPLETE' || artifacts?.status === 'COMPLETED'
+  const activeStepIdx = PIPELINE_STEPS.findIndex(s => currentStep.toLowerCase().includes(s.key))
 
   return (
     <Card>
@@ -718,9 +676,7 @@ function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
         <CardTitle className="text-sm font-medium flex items-center gap-2">
           {isRunning ? (
             <>
-              <div className="relative">
-                <div className="h-4 w-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
-              </div>
+              <div className="h-4 w-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
               <span className="text-amber-600 dark:text-amber-400">Backtesting in Progress</span>
             </>
           ) : isComplete ? (
@@ -736,25 +692,16 @@ function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
             <span>{currentStep ? currentStep.replace(/_/g, ' ') : 'Starting...'}</span>
             <span className="font-mono">{progressPct}%</span>
           </div>
           <div className="h-2 rounded-full bg-muted overflow-hidden">
-            <div
-              className={cn(
-                'h-full rounded-full transition-all duration-500',
-                isComplete ? 'bg-emerald-500' : 'bg-amber-500',
-                isRunning && 'animate-pulse',
-              )}
-              style={{ width: `${Math.max(progressPct, 2)}%` }}
-            />
+            <div className={cn('h-full rounded-full transition-all duration-500', isComplete ? 'bg-emerald-500' : 'bg-amber-500', isRunning && 'animate-pulse')} style={{ width: `${Math.max(progressPct, 2)}%` }} />
           </div>
         </div>
 
-        {/* Pipeline steps */}
         <div className="flex items-center gap-1 overflow-x-auto pb-1">
           {PIPELINE_STEPS.map((step, idx) => {
             const isDone = progressPct >= step.pct
@@ -777,7 +724,6 @@ function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
           })}
         </div>
 
-        {/* Recent log entries */}
         {logs.length > 0 && (
           <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border bg-muted/20 p-2">
             {logs.slice(-15).map(log => (
@@ -785,10 +731,7 @@ function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
                 <span className="text-muted-foreground shrink-0 w-14 font-mono">
                   {log.created_at ? new Date(log.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
                 </span>
-                <span className={cn(
-                  'shrink-0 w-12 uppercase font-medium',
-                  log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-muted-foreground',
-                )}>
+                <span className={cn('shrink-0 w-12 uppercase font-medium', log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-muted-foreground')}>
                   {log.step || log.level}
                 </span>
                 <span className="text-foreground">{log.message}</span>
@@ -796,38 +739,379 @@ function BacktestProgressPanel({ id, status }: { id: string; status: string }) {
             ))}
           </div>
         )}
-
-        {/* Metrics from backtesting */}
-        {backtest?.metrics && Object.keys(backtest.metrics).length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {backtest.metrics.total_trades != null && (
-              <div className="rounded-lg border bg-muted/30 p-2">
-                <p className="text-[10px] text-muted-foreground uppercase">Trades</p>
-                <p className="text-sm font-mono font-semibold">{String(backtest.metrics.total_trades)}</p>
-              </div>
-            )}
-            {backtest.metrics.best_model != null && (
-              <div className="rounded-lg border bg-muted/30 p-2">
-                <p className="text-[10px] text-muted-foreground uppercase">Best Model</p>
-                <p className="text-sm font-mono font-semibold truncate">{String(backtest.metrics.best_model)}</p>
-              </div>
-            )}
-            {backtest.metrics.pattern_count != null && (
-              <div className="rounded-lg border bg-muted/30 p-2">
-                <p className="text-[10px] text-muted-foreground uppercase">Patterns</p>
-                <p className="text-sm font-mono font-semibold">{String(backtest.metrics.pattern_count)}</p>
-              </div>
-            )}
-            {backtest.metrics.attributes_added != null && (
-              <div className="rounded-lg border bg-muted/30 p-2">
-                <p className="text-[10px] text-muted-foreground uppercase">Features</p>
-                <p className="text-sm font-mono font-semibold">{String(backtest.metrics.attributes_added)}</p>
-              </div>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
+  )
+}
+
+/* ================================================================
+   BACKTESTING — MODEL COMPARISON TAB
+   ================================================================ */
+function BacktestModelsTab({ artifacts }: { artifacts: BacktestArtifacts }) {
+  const models = artifacts.all_model_results
+  const [sortCol, setSortCol] = useState<string>('score')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const sorted = [...models].sort((a, b) => {
+    const av = Number((a as Record<string, unknown>)[sortCol] ?? 0)
+    const bv = Number((b as Record<string, unknown>)[sortCol] ?? 0)
+    return sortDir === 'desc' ? bv - av : av - bv
+  })
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  const best = artifacts.metrics?.best_model as string | undefined
+
+  const cols = [
+    { key: 'model_name', label: 'Model', fmt: (v: unknown) => String(v) },
+    { key: 'accuracy', label: 'Accuracy', fmt: (v: unknown) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : '—' },
+    { key: 'auc_roc', label: 'AUC-ROC', fmt: (v: unknown) => v != null ? Number(v).toFixed(4) : '—' },
+    { key: 'f1_score', label: 'F1', fmt: (v: unknown) => v != null ? Number(v).toFixed(4) : '—' },
+    { key: 'precision', label: 'Precision', fmt: (v: unknown) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : '—' },
+    { key: 'recall', label: 'Recall', fmt: (v: unknown) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : '—' },
+    { key: 'profit_factor', label: 'Profit Factor', fmt: (v: unknown) => v != null ? Number(v).toFixed(2) : '—' },
+    { key: 'sharpe_ratio', label: 'Sharpe', fmt: (v: unknown) => v != null ? Number(v).toFixed(2) : '—' },
+    { key: 'score', label: 'Score', fmt: (v: unknown) => v != null ? Number(v).toFixed(4) : '—' },
+  ]
+
+  if (models.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="p-8 text-center text-muted-foreground">
+          <Brain className="h-8 w-8 mx-auto mb-3 opacity-50" />
+          <p className="text-sm">No model results available yet.</p>
+          <p className="text-xs mt-1">Model metrics appear once the training and evaluation steps complete.</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-primary" />
+          Model Comparison ({models.length} models)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b">
+                {cols.map(col => (
+                  <th key={col.key} className="text-left p-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => col.key !== 'model_name' && toggleSort(col.key)}>
+                    {col.label}
+                    {sortCol === col.key && <span className="ml-1">{sortDir === 'desc' ? '↓' : '↑'}</span>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((m, i) => (
+                <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', m.model_name === best && 'bg-emerald-500/5')}>
+                  {cols.map(col => (
+                    <td key={col.key} className={cn('p-2 font-mono', col.key === 'model_name' && 'font-semibold')}>
+                      <span className="flex items-center gap-1.5">
+                        {col.key === 'model_name' && m.model_name === best && (
+                          <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-emerald-500 text-white text-[8px] font-bold shrink-0">1</span>
+                        )}
+                        {col.fmt((m as Record<string, unknown>)[col.key])}
+                      </span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ================================================================
+   BACKTESTING — FEATURES TAB
+   ================================================================ */
+function BacktestFeaturesTab({ artifacts }: { artifacts: BacktestArtifacts }) {
+  const [search, setSearch] = useState('')
+  const features = artifacts.feature_names
+  const summary = artifacts.preprocessing_summary
+  const filtered = search ? features.filter(f => f.toLowerCase().includes(search.toLowerCase())) : features
+
+  const categories: Record<string, string[]> = {}
+  for (const f of features) {
+    let cat = 'Other'
+    if (/^(close_|return_|gap_|range_|atr|high_|low_|fib_|dist_to_fib|hh_count|ll_count|inside_bar|is_doji|is_hammer|is_engulfing)/.test(f)) cat = 'Price Action'
+    else if (/^(rsi|macd|bollinger|stoch|adx|cci|obv|williams|roc_|mfi|trix|keltner|donchian|ichimoku|parabolic|cmf|stoch_rsi)/.test(f)) cat = 'Technical Indicators'
+    else if (/^(sma_|ema_|dist_to_sma|above_all_sma|golden_cross|death_cross)/.test(f)) cat = 'Moving Averages'
+    else if (/^(volume|vol_|up_vol|vwap_|ad_line|force_index)/.test(f)) cat = 'Volume'
+    else if (/^(spy_|qqq_|iwm_|dia_|vix_|sector_|tlt_|gld_|spy_corr)/.test(f)) cat = 'Market Context'
+    else if (/^(hour|minute|day_|month|quarter|is_pre_market|is_first|is_last|is_power|is_opex|is_quad|days_to|nfp)/.test(f)) cat = 'Calendar'
+    else if (/^(intraday_|price_vs_intraday)/.test(f)) cat = 'Intraday'
+    else if (/^(analyst_|realized_vol|parkinson_vol|garman_klass|atr_percentile)/.test(f)) cat = 'Derived / Volatility'
+    else if (/^(entry_price|target_price|stop_loss|exit_pct|weighted_exit|pnl_pct|hold_duration|strike)/.test(f)) cat = 'Trade Attributes'
+    if (!categories[cat]) categories[cat] = []
+    categories[cat].push(f)
+  }
+
+  return (
+    <div className="space-y-4">
+      {Object.keys(summary).length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Preprocessing Summary</CardTitle></CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Total Rows', value: summary.total_rows ?? '—' },
+                { label: 'Train', value: summary.train_rows ?? '—' },
+                { label: 'Validation', value: summary.val_rows ?? '—' },
+                { label: 'Test', value: summary.test_rows ?? '—' },
+                { label: 'Tabular Features', value: summary.tabular_features ?? features.length },
+                { label: 'Has Candles', value: summary.has_candles ? 'Yes' : 'No' },
+                { label: 'Has Text Emb.', value: summary.has_text ? 'Yes' : 'No' },
+                { label: 'Categoricals', value: summary.categorical_features ?? 0 },
+              ].map(item => (
+                <div key={item.label} className="rounded-lg border p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase">{item.label}</p>
+                  <p className="text-lg font-bold font-mono mt-0.5">{String(item.value)}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-sm font-medium flex-1 flex items-center gap-2">
+              <Columns3 className="h-4 w-4 text-primary" />
+              Features ({features.length})
+            </CardTitle>
+            <Input placeholder="Search features..." value={search} onChange={e => setSearch(e.target.value)} className="w-56 h-8 text-xs" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {features.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Database className="h-8 w-8 mx-auto mb-3 opacity-50" />
+              <p className="text-sm">No feature data available.</p>
+              <p className="text-xs mt-1">Feature names are reported after the preprocessing step completes.</p>
+            </div>
+          ) : search ? (
+            <div className="max-h-96 overflow-y-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1">
+                {filtered.map((f, i) => (
+                  <div key={i} className="px-2 py-1 rounded text-xs font-mono bg-muted/40 border border-border/50 truncate" title={f}>{f}</div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">{filtered.length} of {features.length} features match</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(categories).sort((a, b) => b[1].length - a[1].length).map(([cat, feats]) => (
+                <div key={cat}>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{cat} ({feats.length})</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1">
+                    {feats.map((f, i) => (
+                      <div key={i} className="px-2 py-1 rounded text-xs font-mono bg-muted/40 border border-border/50 truncate" title={f}>{f}</div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* ================================================================
+   BACKTESTING — DOWNLOADS TAB
+   ================================================================ */
+function BacktestDownloadsTab({ id, artifacts }: { id: string; artifacts: BacktestArtifacts }) {
+  const files = artifacts.downloadable_files
+  const baseUrl = api.defaults.baseURL || ''
+
+  const getIcon = (name: string) => {
+    if (name.endsWith('.json')) return <FileJson className="h-4 w-4 text-yellow-500" />
+    if (name.endsWith('.parquet') || name.endsWith('.csv')) return <FileSpreadsheet className="h-4 w-4 text-green-500" />
+    if (name.endsWith('.npy') || name.endsWith('.pkl')) return <Database className="h-4 w-4 text-blue-500" />
+    return <FileDown className="h-4 w-4 text-muted-foreground" />
+  }
+
+  if (files.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="p-8 text-center text-muted-foreground">
+          <Download className="h-8 w-8 mx-auto mb-3 opacity-50" />
+          <p className="text-sm">No downloadable files available.</p>
+          <p className="text-xs mt-1">Files become available after backtesting completes on this server.</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const grouped: Record<string, typeof files> = {}
+  for (const f of files) {
+    const dir = f.name.includes('/') ? f.name.split('/')[0] : 'root'
+    if (!grouped[dir]) grouped[dir] = []
+    grouped[dir].push(f)
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Download className="h-4 w-4 text-primary" />
+          Backtesting Files ({files.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([dir, dirFiles]) => (
+            <div key={dir}>
+              {dir !== 'root' && <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{dir}/</p>}
+              <div className="space-y-1">
+                {dirFiles.map(f => (
+                  <a
+                    key={f.name}
+                    href={`${baseUrl}/api/v2/agents/${id}/backtest-files/${f.name}`}
+                    download
+                    className="flex items-center gap-3 rounded-lg border p-2.5 hover:bg-muted/30 transition-colors group"
+                  >
+                    {getIcon(f.name)}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-mono truncate">{f.name.includes('/') ? f.name.split('/').slice(1).join('/') : f.name}</p>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">{f.size_human}</span>
+                    <Download className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ================================================================
+   BACKTESTING SECTION (wraps all backtesting sub-tabs)
+   ================================================================ */
+function BacktestingSection({ id, status }: { id: string; status: string }) {
+  const { data: artifacts } = useQuery<BacktestArtifacts>({
+    queryKey: ['backtest-artifacts', id],
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/backtest-artifacts`)).data } catch { return null } },
+    refetchInterval: status === 'BACKTESTING' ? 5000 : 30000,
+  })
+
+  if (!artifacts) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="p-12 text-center text-muted-foreground">
+          <FlaskConical className="h-10 w-10 mx-auto mb-4 opacity-50" />
+          <p className="text-sm font-medium">No backtesting data available</p>
+          <p className="text-xs mt-1">Backtesting data appears once the pipeline starts running.</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <BacktestPipelineProgress id={id} status={status} artifacts={artifacts} />
+
+      {artifacts.total_trades > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <MetricCard title="Total Trades" value={artifacts.total_trades} />
+          <MetricCard title="Win Rate" value={artifacts.win_rate != null ? `${(artifacts.win_rate * 100).toFixed(1)}%` : '—'} trend={artifacts.win_rate != null ? (artifacts.win_rate >= 0.5 ? 'up' : 'down') : undefined} />
+          <MetricCard title="Sharpe Ratio" value={artifacts.sharpe_ratio?.toFixed(2) ?? '—'} trend={artifacts.sharpe_ratio != null ? (artifacts.sharpe_ratio >= 1 ? 'up' : 'neutral') : undefined} />
+          <MetricCard title="Max Drawdown" value={artifacts.max_drawdown != null ? `${artifacts.max_drawdown.toFixed(1)}%` : '—'} />
+          <MetricCard title="Total Return" value={artifacts.total_return != null ? `${artifacts.total_return.toFixed(1)}%` : '—'} trend={artifacts.total_return != null ? (artifacts.total_return >= 0 ? 'up' : 'down') : undefined} />
+        </div>
+      )}
+
+      <Tabs defaultValue="models">
+        <TabsList className="grid w-full grid-cols-4 max-w-xl">
+          <TabsTrigger value="models" className="text-xs"><BarChart3 className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Models</TabsTrigger>
+          <TabsTrigger value="features" className="text-xs"><Columns3 className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Features</TabsTrigger>
+          <TabsTrigger value="patterns" className="text-xs"><Brain className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Patterns</TabsTrigger>
+          <TabsTrigger value="downloads" className="text-xs"><Download className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Downloads</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="models" className="mt-4">
+          <BacktestModelsTab artifacts={artifacts} />
+        </TabsContent>
+        <TabsContent value="features" className="mt-4">
+          <BacktestFeaturesTab artifacts={artifacts} />
+        </TabsContent>
+        <TabsContent value="patterns" className="mt-4">
+          {artifacts.patterns.length > 0 ? (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Discovered Patterns ({artifacts.patterns.length})</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {artifacts.patterns.slice(0, 30).map((p, i) => (
+                    <div key={i} className="rounded-lg border p-3">
+                      <p className="text-sm font-medium">{String(p.name || p.pattern || `Pattern ${i + 1}`)}</p>
+                      {p.description && <p className="text-xs text-muted-foreground mt-0.5">{String(p.description)}</p>}
+                      {p.condition && <p className="text-xs font-mono text-muted-foreground mt-1">{String(p.condition)}</p>}
+                      <div className="flex gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                        {p.support != null && <span>Support: {String(p.support)}</span>}
+                        {p.confidence != null && <span>Confidence: {Number(p.confidence).toFixed(2)}</span>}
+                        {p.lift != null && <span>Lift: {Number(p.lift).toFixed(2)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="p-8 text-center text-muted-foreground">
+                <Brain className="h-8 w-8 mx-auto mb-3 opacity-50" />
+                <p className="text-sm">No patterns discovered yet.</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+        <TabsContent value="downloads" className="mt-4">
+          <BacktestDownloadsTab id={id} artifacts={artifacts} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+/* ================================================================
+   LIVE SECTION (wraps all live sub-tabs)
+   ================================================================ */
+function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
+  return (
+    <Tabs defaultValue="portfolio">
+      <TabsList className="grid w-full grid-cols-6 max-w-2xl">
+        <TabsTrigger value="portfolio" className="text-xs"><TrendingUp className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Portfolio</TabsTrigger>
+        <TabsTrigger value="trades" className="text-xs"><List className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Trades</TabsTrigger>
+        <TabsTrigger value="chat" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Chat</TabsTrigger>
+        <TabsTrigger value="intelligence" className="text-xs"><Shield className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Intel</TabsTrigger>
+        <TabsTrigger value="logs" className="text-xs"><ScrollText className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Logs</TabsTrigger>
+        <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="portfolio" className="mt-4"><PortfolioTab id={id} agent={agent} /></TabsContent>
+      <TabsContent value="trades" className="mt-4"><TradesTab id={id} /></TabsContent>
+      <TabsContent value="chat" className="mt-4"><ChatTab id={id} agentName={agent.name} /></TabsContent>
+      <TabsContent value="intelligence" className="mt-4"><IntelligenceTab id={id} /></TabsContent>
+      <TabsContent value="logs" className="mt-4"><LogsTab id={id} /></TabsContent>
+      <TabsContent value="rules" className="mt-4"><RulesTab id={id} /></TabsContent>
+    </Tabs>
   )
 }
 
@@ -838,8 +1122,8 @@ export default function AgentDashboardPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [topTab, setTopTab] = useState<string>('backtesting')
 
-  // Real-time agent status + metrics updates via WebSocket
   useRealtimeQuery({
     channel: 'agent-status',
     queryKeys: [['agent', id ?? ''], ['agent-metrics', id ?? ''], ['positions', id ?? '']],
@@ -855,13 +1139,6 @@ export default function AgentDashboardPage() {
     enabled: !!id,
   })
 
-  const { data: metrics } = useQuery<Record<string, unknown>>({
-    queryKey: ['agent-metrics', id],
-    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/metrics`)).data } catch { return {} } },
-    enabled: !!id,
-    refetchInterval: 60000, // Fallback; WS handles real-time
-  })
-
   const pauseMut = useMutation({
     mutationFn: () => api.post(`/api/v2/agents/${id}/pause`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['agent', id] }); toast.success('Agent paused') },
@@ -874,6 +1151,13 @@ export default function AgentDashboardPage() {
     mutationFn: (mode: string) => api.post(`/api/v2/agents/${id}/command`, { action: 'switch_mode', mode }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['agent', id] }); toast.success('Mode switched') },
   })
+
+  useEffect(() => {
+    if (agent) {
+      if (LIVE.has(agent.status) || agent.status === 'PAUSED') setTopTab('live')
+      else setTopTab('backtesting')
+    }
+  }, [agent?.status])
 
   if (isLoading || !agent) {
     return <div className="space-y-4"><div className="h-10 w-48 bg-muted animate-pulse rounded" /><div className="h-64 bg-muted animate-pulse rounded" /></div>
@@ -926,29 +1210,33 @@ export default function AgentDashboardPage() {
         <MetricCard title="Heartbeat" value={agent.last_signal_at ? `${Math.round((Date.now() - new Date(agent.last_signal_at).getTime()) / 60000)}m` : '—'} />
       </div>
 
-      {/* Backtest Progress (shown during BACKTESTING) */}
-      {(agent.status === 'BACKTESTING' || agent.status === 'BACKTEST_COMPLETE') && (
-        <BacktestProgressPanel id={id!} status={agent.status} />
-      )}
+      {/* Top-level Live / Backtesting toggle */}
+      <div className="flex items-center gap-1 border-b pb-0">
+        <button
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px',
+            topTab === 'live' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+          onClick={() => setTopTab('live')}
+        >
+          <Zap className="h-4 w-4" />
+          Live
+        </button>
+        <button
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px',
+            topTab === 'backtesting' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+          onClick={() => setTopTab('backtesting')}
+        >
+          <FlaskConical className="h-4 w-4" />
+          Backtesting
+        </button>
+      </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="portfolio">
-        <TabsList className="grid w-full grid-cols-6 max-w-2xl">
-          <TabsTrigger value="portfolio" className="text-xs"><TrendingUp className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Portfolio</TabsTrigger>
-          <TabsTrigger value="trades" className="text-xs"><List className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Trades</TabsTrigger>
-          <TabsTrigger value="chat" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Chat</TabsTrigger>
-          <TabsTrigger value="intelligence" className="text-xs"><Shield className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Intel</TabsTrigger>
-          <TabsTrigger value="logs" className="text-xs"><ScrollText className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Logs</TabsTrigger>
-          <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
-        </TabsList>
-
-        <PortfolioTab id={id!} agent={agent} />
-        <TradesTab id={id!} />
-        <ChatTab id={id!} agentName={agent.name} />
-        <IntelligenceTab id={id!} />
-        <LogsTab id={id!} />
-        <RulesTab id={id!} />
-      </Tabs>
+      {/* Section content */}
+      {topTab === 'live' && <LiveSection id={id!} agent={agent} />}
+      {topTab === 'backtesting' && <BacktestingSection id={id!} status={agent.status} />}
     </div>
   )
 }

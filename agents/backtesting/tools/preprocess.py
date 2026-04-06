@@ -49,10 +49,20 @@ def main():
     y = df["is_profitable"].astype(int).values
 
     # --- Tabular features ---
+    # Convert bool columns to int so they survive the numeric filter
+    for c in df.columns:
+        if pd.api.types.is_bool_dtype(df[c]):
+            df[c] = df[c].astype(int)
+
+    # Coerce object columns that are actually numeric (e.g. mixed float+None)
+    for c in df.columns:
+        if df[c].dtype == object:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
     feature_cols = [
         c for c in df.columns
         if c not in EXCLUDE_COLS
-        and df[c].dtype in [np.float64, np.int64, float, int, "float32", "int32"]
+        and pd.api.types.is_numeric_dtype(df[c])
     ]
     X = df[feature_cols].copy()
 
@@ -190,7 +200,11 @@ def main():
     print(f"Preprocessing complete: {json.dumps(summary, indent=2)}")
     try:
         from report_to_phoenix import report_progress
-        report_progress("preprocess", "Preprocessing complete", 35)
+        report_progress("preprocess", "Preprocessing complete", 35, {
+            "preprocessing_summary": summary,
+            "feature_names": feature_cols,
+            "feature_count": len(feature_cols),
+        })
     except Exception:
         pass
 

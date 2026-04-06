@@ -24,8 +24,11 @@ def _safe_download(ticker: str, start: str, end: str) -> pd.DataFrame:
         data = yf.download(ticker, start=start, end=end, progress=False)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
+        if data.empty:
+            print(f"  [yfinance] Empty result for {ticker} ({start} → {end})")
         return data
-    except Exception:
+    except Exception as e:
+        print(f"  [yfinance] FAILED {ticker} ({start} → {end}): {e}")
         return pd.DataFrame()
 
 
@@ -107,11 +110,13 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
 
     hist = cache[cache_key]
     if hist.empty or len(hist) < 30:
+        print(f"  [enrich] Skip {ticker}: insufficient daily bars ({len(hist) if not hist.empty else 0} < 30)")
         return {}
 
     # Trim to data available before entry (no look-ahead)
     hist = hist[hist.index.date <= entry_date]
     if hist.empty or len(hist) < 20:
+        print(f"  [enrich] Skip {ticker}: insufficient pre-entry bars ({len(hist) if not hist.empty else 0} < 20)")
         return {}
 
     close = hist["Close"]
@@ -207,7 +212,7 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     attrs["macd_line"] = macd_line.iloc[-1] if not macd_line.empty else np.nan
     attrs["macd_signal"] = macd_signal.iloc[-1] if not macd_signal.empty else np.nan
     attrs["macd_histogram"] = macd_hist.iloc[-1] if not macd_hist.empty else np.nan
-    attrs["macd_cross_up"] = (macd_line.iloc[-1] > macd_signal.iloc[-1] and macd_line.iloc[-2] <= macd_signal.iloc[-2]) if len(macd_line) >= 2 else False
+    attrs["macd_cross_up"] = float(macd_line.iloc[-1] > macd_signal.iloc[-1] and macd_line.iloc[-2] <= macd_signal.iloc[-2]) if len(macd_line) >= 2 else 0.0
 
     bb_upper, bb_mid, bb_lower = _calc_bollinger(close)
     attrs["bb_upper"] = bb_upper.iloc[-1] if not bb_upper.empty else np.nan
@@ -703,19 +708,27 @@ def main():
 
     cache = {}
     enriched_rows = []
+    n_success = 0
+    n_empty = 0
 
     for idx, row in df.iterrows():
         attrs = enrich_trade(row, cache)
         enriched_rows.append(attrs)
+        if attrs:
+            n_success += 1
+        else:
+            n_empty += 1
 
         if (idx + 1) % 50 == 0:
-            print(f"  Enriched {idx + 1}/{len(df)} trades...")
+            print(f"  Enriched {idx + 1}/{len(df)} trades (success={n_success}, skipped={n_empty})...")
 
     enriched_df = pd.DataFrame(enriched_rows)
     result = pd.concat([df.reset_index(drop=True), enriched_df], axis=1)
 
     n_new_cols = len(enriched_df.columns)
-    print(f"Added {n_new_cols} market attributes")
+    print(f"Added {n_new_cols} market attributes ({n_success}/{len(df)} trades enriched, {n_empty} skipped)")
+    if n_empty > 0 and n_success == 0:
+        print("WARNING: ALL trades returned empty enrichment! Check yfinance connectivity and ticker validity.")
 
     # --- Rolling analyst features ---
     if "analyst" in result.columns:
@@ -761,6 +774,8 @@ def main():
         report_progress("enrich", f"Enriched {len(result)} trades with {n_new_cols} attributes", 30, {
             "trades": len(result),
             "attributes_added": n_new_cols,
+            "trades_enriched": n_success,
+            "trades_skipped": n_empty,
         })
     except Exception:
         pass

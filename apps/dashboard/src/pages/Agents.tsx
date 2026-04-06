@@ -319,10 +319,10 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
         {agent.status === 'BACKTEST_COMPLETE' && backtest && (
           <div className="space-y-2">
             <div className="grid grid-cols-2 gap-1.5">
-              <MetricPill label="Return" value={`${backtest.total_return?.toFixed(1)}%`} trend={(backtest.total_return ?? 0) >= 0 ? 'up' : 'down'} />
-              <MetricPill label="Win Rate" value={`${((backtest.win_rate ?? 0) * 100).toFixed(0)}%`} trend={(backtest.win_rate ?? 0) >= 0.5 ? 'up' : 'down'} />
-              <MetricPill label="Sharpe" value={`${backtest.sharpe_ratio?.toFixed(2)}`} trend={(backtest.sharpe_ratio ?? 0) >= 1.0 ? 'up' : 'neutral'} />
-              <MetricPill label="Trades" value={`${backtest.total_trades}`} trend="neutral" />
+              <MetricPill label="Return" value={backtest.total_return != null ? `${backtest.total_return.toFixed(1)}%` : '—'} trend={backtest.total_return != null ? (backtest.total_return >= 0 ? 'up' : 'down') : 'neutral'} />
+              <MetricPill label="Win Rate" value={backtest.win_rate != null ? `${(backtest.win_rate * 100).toFixed(0)}%` : '—'} trend={backtest.win_rate != null ? (backtest.win_rate >= 0.5 ? 'up' : 'down') : 'neutral'} />
+              <MetricPill label="Sharpe" value={backtest.sharpe_ratio != null ? backtest.sharpe_ratio.toFixed(2) : '—'} trend={backtest.sharpe_ratio != null ? (backtest.sharpe_ratio >= 1.0 ? 'up' : 'neutral') : 'neutral'} />
+              <MetricPill label="Trades" value={`${backtest.total_trades ?? 0}`} trend="neutral" />
             </div>
             {Array.isArray(backtest.metrics?.rules) && backtest.metrics.rules.length > 0 && (
               <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">

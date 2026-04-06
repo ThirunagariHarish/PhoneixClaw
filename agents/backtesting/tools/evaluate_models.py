@@ -52,7 +52,12 @@ def main():
             "evaluate",
             "Model evaluation complete",
             70,
-            {"best_model": best["model_name"]},
+            {
+                "best_model": best["model_name"],
+                "best_model_score": round(best["score"], 4),
+                "all_model_results": results,
+                "model_count": len(results),
+            },
         )
     except Exception:
         pass
