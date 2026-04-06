@@ -1,15 +1,26 @@
 """Train Temporal Convolutional Network (TCN) for trade prediction.
 
-Uses dilated causal convolutions to capture multi-scale temporal patterns
-from candle windows (30 bars x 15 features) + optional tabular features.
+Memory-optimised: uses small model dimensions, aggressive garbage collection,
+and memory-mapped numpy loading to fit within 512 MB containers.
 """
 
 import argparse
+import gc
 import json
 import warnings
 from pathlib import Path
 
 import numpy as np
+
+
+def _cleanup():
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def main():
@@ -22,13 +33,6 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    X_train = np.load(data_dir / "X_train.npy")
-    X_val = np.load(data_dir / "X_val.npy")
-    X_test = np.load(data_dir / "X_test.npy")
-    y_train = np.load(data_dir / "y_train.npy")
-    y_val = np.load(data_dir / "y_val.npy")
-    y_test = np.load(data_dir / "y_test.npy")
-
     try:
         import torch
         import torch.nn as nn
@@ -39,11 +43,21 @@ def main():
         return
 
     warnings.filterwarnings("ignore")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
 
-    candle_train = np.load(data_dir / "candle_train.npy") if (data_dir / "candle_train.npy").exists() else None
-    candle_val = np.load(data_dir / "candle_val.npy") if (data_dir / "candle_val.npy").exists() else None
-    candle_test = np.load(data_dir / "candle_test.npy") if (data_dir / "candle_test.npy").exists() else None
+    X_train = np.load(data_dir / "X_train.npy", mmap_mode="r").astype(np.float32)
+    X_val = np.load(data_dir / "X_val.npy", mmap_mode="r").astype(np.float32)
+    X_test = np.load(data_dir / "X_test.npy", mmap_mode="r").astype(np.float32)
+    y_train = np.load(data_dir / "y_train.npy").astype(np.float32)
+    y_val = np.load(data_dir / "y_val.npy").astype(np.float32)
+    y_test = np.load(data_dir / "y_test.npy").astype(np.float32)
+
+    candle_train = np.load(data_dir / "candle_train.npy", mmap_mode="r").astype(np.float32) \
+        if (data_dir / "candle_train.npy").exists() else None
+    candle_val = np.load(data_dir / "candle_val.npy", mmap_mode="r").astype(np.float32) \
+        if (data_dir / "candle_val.npy").exists() else None
+    candle_test = np.load(data_dir / "candle_test.npy", mmap_mode="r").astype(np.float32) \
+        if (data_dir / "candle_test.npy").exists() else None
 
     use_candles = candle_train is not None and candle_val is not None
 
@@ -61,12 +75,12 @@ def main():
             if len(X) <= seq_len:
                 seqs = np.expand_dims(X, 0) if len(X) > 0 else np.zeros((1, seq_len, X.shape[1]))
                 labels = np.array([y[-1]]) if len(y) > 0 else np.array([0])
-                return seqs, labels
+                return seqs.astype(np.float32), labels.astype(np.float32)
             seqs, labels = [], []
             for i in range(seq_len, len(X)):
                 seqs.append(X[i - seq_len:i])
                 labels.append(y[i])
-            return np.array(seqs), np.array(labels)
+            return np.array(seqs, dtype=np.float32), np.array(labels, dtype=np.float32)
 
         candle_train, y_train = _make_sequences(X_train, y_train, SEQ_LEN)
         candle_val, y_val = _make_sequences(X_val, y_val, SEQ_LEN)
@@ -79,6 +93,8 @@ def main():
         tab_dim = X_train.shape[1] if len(X_train) > 0 else tab_dim
         print(f"TCN with tabular sequences: seq={seq_len}, features={n_channels}")
 
+    HIDDEN = 64
+
     class TemporalBlock(nn.Module):
         def __init__(self, in_ch, out_ch, kernel_size, dilation, dropout=0.2):
             super().__init__()
@@ -90,7 +106,6 @@ def main():
             self.drop = nn.Dropout(dropout)
             self.relu = nn.ReLU()
             self.downsample = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
-            self.padding = padding
 
         def forward(self, x):
             residual = self.downsample(x)
@@ -101,50 +116,61 @@ def main():
             return self.relu(out + residual)
 
     class TCNClassifier(nn.Module):
-        def __init__(self, n_channels, hidden=128, tab_dim=0, n_blocks=3, kernel_size=3, dropout=0.3):
+        def __init__(self, n_channels, hidden, tab_dim, n_blocks=3, kernel_size=3, dropout=0.3):
             super().__init__()
             blocks = []
             ch = n_channels
             for i in range(n_blocks):
-                dilation = 2 ** i
-                blocks.append(TemporalBlock(ch, hidden, kernel_size, dilation, dropout))
+                blocks.append(TemporalBlock(ch, hidden, kernel_size, 2 ** i, dropout))
                 ch = hidden
             self.tcn = nn.Sequential(*blocks)
-            self.tab_proj = nn.Sequential(nn.Linear(tab_dim, 64), nn.ReLU(), nn.Dropout(0.2)) if tab_dim > 0 else None
-            cls_in = hidden + (64 if tab_dim > 0 else 0)
+            self.tab_proj = nn.Sequential(
+                nn.Linear(tab_dim, 32), nn.ReLU(), nn.Dropout(0.2)
+            ) if tab_dim > 0 else None
+            cls_in = hidden + (32 if tab_dim > 0 else 0)
             self.classifier = nn.Sequential(
-                nn.Linear(cls_in, 128), nn.ReLU(), nn.Dropout(dropout),
-                nn.Linear(128, 64), nn.ReLU(), nn.Dropout(dropout),
-                nn.Linear(64, 1), nn.Sigmoid(),
+                nn.Linear(cls_in, 48), nn.ReLU(), nn.Dropout(dropout),
+                nn.Linear(48, 1), nn.Sigmoid(),
             )
 
         def forward(self, seq, tab=None):
-            # seq: (batch, seq_len, channels) -> (batch, channels, seq_len)
             x = seq.permute(0, 2, 1)
             x = self.tcn(x)
-            x = x.mean(dim=2)  # global average pooling
+            x = x.mean(dim=2)
             if self.tab_proj is not None and tab is not None:
                 t = self.tab_proj(tab)
                 x = torch.cat([x, t], dim=1)
             return self.classifier(x).squeeze(-1)
 
-    model = TCNClassifier(n_channels, hidden=128, tab_dim=tab_dim, n_blocks=3, kernel_size=3, dropout=0.3).to(device)
+    model = TCNClassifier(n_channels, hidden=HIDDEN, tab_dim=tab_dim, n_blocks=3, kernel_size=3, dropout=0.3).to(device)
 
     min_len = min(len(candle_train), len(X_train), len(y_train))
-    ct = torch.FloatTensor(candle_train[:min_len]).to(device)
-    xt = torch.FloatTensor(X_train[:min_len]).to(device)
-    yt = torch.FloatTensor(y_train[:min_len]).to(device)
+    ct_np = candle_train[:min_len].copy() if hasattr(candle_train, 'copy') else candle_train[:min_len]
+    xt_np = X_train[:min_len].copy() if hasattr(X_train, 'copy') else X_train[:min_len]
+    yt_np = y_train[:min_len]
 
     min_vlen = min(len(candle_val), len(X_val), len(y_val))
-    cv = torch.FloatTensor(candle_val[:min_vlen]).to(device)
-    xv = torch.FloatTensor(X_val[:min_vlen]).to(device)
-    yv = torch.FloatTensor(y_val[:min_vlen]).to(device)
+    cv_np = candle_val[:min_vlen].copy() if hasattr(candle_val, 'copy') else candle_val[:min_vlen]
+    xv_np = X_val[:min_vlen].copy() if hasattr(X_val, 'copy') else X_val[:min_vlen]
+    yv_np = y_val[:min_vlen]
 
-    batch_size = min(64, len(ct))
+    del candle_train, candle_val
+    _cleanup()
+
+    ct = torch.from_numpy(ct_np)
+    xt = torch.from_numpy(xt_np)
+    yt = torch.FloatTensor(yt_np)
+    cv = torch.from_numpy(cv_np)
+    xv = torch.from_numpy(xv_np)
+    yv = torch.FloatTensor(yv_np)
+
+    del ct_np, xt_np, yt_np, cv_np, xv_np, yv_np
+    _cleanup()
+
+    batch_size = min(32, len(ct))
     train_ds = TensorDataset(ct, xt, yt)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=len(ct) > batch_size)
 
-    pos_weight = (yt == 0).sum() / max((yt == 1).sum(), 1)
     criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
@@ -152,7 +178,7 @@ def main():
     best_val_loss = float("inf")
     patience_counter = 0
     patience = 12
-    epochs = 100
+    epochs = 80
 
     print(f"Training TCN: {sum(p.numel() for p in model.parameters())} params, {len(ct)} train, {len(cv)} val")
 
@@ -192,15 +218,24 @@ def main():
     model.load_state_dict(torch.load(output_dir / "tcn_model.pt", weights_only=True))
     model.eval()
 
+    del ct, xt, yt, cv, xv, yv, train_ds, train_loader
+    _cleanup()
+
     if candle_test is not None and len(candle_test) > 0 and len(X_test) > 0:
         min_tlen = min(len(candle_test), len(X_test), len(y_test))
-        cte = torch.FloatTensor(candle_test[:min_tlen]).to(device)
-        xte = torch.FloatTensor(X_test[:min_tlen]).to(device)
+        cte_np = candle_test[:min_tlen].copy() if hasattr(candle_test, 'copy') else candle_test[:min_tlen]
+        xte_np = X_test[:min_tlen].copy() if hasattr(X_test, 'copy') else X_test[:min_tlen]
         yte = y_test[:min_tlen]
 
+        del candle_test
+        _cleanup()
+
         with torch.no_grad():
-            test_proba = model(cte, xte).cpu().numpy()
+            test_proba = model(torch.from_numpy(cte_np), torch.from_numpy(xte_np)).numpy()
         test_preds = (test_proba >= 0.5).astype(int)
+
+        del cte_np, xte_np
+        _cleanup()
 
         from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
         acc = accuracy_score(yte, test_preds)
@@ -213,7 +248,6 @@ def main():
         np.save(output_dir / "tcn_test_proba.npy", test_proba)
     else:
         acc, auc, report = 0.5, 0.5, {}
-        test_proba = np.array([])
 
     results = {
         "model_name": "tcn",
@@ -236,7 +270,7 @@ def main():
 
     try:
         from report_to_phoenix import report_progress
-        report_progress("train_tcn", f"TCN trained: AUC={auc:.3f}", 55, results)
+        report_progress("train_tcn", f"TCN trained: accuracy={acc:.4f} auc={auc:.4f}", 55, results)
     except Exception:
         pass
 

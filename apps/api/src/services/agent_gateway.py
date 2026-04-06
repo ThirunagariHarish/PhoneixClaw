@@ -730,7 +730,7 @@ Output directory: {output_dir}
 3. **Text Embeddings**: `python {tools_dir}/compute_text_embeddings.py --input {output_dir}/enriched.parquet --output {output_dir}/`
 4. **Preprocess**: `python {tools_dir}/preprocess.py --input {output_dir}/enriched.parquet --output {output_dir}/`
 
-### Base Model Training (can run in parallel)
+### Base Model Training (run sequentially — PyTorch models need full memory)
 5. **Train XGBoost**: `python {tools_dir}/train_xgboost.py --data {output_dir} --output {output_dir}/models/`
 6. **Train LightGBM**: `python {tools_dir}/train_lightgbm.py --data {output_dir} --output {output_dir}/models/`
 7. **Train CatBoost**: `python {tools_dir}/train_catboost.py --data {output_dir} --output {output_dir}/models/`
@@ -739,6 +739,8 @@ Output directory: {output_dir}
 10. **Train Transformer**: `python {tools_dir}/train_transformer.py --data {output_dir} --output {output_dir}/models/`
 11. **Train TFT**: `python {tools_dir}/train_tft.py --data {output_dir} --output {output_dir}/models/`
 12. **Train TCN**: `python {tools_dir}/train_tcn.py --data {output_dir} --output {output_dir}/models/`
+
+**IMPORTANT**: Run each training script ONE AT A TIME and wait for it to finish before starting the next. Do NOT run them in parallel — PyTorch models need the full container memory. If a training script fails with a memory error, retry it once. Do NOT skip models due to OOM concerns — the scripts are already memory-optimised.
 
 ### Ensemble Models (after base models complete)
 13. **Train Hybrid**: `python {tools_dir}/train_hybrid.py --data {output_dir} --output {output_dir}/models/`
@@ -781,11 +783,12 @@ curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
 
 ## Rules
 - Create {output_dir}/models/ directories before running training steps
-- Steps 5-12 (base training) can run in parallel — but steps 13-14 must wait for base models
+- Run training steps 5-12 SEQUENTIALLY one at a time — do NOT run them in parallel
+- Steps 13-14 (ensemble) must wait for ALL base models to finish
 - If a script fails, read the error, attempt to fix it, and retry ONCE
 - If a script is missing a Python dependency, install it with pip
 - Do NOT modify the tool scripts unless absolutely necessary to fix a bug
-- Steps 4-7 (training) can run in parallel if you want, but sequential is fine too
+- Do NOT skip any training step — each script handles its own memory management
 - Report progress after EVERY step
 - The enrichment step uses ~200 features across 8 categories — this is normal and expected
 """

@@ -50,8 +50,10 @@ Splits data into train/val/test sets across 4 data modalities:
 - Text embeddings: `text_train.npy`, `text_val.npy`, `text_test.npy`
 - Categoricals: `categoricals_train.npy`, `categoricals_val.npy`, `categoricals_test.npy`
 
-### Step 5: Training (Parallel — 8 models)
-Launch all base model training scripts in parallel. Each writes results to `output/models/`:
+### Step 5: Training (Sequential — 8 models)
+Run each base model training script ONE AT A TIME. Each writes results to `output/models/`.
+Do NOT run in parallel — PyTorch models need the full container memory.
+Do NOT skip any model due to OOM — scripts are memory-optimised.
 
 - `python tools/train_xgboost.py --data output/ --output output/models/`
 - `python tools/train_lightgbm.py --data output/ --output output/models/`
@@ -146,7 +148,9 @@ Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28
 - Always check if each tool script exists before running it
 - Report progress after each step
 - Do not proceed to Step 5 until Steps 1–4 are complete
-- Base training scripts in Step 5 can run in parallel, but hybrid and meta-learner must wait for base models
+- Run training scripts in Step 5 ONE AT A TIME (sequential, not parallel) — PyTorch models need full memory
+- Do NOT skip any training step — scripts are memory-optimised for 512 MB containers
+- Hybrid and meta-learner must wait for all base models
 - The final output should be a working live agent with a valid manifest.json
 
 ## Token Optimization
