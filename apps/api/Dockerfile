@@ -5,7 +5,9 @@ WORKDIR /app
 
 COPY pyproject.toml .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -e . 2>/dev/null || pip install -e .
+    pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    -e . 2>/dev/null || \
+    pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────
 FROM python:3.12-slim

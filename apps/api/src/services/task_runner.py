@@ -37,17 +37,25 @@ def _build_step_args(cfg: str, w: str) -> dict[str, list[str]]:
     pre = f"{w}/preprocessed"
     models = f"{w}/models"
     return {
-        "transform":        ["--config", cfg, "--output", f"{w}/transformed.parquet"],
-        "enrich":           ["--input", f"{w}/transformed.parquet", "--output", f"{w}/enriched.parquet"],
-        "preprocess":       ["--input", f"{w}/enriched.parquet", "--output", pre],
-        "train_xgboost":    ["--data", pre, "--output", models],
-        "train_lightgbm":   ["--data", pre, "--output", models],
-        "train_catboost":   ["--data", pre, "--output", models],
-        "train_rf":         ["--data", pre, "--output", models],
-        "evaluate":         ["--models-dir", models, "--output", f"{models}/best_model.json"],
-        "patterns":         ["--data", w, "--output", f"{w}/patterns.json"],
-        "explainability":   ["--model", models, "--data", pre, "--output", f"{w}/explainability.json"],
-        "create_live_agent": ["--config", cfg, "--models", models, "--output", f"{w}/live_agent"],
+        "transform":          ["--config", cfg, "--output", f"{w}/transformed.parquet"],
+        "enrich":             ["--input", f"{w}/transformed.parquet", "--output", f"{w}/enriched.parquet"],
+        "text_embeddings":    ["--input", f"{w}/enriched.parquet", "--output", w],
+        "preprocess":         ["--input", f"{w}/enriched.parquet", "--output", w],
+        "train_xgboost":      ["--data", w, "--output", models],
+        "train_lightgbm":     ["--data", w, "--output", models],
+        "train_catboost":     ["--data", w, "--output", models],
+        "train_rf":           ["--data", w, "--output", models],
+        "train_lstm":         ["--data", w, "--output", models],
+        "train_transformer":  ["--data", w, "--output", models],
+        "train_tft":          ["--data", w, "--output", models],
+        "train_tcn":          ["--data", w, "--output", models],
+        "train_hybrid":       ["--data", w, "--output", models],
+        "train_meta_learner": ["--models-dir", models, "--data", w, "--output", models],
+        "evaluate":           ["--models-dir", models, "--output", f"{models}/best_model.json"],
+        "explainability":     ["--model", models, "--data", w, "--output", f"{w}/explainability.json"],
+        "patterns":           ["--data", w, "--output", f"{w}/patterns.json"],
+        "llm_patterns":       ["--data", w, "--output", f"{w}/llm_patterns.json", "--config", cfg],
+        "create_live_agent":  ["--config", cfg, "--models", models, "--output", f"{w}/live_agent"],
     }
 
 
@@ -94,17 +102,25 @@ async def _run_pipeline(
     }
 
     steps = [
-        ("transform",       "transform.py",          15),
-        ("enrich",          "enrich.py",              30),
-        ("preprocess",      "preprocess.py",          35),
-        ("train_xgboost",   "train_xgboost.py",      45),
-        ("train_lightgbm",  "train_lightgbm.py",     50),
-        ("train_catboost",  "train_catboost.py",      55),
-        ("train_rf",        "train_rf.py",            58),
-        ("evaluate",        "evaluate_models.py",     70),
-        ("patterns",        "discover_patterns.py",   80),
-        ("explainability",  "build_explainability.py", 85),
-        ("create_live_agent", "create_live_agent.py", 95),
+        ("transform",         "transform.py",              10),
+        ("enrich",            "enrich.py",                 22),
+        ("text_embeddings",   "compute_text_embeddings.py", 25),
+        ("preprocess",        "preprocess.py",             28),
+        ("train_xgboost",     "train_xgboost.py",         35),
+        ("train_lightgbm",    "train_lightgbm.py",        38),
+        ("train_catboost",    "train_catboost.py",         41),
+        ("train_rf",          "train_rf.py",               44),
+        ("train_lstm",        "train_lstm.py",             47),
+        ("train_transformer", "train_transformer.py",      50),
+        ("train_tft",         "train_tft.py",              53),
+        ("train_tcn",         "train_tcn.py",              56),
+        ("train_hybrid",      "train_hybrid.py",           60),
+        ("train_meta_learner", "train_meta_learner.py",    63),
+        ("evaluate",          "evaluate_models.py",        68),
+        ("explainability",    "build_explainability.py",   75),
+        ("patterns",          "discover_patterns.py",      80),
+        ("llm_patterns",      "analyze_patterns_llm.py",   85),
+        ("create_live_agent", "create_live_agent.py",      95),
     ]
 
     async for session in _get_session():

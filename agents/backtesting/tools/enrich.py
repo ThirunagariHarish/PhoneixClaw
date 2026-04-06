@@ -756,6 +756,75 @@ def main():
         result["analyst_win_streak"] = result.groupby("analyst")["is_profitable"].transform(_streak)
         print("Added rolling analyst features")
 
+    # --- Category 10: Temporal Cross-Trade Features ---
+    result = result.sort_values("entry_time").reset_index(drop=True)
+
+    if "ticker" in result.columns and "is_profitable" in result.columns:
+        for window in [5, 10]:
+            grp_ticker = result.groupby("ticker")["is_profitable"]
+            result[f"ticker_win_rate_{window}"] = grp_ticker.transform(
+                lambda s: s.shift(1).rolling(window, min_periods=1).mean()
+            )
+        if "pnl_pct" in result.columns:
+            result["ticker_avg_pnl_5"] = result.groupby("ticker")["pnl_pct"].transform(
+                lambda s: s.shift(1).rolling(5, min_periods=1).mean()
+            )
+        result["ticker_trade_count"] = result.groupby("ticker").cumcount()
+
+        def _ticker_streak(s):
+            shifted = s.shift(1).fillna(0)
+            streaks = []
+            current = 0
+            for v in shifted:
+                current = current + 1 if v == 1 else 0
+                streaks.append(current)
+            return pd.Series(streaks, index=s.index)
+
+        result["streak_same_ticker"] = result.groupby("ticker")["is_profitable"].transform(_ticker_streak)
+
+        if "entry_time" in result.columns:
+            result["days_since_last_trade"] = result.groupby("ticker")["entry_time"].transform(
+                lambda s: s.diff().dt.total_seconds() / 86400
+            ).fillna(0)
+            wins = result[result["is_profitable"] == True]
+            if len(wins) > 0:
+                result["days_since_last_win"] = result.groupby("ticker")["entry_time"].transform(
+                    lambda s: s.diff().dt.total_seconds() / 86400
+                ).fillna(0)
+
+    if "return_1d" in result.columns and "return_5d" in result.columns:
+        r1 = result.get("return_1d", 0)
+        r5 = result.get("return_5d", 0)
+        r10 = result.get("return_10d", 0) if "return_10d" in result.columns else 0
+        r20 = result.get("return_20d", 0) if "return_20d" in result.columns else 0
+        result["momentum_composite"] = 0.4 * r1 + 0.3 * r5 + 0.2 * r10 + 0.1 * r20
+        result["momentum_acceleration"] = r5 - r20 if "return_20d" in result.columns else r5 - r10
+
+    if "sma_20" in result.columns and "sma_50" in result.columns:
+        has_200 = "sma_200" in result.columns
+        if has_200:
+            bull = (result["sma_20"] > result["sma_50"]) & (result["sma_50"] > result["sma_200"])
+            bear = (result["sma_20"] < result["sma_50"]) & (result["sma_50"] < result["sma_200"])
+        else:
+            bull = result["sma_20"] > result["sma_50"]
+            bear = result["sma_20"] < result["sma_50"]
+        result["market_regime_sma"] = 0
+        result.loc[bull, "market_regime_sma"] = 1
+        result.loc[bear, "market_regime_sma"] = -1
+
+    if "adx_14" in result.columns:
+        result["trend_strength"] = result["adx_14"].fillna(0)
+
+    if "days_to_fomc" in result.columns:
+        result["post_fomc_day"] = (-result["days_to_fomc"]).clip(lower=0)
+    if "days_to_earnings" in result.columns:
+        result["post_earnings_day"] = (-result["days_to_earnings"]).clip(lower=0)
+
+    temporal_cols = [c for c in result.columns if c.startswith(("ticker_win_rate", "ticker_avg_pnl", "ticker_trade_count",
+                     "streak_same_ticker", "days_since_last", "momentum_", "market_regime_sma", "trend_strength",
+                     "post_fomc_day", "post_earnings_day"))]
+    print(f"Added {len(temporal_cols)} temporal cross-trade features")
+
     # --- Candle windows (30 bars x 15 features per trade) ---
     candle_windows = _build_candle_windows(result, cache)
     output_path = Path(args.output)

@@ -59,6 +59,7 @@ Launch all base model training scripts in parallel. Each writes results to `outp
 - `python tools/train_lstm.py --data output/ --output output/models/`
 - `python tools/train_transformer.py --data output/ --output output/models/`
 - `python tools/train_tft.py --data output/ --output output/models/`
+- `python tools/train_tcn.py --data output/ --output output/models/`
 
 **After base models complete**, run the ensemble models (they need base model predictions):
 - `python tools/train_hybrid.py --data output/ --output output/models/`
@@ -72,6 +73,17 @@ Run: `python tools/build_explainability.py --model output/models/ --data output/
 
 ### Step 8: Pattern Discovery
 Run: `python tools/discover_patterns.py --data output/ --output output/models/patterns.json`
+
+Uses decision-tree rule extraction and grouped aggregation to discover multi-condition trading strategies (e.g. "RSI > 60 + Friday + Power Hour = 85% WR"). Generates strategy-style names and scores by edge over baseline.
+
+### Step 8b: LLM Strategy Analysis
+Run: `python tools/analyze_patterns_llm.py --data output/ --output output/llm_patterns.json --config config.json`
+
+Uses Claude API to analyze discovered patterns and generate:
+- Analyst trading profile
+- Named strategies with entry/exit rules
+- Regime insights and temporal patterns
+- Risk factors
 
 ### Step 9: Create Live Agent
 Run: `python tools/create_live_agent.py --config config.json --models output/models/ --output ~/agents/live/{channel_name}/`
@@ -128,7 +140,7 @@ curl -s -X POST "{phoenix_api_url}/api/v2/agents/{agent_id}/backtest-progress" \
   -d '{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}'
 ```
 
-Progress percentages: transform=12, enrich=30, text_embeddings=33, preprocess=35, train_base=55, train_ensemble=65, evaluate=70, explainability=85, patterns=80, create_live_agent=100
+Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28, train_base=56, train_ensemble=63, evaluate=68, explainability=75, patterns=80, llm_patterns=85, create_live_agent=100
 
 ## Important Rules
 - Always check if each tool script exists before running it

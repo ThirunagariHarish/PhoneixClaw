@@ -727,15 +727,29 @@ Output directory: {output_dir}
 
 1. **Transform**: `python {tools_dir}/transform.py --config {config_path} --output {output_dir}/transformed.parquet`
 2. **Enrich**: `python {tools_dir}/enrich.py --input {output_dir}/transformed.parquet --output {output_dir}/enriched.parquet`
-3. **Preprocess**: `python {tools_dir}/preprocess.py --input {output_dir}/enriched.parquet --output {output_dir}/preprocessed/`
-4. **Train XGBoost**: `python {tools_dir}/train_xgboost.py --data {output_dir}/preprocessed --output {output_dir}/models/`
-5. **Train LightGBM**: `python {tools_dir}/train_lightgbm.py --data {output_dir}/preprocessed --output {output_dir}/models/`
-6. **Train CatBoost**: `python {tools_dir}/train_catboost.py --data {output_dir}/preprocessed --output {output_dir}/models/`
-7. **Train RF**: `python {tools_dir}/train_rf.py --data {output_dir}/preprocessed --output {output_dir}/models/`
-8. **Evaluate**: `python {tools_dir}/evaluate_models.py --models-dir {output_dir}/models --output {output_dir}/models/best_model.json`
-9. **Patterns**: `python {tools_dir}/discover_patterns.py --data {output_dir} --output {output_dir}/patterns.json`
-10. **Explainability**: `python {tools_dir}/build_explainability.py --model {output_dir}/models --data {output_dir}/preprocessed --output {output_dir}/explainability.json`
-11. **Create Live Agent**: `python {tools_dir}/create_live_agent.py --config {config_path} --models {output_dir}/models --output {output_dir}/live_agent/`
+3. **Text Embeddings**: `python {tools_dir}/compute_text_embeddings.py --input {output_dir}/enriched.parquet --output {output_dir}/`
+4. **Preprocess**: `python {tools_dir}/preprocess.py --input {output_dir}/enriched.parquet --output {output_dir}/`
+
+### Base Model Training (can run in parallel)
+5. **Train XGBoost**: `python {tools_dir}/train_xgboost.py --data {output_dir} --output {output_dir}/models/`
+6. **Train LightGBM**: `python {tools_dir}/train_lightgbm.py --data {output_dir} --output {output_dir}/models/`
+7. **Train CatBoost**: `python {tools_dir}/train_catboost.py --data {output_dir} --output {output_dir}/models/`
+8. **Train RF**: `python {tools_dir}/train_rf.py --data {output_dir} --output {output_dir}/models/`
+9. **Train LSTM**: `python {tools_dir}/train_lstm.py --data {output_dir} --output {output_dir}/models/`
+10. **Train Transformer**: `python {tools_dir}/train_transformer.py --data {output_dir} --output {output_dir}/models/`
+11. **Train TFT**: `python {tools_dir}/train_tft.py --data {output_dir} --output {output_dir}/models/`
+12. **Train TCN**: `python {tools_dir}/train_tcn.py --data {output_dir} --output {output_dir}/models/`
+
+### Ensemble Models (after base models complete)
+13. **Train Hybrid**: `python {tools_dir}/train_hybrid.py --data {output_dir} --output {output_dir}/models/`
+14. **Train Meta-Learner**: `python {tools_dir}/train_meta_learner.py --models-dir {output_dir}/models/ --data {output_dir} --output {output_dir}/models/`
+
+### Evaluation and Analysis
+15. **Evaluate**: `python {tools_dir}/evaluate_models.py --models-dir {output_dir}/models --output {output_dir}/models/best_model.json`
+16. **Explainability**: `python {tools_dir}/build_explainability.py --model {output_dir}/models --data {output_dir} --output {output_dir}/explainability.json`
+17. **Pattern Discovery**: `python {tools_dir}/discover_patterns.py --data {output_dir} --output {output_dir}/patterns.json`
+18. **LLM Strategy Analysis**: `python {tools_dir}/analyze_patterns_llm.py --data {output_dir} --output {output_dir}/llm_patterns.json --config {config_path}`
+19. **Create Live Agent**: `python {tools_dir}/create_live_agent.py --config {config_path} --models {output_dir}/models --output {output_dir}/live_agent/`
 
 ## Progress Reporting
 
@@ -747,7 +761,7 @@ curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
   -d '{{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}}'
 ```
 
-Progress percentages: transform=15, enrich=30, preprocess=35, train_xgboost=45, train_lightgbm=50, train_catboost=55, train_rf=58, evaluate=70, patterns=80, explainability=85, create_live_agent=95
+Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28, train_xgboost=35, train_lightgbm=38, train_catboost=41, train_rf=44, train_lstm=47, train_transformer=50, train_tft=53, train_tcn=56, train_hybrid=60, train_meta_learner=63, evaluate=68, explainability=75, patterns=80, llm_patterns=85, create_live_agent=95
 
 When fully complete:
 ```bash
@@ -766,7 +780,8 @@ curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
 ```
 
 ## Rules
-- Create {output_dir}/models/ and {output_dir}/preprocessed/ directories before running those steps
+- Create {output_dir}/models/ directories before running training steps
+- Steps 5-12 (base training) can run in parallel — but steps 13-14 must wait for base models
 - If a script fails, read the error, attempt to fix it, and retry ONCE
 - If a script is missing a Python dependency, install it with pip
 - Do NOT modify the tool scripts unless absolutely necessary to fix a bug
