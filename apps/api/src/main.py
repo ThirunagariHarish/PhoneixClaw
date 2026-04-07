@@ -331,6 +331,57 @@ async def _heal_stuck_backtests(log=None) -> None:
         _log.warning("[backtest_heal] non-fatal error: %s", exc)
 
 
+async def _seed_system_agents() -> None:
+    """Idempotently seed reserved system-agent rows into the ``agents`` table.
+
+    Five hard-coded UUIDs are used as ``agent_id`` in ``agent_sessions`` by the
+    gateway (supervisor, morning-briefing, EOD analysis, daily-summary, trade-
+    feedback).  The FK ``agent_sessions.agent_id → agents.id`` rejects every
+    INSERT until these rows exist.  Running this at startup (and in the Docker
+    migrate script) ensures the constraint is always satisfied.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    _SYSTEM_AGENTS = [
+        ("00000000-0000-0000-0000-000000000001", "system", "Supervisor Agent"),
+        ("00000000-0000-0000-0000-000000000002", "system", "Morning Briefing Agent"),
+        ("00000000-0000-0000-0000-000000000003", "system", "EOD Analysis Agent"),
+        ("00000000-0000-0000-0000-000000000004", "system", "Daily Summary Agent"),
+        ("00000000-0000-0000-0000-000000000005", "system", "Trade Feedback Agent"),
+    ]
+
+    try:
+        from sqlalchemy import text
+        from shared.db.engine import get_engine
+
+        engine = get_engine()
+        async with engine.begin() as conn:
+            for uid, atype, name in _SYSTEM_AGENTS:
+                await conn.execute(
+                    text("""
+                        INSERT INTO agents (id, name, type, status, config,
+                                           worker_status, source,
+                                           manifest, pending_improvements,
+                                           current_mode, rules_version,
+                                           daily_pnl, total_pnl, total_trades,
+                                           win_rate, tokens_used_today_usd,
+                                           tokens_used_month_usd)
+                        VALUES (:id, :name, :type, 'SYSTEM', '{}',
+                                'STOPPED', 'system',
+                                '{}', '{}',
+                                'conservative', 1,
+                                0, 0, 0,
+                                0, 0, 0)
+                        ON CONFLICT (id) DO NOTHING
+                    """),
+                    {"id": uid, "name": name, "type": atype},
+                )
+            _log.info("[seed_system_agents] reserved agent rows ensured")
+    except Exception as exc:
+        _log.warning("[seed_system_agents] non-fatal error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
@@ -367,6 +418,13 @@ async def lifespan(app: FastAPI):
         await _ensure_prod_schema()
     except Exception as exc:
         _log.exception("[schema_heal] top-level crash: %s", exc)
+
+    # Seed reserved system-agent rows so FK agent_sessions.agent_id → agents.id
+    # is satisfied for supervisor, morning-briefing, EOD, daily-summary, trade-feedback.
+    try:
+        await _seed_system_agents()
+    except Exception as exc:
+        _log.exception("[seed_system_agents] top-level crash: %s", exc)
 
     # Heal agents/backtests stuck in RUNNING/BACKTESTING state from a previous
     # API crash or container restart.  Any backtest still RUNNING after the

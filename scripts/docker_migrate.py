@@ -144,6 +144,40 @@ async def create_all_tables():
                 print(f"  (skipped: {e})")
         print("V5 new columns ensured (migrations 014-09b0dd176f5d).")
 
+    # Seed reserved system-agent rows (idempotent) so FK in agent_sessions is satisfied.
+    _SYSTEM_AGENTS = [
+        ("00000000-0000-0000-0000-000000000001", "system", "Supervisor Agent"),
+        ("00000000-0000-0000-0000-000000000002", "system", "Morning Briefing Agent"),
+        ("00000000-0000-0000-0000-000000000003", "system", "EOD Analysis Agent"),
+        ("00000000-0000-0000-0000-000000000004", "system", "Daily Summary Agent"),
+        ("00000000-0000-0000-0000-000000000005", "system", "Trade Feedback Agent"),
+    ]
+    async with engine.begin() as conn:
+        for uid, atype, name in _SYSTEM_AGENTS:
+            try:
+                await conn.execute(
+                    text("""
+                        INSERT INTO agents (id, name, type, status, config,
+                                           worker_status, source,
+                                           manifest, pending_improvements,
+                                           current_mode, rules_version,
+                                           daily_pnl, total_pnl, total_trades,
+                                           win_rate, tokens_used_today_usd,
+                                           tokens_used_month_usd)
+                        VALUES (:id, :name, :type, 'SYSTEM', '{}',
+                                'STOPPED', 'system',
+                                '{}', '{}',
+                                'conservative', 1,
+                                0, 0, 0,
+                                0, 0, 0)
+                        ON CONFLICT (id) DO NOTHING
+                    """),
+                    {"id": uid, "name": name, "type": atype},
+                )
+            except Exception as e:
+                print(f"  (seed agent {name} skipped: {e})")
+    print("System agent rows seeded (idempotent).")
+
     await engine.dispose()
     print("DB tables ready.")
 
