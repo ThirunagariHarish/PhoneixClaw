@@ -152,9 +152,9 @@ async def create_all_tables():
         ("00000000-0000-0000-0000-000000000004", "system", "Daily Summary Agent"),
         ("00000000-0000-0000-0000-000000000005", "system", "Trade Feedback Agent"),
     ]
-    async with engine.begin() as conn:
-        for uid, atype, name in _SYSTEM_AGENTS:
-            try:
+    for uid, atype, name in _SYSTEM_AGENTS:
+        try:
+            async with engine.begin() as conn:
                 await conn.execute(
                     text("""
                         INSERT INTO agents (id, name, type, status, config,
@@ -164,7 +164,7 @@ async def create_all_tables():
                                            daily_pnl, total_pnl, total_trades,
                                            win_rate, tokens_used_today_usd,
                                            tokens_used_month_usd)
-                        VALUES (:id, :name, :type, 'SYSTEM', '{}',
+                        VALUES (:id, :name, :type, 'CREATED', '{}',
                                 'STOPPED', 'system',
                                 '{}', '{}',
                                 'conservative', 1,
@@ -174,8 +174,8 @@ async def create_all_tables():
                     """),
                     {"id": uid, "name": name, "type": atype},
                 )
-            except Exception as e:
-                print(f"  (seed agent {name} skipped: {e})")
+        except Exception as e:
+            print(f"  (seed agent {name} skipped: {e})")
     print("System agent rows seeded (idempotent).")
 
     await engine.dispose()

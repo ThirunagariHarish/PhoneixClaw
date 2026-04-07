@@ -351,35 +351,32 @@ async def _seed_system_agents() -> None:
         ("00000000-0000-0000-0000-000000000005", "system", "Trade Feedback Agent"),
     ]
 
-    try:
-        from sqlalchemy import text
-        from shared.db.engine import get_engine
+    from sqlalchemy import text
+    from shared.db.engine import get_engine
 
-        engine = get_engine()
+    engine = get_engine()
+    for uid, atype, name in _SYSTEM_AGENTS:
         async with engine.begin() as conn:
-            for uid, atype, name in _SYSTEM_AGENTS:
-                await conn.execute(
-                    text("""
-                        INSERT INTO agents (id, name, type, status, config,
-                                           worker_status, source,
-                                           manifest, pending_improvements,
-                                           current_mode, rules_version,
-                                           daily_pnl, total_pnl, total_trades,
-                                           win_rate, tokens_used_today_usd,
-                                           tokens_used_month_usd)
-                        VALUES (:id, :name, :type, 'SYSTEM', '{}',
-                                'STOPPED', 'system',
-                                '{}', '{}',
-                                'conservative', 1,
-                                0, 0, 0,
-                                0, 0, 0)
-                        ON CONFLICT (id) DO NOTHING
-                    """),
-                    {"id": uid, "name": name, "type": atype},
-                )
-            _log.info("[seed_system_agents] reserved agent rows ensured")
-    except Exception as exc:
-        _log.warning("[seed_system_agents] non-fatal error: %s", exc)
+            await conn.execute(
+                text("""
+                    INSERT INTO agents (id, name, type, status, config,
+                                       worker_status, source,
+                                       manifest, pending_improvements,
+                                       current_mode, rules_version,
+                                       daily_pnl, total_pnl, total_trades,
+                                       win_rate, tokens_used_today_usd,
+                                       tokens_used_month_usd)
+                    VALUES (:id, :name, :type, 'CREATED', '{}',
+                            'STOPPED', 'system',
+                            '{}', '{}',
+                            'conservative', 1,
+                            0, 0, 0,
+                            0, 0, 0)
+                    ON CONFLICT (id) DO NOTHING
+                """),
+                {"id": uid, "name": name, "type": atype},
+            )
+    _log.info("[seed_system_agents] reserved agent rows ensured")
 
 
 @asynccontextmanager
