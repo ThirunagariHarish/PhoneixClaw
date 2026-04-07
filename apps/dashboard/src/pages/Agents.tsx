@@ -176,9 +176,12 @@ interface WizardFormData {
   source_config: Record<string, unknown>
 }
 
-/* P1: Spawn typed agent quick form (UW / social / strategy / supervisor) */
-function QuickSpawnTypedAgent() {
+/* P1: Spawn typed agent via popup dialog (UW / social / strategy / supervisor).
+   Presented as a button next to "New Train Agent". Clicking opens a dialog
+   where the user picks a pre-built agent template and names the instance. */
+function QuickSpawnTypedAgentButton() {
   const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [type, setType] = useState('unusual_whales')
 
@@ -189,41 +192,92 @@ function QuickSpawnTypedAgent() {
     onSuccess: (d) => {
       toast.success(`Spawned ${type}: ${d.agent_id}`)
       setName('')
+      setOpen(false)
       qc.invalidateQueries({ queryKey: ['agents'] })
     },
     onError: (e: unknown) => toast.error(`Spawn failed: ${String(e)}`),
   })
 
+  const AGENT_OPTIONS = [
+    {
+      value: 'unusual_whales',
+      label: 'Unusual Whales',
+      description: 'Options flow + dark pool specialist',
+    },
+    {
+      value: 'social_sentiment',
+      label: 'Social Sentiment',
+      description: 'Reddit + Twitter headline hunter',
+    },
+    {
+      value: 'strategy',
+      label: 'Strategy Agent',
+      description: 'Rule-based executor (EMA cross, levels, etc.)',
+    },
+    {
+      value: 'supervisor',
+      label: 'AutoResearch Supervisor',
+      description: 'Nightly self-improvement loop',
+    },
+  ]
+
   return (
-    <div className="flex items-center gap-2 p-3 rounded-lg border bg-muted/30">
-      <Shield className="w-4 h-4 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground whitespace-nowrap">Quick spawn:</span>
-      <Input
-        placeholder="Agent name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="max-w-xs h-8 text-xs"
-      />
-      <Select value={type} onValueChange={setType}>
-        <SelectTrigger className="w-44 h-8 text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="unusual_whales">Unusual Whales</SelectItem>
-          <SelectItem value="social_sentiment">Social Sentiment</SelectItem>
-          <SelectItem value="strategy">Strategy Agent</SelectItem>
-          <SelectItem value="supervisor">AutoResearch Supervisor</SelectItem>
-        </SelectContent>
-      </Select>
-      <Button
-        size="sm"
-        onClick={() => spawn.mutate()}
-        disabled={!name || spawn.isPending}
-      >
-        <Plus className="w-3 h-3 mr-1" />
-        Spawn
-      </Button>
-    </div>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <Shield className="h-4 w-4 mr-2" /> New Pre-Built Agent
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md w-[calc(100vw-2rem)]">
+        <DialogHeader>
+          <DialogTitle>Spawn a Pre-Built Agent</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="qs-name">Agent Name</Label>
+            <Input
+              id="qs-name"
+              placeholder="e.g. UW Options Scanner"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Agent Template</Label>
+            <div className="space-y-2">
+              {AGENT_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setType(opt.value)}
+                  className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                    type === opt.value
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{opt.label}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {opt.description}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-3 border-t">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => spawn.mutate()}
+            disabled={!name || spawn.isPending}
+          >
+            {spawn.isPending ? 'Spawning…' : 'Spawn Agent'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1278,6 +1332,8 @@ export default function AgentsPage() {
         <div className="min-w-0">
           <PageHeader icon={Bot} title="Agents" description="Manage Claude Code trading and monitoring agents" />
         </div>
+        <div className="flex items-center gap-2">
+          <QuickSpawnTypedAgentButton />
         <Dialog
           open={createOpen}
           onOpenChange={(open) => {
@@ -1286,7 +1342,7 @@ export default function AgentsPage() {
           }}
         >
           <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" /> New Agent</Button>
+            <Button><Plus className="h-4 w-4 mr-2" /> New Train Agent</Button>
           </DialogTrigger>
           <DialogContent className="max-w-xl w-[calc(100vw-2rem)] sm:w-full">
             <DialogHeader>
@@ -1328,6 +1384,7 @@ export default function AgentsPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {stats && (
@@ -1344,11 +1401,6 @@ export default function AgentsPage() {
           tears down the rest of the Agents page */}
       <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Equity curve unavailable</div>}>
         <EquityCurveChart title="Global Portfolio (all agents)" days={30} />
-      </ErrorBoundary>
-
-      {/* P1: Quick spawn typed agent */}
-      <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Quick spawn unavailable</div>}>
-        <QuickSpawnTypedAgent />
       </ErrorBoundary>
 
 

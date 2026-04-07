@@ -61,11 +61,146 @@ from apps.api.src.routes import briefing_history as briefing_history_routes
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
 
+async def _ensure_prod_schema() -> None:
+    """Self-heal schema drift at API startup.
+
+    Every statement is idempotent and runs in its OWN short transaction so a
+    partial failure doesn't roll back the others. Logs every step loudly so
+    production deploys can see what happened.
+
+    This is the belt-and-braces safety net for cases where alembic and
+    init_db.py both failed to apply migrations in production.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    try:
+        from sqlalchemy import text
+        from shared.db.engine import get_engine
+    except Exception as exc:
+        _log.warning("[schema_heal] import failed: %s", exc)
+        return
+
+    # Each statement gets its own transaction so individual failures don't cascade.
+    statements = [
+        ("agents.last_activity_at",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "last_activity_at" TIMESTAMPTZ'),
+        ("agents.runtime_status",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "runtime_status" VARCHAR(16)'),
+        ("agents.daily_token_budget_usd",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "daily_token_budget_usd" DOUBLE PRECISION'),
+        ("agents.monthly_token_budget_usd",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "monthly_token_budget_usd" DOUBLE PRECISION'),
+        ("agents.tokens_used_today_usd",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "tokens_used_today_usd" DOUBLE PRECISION DEFAULT 0'),
+        ("agents.tokens_used_month_usd",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "tokens_used_month_usd" DOUBLE PRECISION DEFAULT 0'),
+        ("agents.budget_reset_at",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "budget_reset_at" TIMESTAMPTZ'),
+        ("agents.auto_paused_reason",
+         'ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "auto_paused_reason" VARCHAR(100)'),
+        ("table agent_logs", """
+            CREATE TABLE IF NOT EXISTS agent_logs (
+                id BIGSERIAL PRIMARY KEY,
+                agent_id VARCHAR(64) NOT NULL,
+                level VARCHAR(16) NOT NULL DEFAULT 'info',
+                source VARCHAR(64),
+                message TEXT NOT NULL,
+                context JSON,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """),
+        ("index ix_agent_logs_agent_time",
+         "CREATE INDEX IF NOT EXISTS ix_agent_logs_agent_time ON agent_logs (agent_id, created_at)"),
+        ("table agent_crons", """
+            CREATE TABLE IF NOT EXISTS agent_crons (
+                id VARCHAR(64) PRIMARY KEY,
+                agent_id VARCHAR(64) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                cron_expression VARCHAR(64) NOT NULL,
+                action_type VARCHAR(64) NOT NULL DEFAULT 'prompt',
+                action_payload JSON,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                last_run_at TIMESTAMPTZ,
+                next_run_at TIMESTAMPTZ,
+                run_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """),
+        ("table briefing_history", """
+            CREATE TABLE IF NOT EXISTS briefing_history (
+                id BIGSERIAL PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL DEFAULT 'morning',
+                agent_session_id UUID,
+                title VARCHAR(200) NOT NULL,
+                body TEXT NOT NULL,
+                data JSONB,
+                agents_woken INTEGER NOT NULL DEFAULT 0,
+                dispatched_to TEXT[],
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """),
+        ("index ix_briefing_history_kind_time",
+         "CREATE INDEX IF NOT EXISTS ix_briefing_history_kind_time ON briefing_history (kind, created_at)"),
+        ("table order_attempts", """
+            CREATE TABLE IF NOT EXISTS order_attempts (
+                id BIGSERIAL PRIMARY KEY,
+                agent_id VARCHAR(64),
+                intent_id VARCHAR(64),
+                symbol VARCHAR(16),
+                side VARCHAR(8),
+                rung INTEGER NOT NULL,
+                limit_price DOUBLE PRECISION,
+                status VARCHAR(32) NOT NULL,
+                reason VARCHAR(64),
+                fill_price DOUBLE PRECISION,
+                attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """),
+        ("table trade_outcomes_feedback", """
+            CREATE TABLE IF NOT EXISTS trade_outcomes_feedback (
+                id BIGSERIAL PRIMARY KEY,
+                agent_id VARCHAR(64) NOT NULL,
+                trade_id VARCHAR(64),
+                symbol VARCHAR(16),
+                predicted_sl_mult DOUBLE PRECISION,
+                actual_mae_atr DOUBLE PRECISION,
+                predicted_tp_mult DOUBLE PRECISION,
+                actual_mfe_atr DOUBLE PRECISION,
+                predicted_slip_bps DOUBLE PRECISION,
+                actual_slip_bps DOUBLE PRECISION,
+                closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """),
+    ]
+
+    engine = get_engine()
+    ok = 0
+    errs = 0
+    for label, sql in statements:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(sql))
+            _log.info("[schema_heal] OK %s", label)
+            ok += 1
+        except Exception as exc:
+            _log.warning("[schema_heal] FAILED %s: %s", label, str(exc)[:200])
+            errs += 1
+    _log.info("[schema_heal] done — %d ok, %d errors", ok, errs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     import logging as _logging
     _log = _logging.getLogger(__name__)
+
+    # CRITICAL: self-heal any schema drift from failed migrations BEFORE
+    # scheduler/ingestion start (they both query tables that may be missing).
+    try:
+        await _ensure_prod_schema()
+    except Exception as exc:
+        _log.exception("[schema_heal] top-level crash: %s", exc)
 
     # Start scheduler (morning briefing, supervisor, EOD analysis, heartbeat)
     stop_scheduler_fn = None
