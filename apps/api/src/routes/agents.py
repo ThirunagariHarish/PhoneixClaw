@@ -175,7 +175,7 @@ async def create_agent(payload: AgentCreate, session: DbSession):
         channel_name = re.sub(r'[^\w\-]', '', channel_name.encode('ascii', 'ignore').decode()).strip('-')
 
     agent_api_key = f"phx_{secrets.token_urlsafe(32)}"
-    phoenix_api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+    phoenix_api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
 
     agent_id = uuid.uuid4()
     agent = Agent(

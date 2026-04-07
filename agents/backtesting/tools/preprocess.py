@@ -47,6 +47,24 @@ def main():
     df = pd.read_parquet(input_path)
     print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
 
+    # Guard: empty dataset — write placeholder outputs and exit
+    if len(df) == 0:
+        print("WARNING: No rows to preprocess — writing placeholder outputs and exiting.")
+        placeholder = np.empty((0,), dtype=np.float64)
+        np.save(output_dir / "X_train.npy", placeholder.reshape(0, 1))
+        np.save(output_dir / "X_val.npy", placeholder.reshape(0, 1))
+        np.save(output_dir / "X_test.npy", placeholder.reshape(0, 1))
+        np.save(output_dir / "y_train.npy", placeholder)
+        np.save(output_dir / "y_val.npy", placeholder)
+        np.save(output_dir / "y_test.npy", placeholder)
+        meta = {"feature_columns": [], "n_features": 0, "n_train": 0, "n_val": 0, "n_test": 0,
+                "has_candles": False, "has_text": False, "categorical_columns": []}
+        import json as _json
+        (output_dir / "meta.json").write_text(_json.dumps(meta, indent=2))
+        (output_dir / "preprocessed_meta.json").write_text(_json.dumps(meta, indent=2))
+        print(f"Placeholder outputs written to {output_dir}")
+        return
+
     if "entry_time" not in df.columns:
         df["entry_time"] = pd.to_datetime(df.get("entry_time", pd.Timestamp.now()))
     df = df.sort_values("entry_time").reset_index(drop=True)

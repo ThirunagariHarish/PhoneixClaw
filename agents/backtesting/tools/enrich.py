@@ -847,6 +847,15 @@ def main():
     df = pd.read_parquet(args.input)
     print(f"Enriching {len(df)} trades...")
 
+    # Guard: if no trades, write an empty enriched parquet and exit
+    if len(df) == 0:
+        print("WARNING: No trades to enrich — writing empty enriched.parquet and exiting.")
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(output_path, index=False)
+        print(f"Saved empty enriched DataFrame to {output_path}")
+        return
+
     # ── Pre-download: fetch all tickers in parallel with disk caching ──
     import time
     t0 = time.time()

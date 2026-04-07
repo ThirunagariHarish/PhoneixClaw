@@ -110,6 +110,9 @@ services:
       - OLLAMA_EXPAND_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
       - LLM_GATEWAY_URL=http://phoenix-llm-gateway:8050
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Phoenix internal API URL — used by Claude Code subprocesses for backtest progress callbacks.
+      # Must be the internal service name so Docker-spawned Claude agents can reach the API.
+      - PHOENIX_API_URL=http://phoenix-api:8011
       # Cap gunicorn workers — each may spawn a Node `claude` CLI child;
       # 2 workers × ~900M peak RSS fits inside the 2G cgroup limit below.
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}

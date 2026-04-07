@@ -45,6 +45,21 @@ def main():
     y_val = np.load(data_dir / "y_val.npy")
     y_test = np.load(data_dir / "y_test.npy")
 
+    # Guard: empty dataset — write placeholder results and exit
+    if len(X_train) == 0 or X_train.ndim < 2 or X_train.shape[1] == 0:
+        print("WARNING: No training data available — writing placeholder CatBoost results.")
+        results = {
+            "model_name": "catboost",
+            "accuracy": 0.5, "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
+            "auc_roc": 0.5, "sharpe_ratio": 0.0, "max_drawdown_pct": 0.0, "profit_factor": 1.0,
+            "artifact_path": str(output_dir / "catboost_model.cbm"),
+            "note": "placeholder — no training data",
+        }
+        with open(output_dir / "catboost_results.json", "w") as f:
+            json.dump(results, f, indent=2)
+        print("CatBoost: placeholder results written (no training data)")
+        return
+
     tabular_names = _load_feature_names(data_dir)
     if tabular_names is not None and len(tabular_names) != X_train.shape[1]:
         tabular_names = None

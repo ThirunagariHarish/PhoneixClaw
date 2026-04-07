@@ -43,6 +43,17 @@ TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-a
 DATA_DIR = REPO_ROOT / "data"
 
 _running_tasks: dict[str, asyncio.Task] = {}
+
+
+def _get_api_url() -> str:
+    """Return the Phoenix API base URL for intra-cluster curl calls.
+
+    Priority:
+      1. PHOENIX_API_URL env var (explicit override)
+      2. PUBLIC_API_URL env var (legacy alias)
+      3. http://localhost:8011 (safe local default — never the production domain)
+    """
+    return os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
 _session_ids: dict[str, str] = {}
 
 # Phase H5: Concurrency limits to prevent OOM from too many subprocesses
@@ -690,7 +701,7 @@ class AgentGateway:
 
         manifest = agent.manifest or {}
         config_data = agent.config or {}
-        api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        api_url = _get_api_url()
 
         agent_config = {
             "agent_id": str(agent.id),
@@ -870,7 +881,7 @@ class AgentGateway:
                 logger.error("Parent agent %s not found", parent_agent_id)
                 return ""
 
-            api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+            api_url = _get_api_url()
             position_config = {
                 "agent_id": str(parent_agent_id),
                 "parent_agent_id": str(parent_agent_id),
@@ -1062,7 +1073,7 @@ class AgentGateway:
             shutil.copy2(claude_src, work_dir / "CLAUDE.md")
 
         # Write config
-        api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        api_url = _get_api_url()
         sup_config = {
             "agent_type": "supervisor",
             "phoenix_api_url": api_url,
@@ -1175,8 +1186,7 @@ class AgentGateway:
         if claude_src.exists():
             shutil.copy2(claude_src, work_dir / "CLAUDE.md")
 
-        api_url = os.getenv("PHOENIX_API_URL",
-                            os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        api_url = _get_api_url()
         mb_config = {
             "agent_type": "morning_briefing",
             "phoenix_api_url": api_url,
@@ -1307,8 +1317,7 @@ class AgentGateway:
             shutil.copy2(claude_src, work_dir / "CLAUDE.md")
 
         # Write config.json with Phoenix API connection info
-        api_url = os.getenv("PHOENIX_API_URL",
-                            os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        api_url = _get_api_url()
         agent_config = {
             "agent_type": agent_type,
             "phoenix_api_url": api_url,
@@ -1515,7 +1524,7 @@ class AgentGateway:
             if not agent:
                 return ""
 
-            api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+            api_url = _get_api_url()
             agent_config = {
                 "agent_id": str(agent_id),
                 "agent_name": agent.name,
@@ -2029,13 +2038,16 @@ Output directory: {output_dir}
 
 ## Progress Reporting
 
-After each step, report progress via curl:
+After each step, report progress via curl (best-effort — do NOT retry or stop if curl fails):
 ```bash
 curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
   -H "Content-Type: application/json" \\
   -H "X-Agent-Key: {api_key}" \\
-  -d '{{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}}'
+  -d '{{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}}' \\
+  || true
 ```
+
+**IMPORTANT**: Progress curl calls are fire-and-forget. If curl returns a non-zero exit code or an HTTP error (404, 500, etc.), log a one-line warning and **continue immediately to the next pipeline step**. Never retry a failed curl and never treat a failed curl as a pipeline failure.
 
 Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28, model_selection=30, training=30-63 (distribute evenly across selected models), evaluate=68, explainability=75, patterns=80, llm_patterns=85, create_live_agent=95
 
@@ -2044,7 +2056,8 @@ When fully complete:
 curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
   -H "Content-Type: application/json" \\
   -H "X-Agent-Key: {api_key}" \\
-  -d '{{"step": "completed", "message": "Pipeline complete", "progress_pct": 100, "status": "COMPLETED"}}'
+  -d '{{"step": "completed", "message": "Pipeline complete", "progress_pct": 100, "status": "COMPLETED"}}' \\
+  || true
 ```
 
 If a step fails after retrying:
@@ -2052,7 +2065,8 @@ If a step fails after retrying:
 curl -s -X POST "{api_url}/api/v2/agents/{agent_id}/backtest-progress" \\
   -H "Content-Type: application/json" \\
   -H "X-Agent-Key: {api_key}" \\
-  -d '{{"step": "<failed_step>", "message": "<error>", "progress_pct": <pct>, "status": "FAILED"}}'
+  -d '{{"step": "<failed_step>", "message": "<error>", "progress_pct": <pct>, "status": "FAILED"}}' \\
+  || true
 ```
 
 ## Rules

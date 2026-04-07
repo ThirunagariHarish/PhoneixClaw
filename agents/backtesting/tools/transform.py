@@ -106,6 +106,11 @@ async def fetch_discord_history(token: str, channel_id: str, lookback_days: int 
     """Fetch message history from Discord REST API."""
     import httpx
 
+    # Guard against empty token or channel_id
+    if not token or not token.strip() or not channel_id or not channel_id.strip():
+        print("WARNING: discord_token or channel_id is empty — skipping Discord fetch, returning 0 messages.")
+        return []
+
     if auth_type == "user_token":
         headers = {"Authorization": token}
     else:

@@ -8,6 +8,7 @@ Reference: ImplementationPlan.md Section 2, Section 5 M1.1, M1.3.
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Load .env early so os.environ is populated for all SDK checks (e.g. ANTHROPIC_API_KEY).
@@ -250,6 +251,86 @@ async def _ensure_prod_schema() -> None:
     _log.info("[schema_heal] done — %d ok, %d errors", ok, errs)
 
 
+async def _heal_stuck_backtests(log=None) -> None:
+    """Reset backtests/agents that are stuck in RUNNING/BACKTESTING.
+
+    On API restart the in-memory _running_tasks dict is empty, but the DB may
+    still record backtests as RUNNING from the previous process.  After the
+    gateway timeout window (1800 s by default) + a 60 s grace period any
+    RUNNING backtest is guaranteed dead — mark it ERROR and flip the parent
+    agent status back to CREATED so the user can retry.
+    """
+    import logging as _logging
+    _log = log or _logging.getLogger(__name__)
+
+    try:
+        from datetime import timedelta
+        from sqlalchemy import text, update
+        from shared.db.engine import get_engine
+        from shared.db.models.agent import Agent, AgentBacktest
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy.orm import sessionmaker
+
+        timeout_seconds = int(os.getenv("BACKTEST_QUERY_TIMEOUT_SECONDS", "1800")) + 60
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+
+        engine = get_engine()
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            # Find stuck backtests
+            result = await db.execute(
+                text("""
+                    SELECT id, agent_id, started_at
+                    FROM agent_backtests
+                    WHERE status = 'RUNNING'
+                      AND started_at < :cutoff
+                """),
+                {"cutoff": cutoff},
+            )
+            stuck = result.fetchall()
+            if not stuck:
+                _log.info("[backtest_heal] no stuck backtests found")
+                return
+
+            _log.warning("[backtest_heal] found %d stuck backtest(s) — resetting", len(stuck))
+            stuck_agent_ids = set()
+            for row in stuck:
+                bt_id, agent_id_str, started_at = row
+                await db.execute(
+                    text("""
+                        UPDATE agent_backtests
+                        SET status = 'ERROR',
+                            current_step = 'timeout',
+                            completed_at = NOW()
+                        WHERE id = :bt_id
+                    """),
+                    {"bt_id": bt_id},
+                )
+                stuck_agent_ids.add(str(agent_id_str))
+                _log.warning(
+                    "[backtest_heal] reset backtest %s (agent %s, started %s)",
+                    bt_id, agent_id_str, started_at,
+                )
+
+            # Flip parent agents back to CREATED so the user can retry
+            for agent_id_str in stuck_agent_ids:
+                await db.execute(
+                    text("""
+                        UPDATE agents
+                        SET status = 'CREATED',
+                            error_message = 'Backtest timed out — please retry'
+                        WHERE id::text = :agent_id
+                          AND status = 'BACKTESTING'
+                    """),
+                    {"agent_id": agent_id_str},
+                )
+
+            await db.commit()
+            _log.info("[backtest_heal] done — reset %d stuck backtest(s)", len(stuck))
+    except Exception as exc:
+        _log.warning("[backtest_heal] non-fatal error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
@@ -273,6 +354,15 @@ async def lifespan(app: FastAPI):
         await _ensure_prod_schema()
     except Exception as exc:
         _log.exception("[schema_heal] top-level crash: %s", exc)
+
+    # Heal agents/backtests stuck in RUNNING/BACKTESTING state from a previous
+    # API crash or container restart.  Any backtest still RUNNING after the
+    # gateway timeout window (default 1800 s + 60 s grace) is dead — mark it
+    # ERROR so the UI shows a meaningful status instead of spinning forever.
+    try:
+        await _heal_stuck_backtests(_log)
+    except Exception as exc:
+        _log.exception("[backtest_heal] failed: %s", exc)
 
     # Start scheduler (morning briefing, supervisor, EOD analysis, heartbeat)
     stop_scheduler_fn = None

@@ -28,6 +28,21 @@ def main():
     with open(data_dir / "meta.json") as f:
         meta = json.load(f)
 
+    # Guard: empty dataset — write placeholder results and exit
+    if len(X_train) == 0 or X_train.shape[1] == 0:
+        print("WARNING: No training data available — writing placeholder LightGBM results.")
+        results = {
+            "model_name": "lightgbm",
+            "accuracy": 0.5, "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
+            "auc_roc": 0.5, "sharpe_ratio": 0.0, "max_drawdown_pct": 0.0, "profit_factor": 1.0,
+            "artifact_path": str(output_dir / "lightgbm_model.pkl"),
+            "feature_importances": {}, "note": "placeholder — no training data",
+        }
+        with open(output_dir / "lightgbm_results.json", "w") as f:
+            json.dump(results, f, indent=2)
+        print("LightGBM: placeholder results written (no training data)")
+        return
+
     import lightgbm as lgb
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
