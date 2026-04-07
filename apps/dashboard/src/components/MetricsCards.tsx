@@ -22,12 +22,22 @@ interface Props {
 }
 
 export function MetricsCards({ agentId, days = 30 }: Props) {
-  const { data, isLoading } = useQuery<LiveMetrics>({
+  const { data, isLoading, isError } = useQuery<LiveMetrics>({
     queryKey: ['live-metrics', agentId, days],
     queryFn: async () =>
       (await api.get(`/api/v2/agents/${agentId}/live-metrics?days=${days}`)).data,
     refetchInterval: 15000,
+    retry: 1,
+    throwOnError: false,
   })
+
+  if (isError) {
+    return (
+      <div className="text-xs text-muted-foreground p-2">
+        Live metrics unavailable
+      </div>
+    )
+  }
 
   const cards = [
     {

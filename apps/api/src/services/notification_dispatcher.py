@@ -228,12 +228,23 @@ class NotificationDispatcher:
             logger.debug("WhatsApp not configured")
             return False
 
+        # P-S5: route through the SDK channel (handles per-agent tagging,
+        # async retry, and shares config with the inbound side)
+        try:
+            from shared.whatsapp import get_channel
+            channel = get_channel()
+            message = f"*{title}*\n\n{body}"
+            return await channel.send(agent_id=None, text=message, thread_id=to_number)
+        except Exception as e:
+            logger.warning("WhatsApp SDK channel send failed: %s", e)
+
+        # Fallback to legacy sync sender if the channel path blows up
         try:
             from shared.whatsapp.sender import send_whatsapp_message
             message = f"*{title}*\n\n{body}"
             return bool(send_whatsapp_message(phone_id, token, to_number, message))
         except Exception as e:
-            logger.warning("WhatsApp send failed: %s", e)
+            logger.warning("WhatsApp legacy send failed: %s", e)
             return False
 
 

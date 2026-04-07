@@ -1,26 +1,50 @@
 """Morning routine API — manual trigger and status endpoints.
 
-Triggered by Claude Code cron at 9:00 AM ET (configurable) or manually
-from the dashboard.
+Triggered by the scheduler cron at 9:00 AM ET or manually from the dashboard.
+
+Modes:
+    - agent (default): spawn the first-class morning-briefing-agent
+    - python: run the legacy in-process orchestrator (debug / safety net)
 """
 import logging
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/agents", tags=["morning-routine"])
 
 
 @router.post("/morning-briefing")
-async def trigger_morning_briefing():
-    """Trigger the morning routine across all running agents.
+async def trigger_morning_briefing(
+    mode: str = Query("agent", pattern="^(agent|python)$"),
+):
+    """Trigger the morning routine.
 
-    This is the endpoint Claude Code cron calls. Also callable manually
-    from the dashboard for testing.
+    Modes:
+      - agent (default): spawn the first-class morning_briefing agent template
+        via gateway.create_morning_briefing_agent(). Returns the task key.
+      - python: run the legacy Python orchestrator in-process. Returns the full
+        result dict (agents_eligible / agents_woken / agents_skipped / ...).
     """
+    if mode == "agent":
+        try:
+            from apps.api.src.services.agent_gateway import gateway
+            task_key = await gateway.create_morning_briefing_agent()
+            return {
+                "status": "spawned",
+                "mode": "agent",
+                "task_key": task_key,
+                "detail": "Morning briefing agent running. Watch briefing_history for output.",
+            }
+        except Exception as exc:
+            logger.exception("Morning briefing agent spawn failed")
+            return {"status": "error", "mode": "agent", "error": str(exc)[:500]}
+
+    # python fallback
     try:
         from services.orchestrator.src.morning_routine import morning_routine
         result = await morning_routine.execute()
+        result["mode"] = "python"
         return result
     except Exception as exc:
         logger.exception("Morning routine failed")
-        return {"status": "error", "error": str(exc)[:500]}
+        return {"status": "error", "mode": "python", "error": str(exc)[:500]}

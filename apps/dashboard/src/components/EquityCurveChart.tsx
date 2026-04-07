@@ -42,20 +42,22 @@ export function EquityCurveChart({ agentId, days = 30, height = 280, title }: Pr
     ? `/api/v2/agents/${agentId}/equity-curve?days=${days}`
     : `/api/v2/portfolio/equity-curve?days=${days}`
 
-  const { data, isLoading } = useQuery<{ curve: CurvePoint[]; starting_capital: number }>({
+  const { data, isLoading, isError } = useQuery<{ curve: CurvePoint[]; starting_capital: number }>({
     queryKey: ['equity-curve', agentId ?? 'global', days],
     queryFn: async () => (await api.get(url)).data,
     refetchInterval: 30000,
+    retry: 1,
+    throwOnError: false,
   })
 
-  const curve = data?.curve ?? []
-  const startCap = data?.starting_capital ?? 100_000
+  const curve = Array.isArray(data?.curve) ? data!.curve : []
+  const startCap = typeof data?.starting_capital === 'number' ? data.starting_capital : 100_000
   const chartData = curve.map((p) => ({
-    date: p.timestamp ? new Date(p.timestamp).toLocaleDateString() : '',
-    equity: p.equity,
-    drawdown: p.drawdown_pct * 100,
-    dd_fill: p.drawdown_pct * startCap * -1,
-    pnl: p.pnl,
+    date: p?.timestamp ? new Date(p.timestamp).toLocaleDateString() : '',
+    equity: typeof p?.equity === 'number' ? p.equity : 0,
+    drawdown: typeof p?.drawdown_pct === 'number' ? p.drawdown_pct * 100 : 0,
+    dd_fill: typeof p?.drawdown_pct === 'number' ? p.drawdown_pct * startCap * -1 : 0,
+    pnl: typeof p?.pnl === 'number' ? p.pnl : 0,
   }))
 
   const latest = curve.length ? curve[curve.length - 1] : null
@@ -84,7 +86,11 @@ export function EquityCurveChart({ agentId, days = 30, height = 280, title }: Pr
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isError ? (
+          <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
+            Equity curve unavailable
+          </div>
+        ) : isLoading ? (
           <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
             Loading equity curve…
           </div>

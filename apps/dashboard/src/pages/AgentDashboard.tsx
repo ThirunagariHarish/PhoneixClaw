@@ -35,6 +35,7 @@ import { MetricsCards } from '@/components/MetricsCards'
 import { AgentMessagesTab } from '@/components/AgentMessagesTab'
 import { AgentScheduleTab } from '@/components/AgentScheduleTab'
 import { AgentTerminal } from '@/components/AgentTerminal'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
 
@@ -1385,8 +1386,12 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
 
       <TabsContent value="portfolio" className="mt-4">
         <div className="space-y-4">
-          <MetricsCards agentId={id} />
-          <EquityCurveChart agentId={id} />
+          <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Metrics unavailable</div>}>
+            <MetricsCards agentId={id} />
+          </ErrorBoundary>
+          <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Equity curve unavailable</div>}>
+            <EquityCurveChart agentId={id} />
+          </ErrorBoundary>
           <PortfolioTab id={id} agent={agent} />
         </div>
       </TabsContent>

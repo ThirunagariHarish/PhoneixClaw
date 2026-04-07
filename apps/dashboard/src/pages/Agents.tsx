@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { AiAssistPopover } from '@/components/AiAssistPopover'
 import { EquityCurveChart } from '@/components/EquityCurveChart'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { toast } from 'sonner'
 import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
@@ -1339,11 +1340,16 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {/* P6: Global portfolio equity curve */}
-      <EquityCurveChart title="Global Portfolio (all agents)" days={30} />
+      {/* P6: Global portfolio equity curve — wrapped so a render error never
+          tears down the rest of the Agents page */}
+      <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Equity curve unavailable</div>}>
+        <EquityCurveChart title="Global Portfolio (all agents)" days={30} />
+      </ErrorBoundary>
 
       {/* P1: Quick spawn typed agent */}
-      <QuickSpawnTypedAgent />
+      <ErrorBoundary fallback={<div className="text-xs text-muted-foreground p-2">Quick spawn unavailable</div>}>
+        <QuickSpawnTypedAgent />
+      </ErrorBoundary>
 
 
       {/* Leaderboard */}

@@ -74,6 +74,28 @@ async def whatsapp_incoming(request: Request, session: DbSession):
     if not instruction:
         return {"status": "empty_instruction"}
 
+    # P-S5: Publish inbound to the WhatsApp SDK channel so the agent's Claude
+    # session consumes it as a native user turn via iter_inbound().
+    try:
+        from shared.whatsapp import get_channel
+        await get_channel().publish_inbound(
+            agent_id=str(agent.id), author=sender, text=instruction,
+            raw={"original": message_text, "agent_name": agent_name},
+        )
+    except Exception as exc:
+        logger.debug("[whatsapp] channel publish failed: %s", exc)
+
+    # Also publish via the Trigger Bus so trigger-consumer loops wake up too
+    try:
+        from shared.triggers import get_bus, Trigger, TriggerType
+        await get_bus().publish(Trigger(
+            agent_id=str(agent.id),
+            type=TriggerType.CHAT_MESSAGE,
+            payload={"source": "whatsapp", "text": instruction, "from": sender},
+        ))
+    except Exception as exc:
+        logger.debug("[whatsapp] trigger publish failed: %s", exc)
+
     # Route via gateway.send_task() if running, else save as system log
     try:
         from apps.api.src.services.agent_gateway import gateway

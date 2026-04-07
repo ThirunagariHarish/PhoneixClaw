@@ -36,6 +36,7 @@ SUPERVISOR_TEMPLATE = REPO_ROOT / "agents" / "templates" / "supervisor-agent"
 UW_TEMPLATE = REPO_ROOT / "agents" / "templates" / "unusual-whales-agent"
 SOCIAL_TEMPLATE = REPO_ROOT / "agents" / "templates" / "social-sentiment-agent"
 STRATEGY_TEMPLATE = REPO_ROOT / "agents" / "templates" / "strategy-agent"
+MORNING_BRIEFING_TEMPLATE = REPO_ROOT / "agents" / "templates" / "morning-briefing-agent"
 DATA_DIR = REPO_ROOT / "data"
 
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -396,9 +397,14 @@ class AgentGateway:
                 select(Agent).where(Agent.id == agent_id)
             )).scalar_one_or_none()
             if not agent:
+                logger.warning("[gateway] create_analyst: agent %s not found", agent_id)
                 return ""
             if agent.status not in ("BACKTEST_COMPLETE", "APPROVED", "PAPER", "RUNNING", "PAUSED"):
-                return ""
+                logger.warning(
+                    "[gateway] create_analyst rejected %s (name=%s): status=%s not eligible",
+                    agent_id, agent.name, agent.status,
+                )
+                return f"NOT_ELIGIBLE:{agent.status}"
 
             work_dir = await self._prepare_analyst_directory(agent, db)
             session_row_id = uuid.uuid4()
@@ -1038,6 +1044,127 @@ class AgentGateway:
             async for db in _get_session():
                 await self._update_session(db, session_row_id, status="error",
                                            error=str(exc)[:500])
+        finally:
+            _running_tasks.pop(task_key, None)
+
+    # ------------------------------------------------------------------
+    # Morning Briefing Agent (first-class, singleton per day)
+    # ------------------------------------------------------------------
+
+    async def create_morning_briefing_agent(self, config: dict | None = None) -> str:
+        """Spawn the Phoenix Morning Briefing Agent for today's pre-market.
+
+        Singleton per day. If already running for today's date, returns the
+        existing task key. Mirrors create_supervisor_agent but uses
+        MORNING_BRIEFING_TEMPLATE and a different reserved agent UUID.
+        """
+        config = config or {}
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        task_key = f"morning_briefing:{day}"
+        if task_key in _running_tasks and not _running_tasks[task_key].done():
+            return task_key
+
+        work_dir = DATA_DIR / "morning-briefing" / day
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        for subdir in ("tools",):
+            src = MORNING_BRIEFING_TEMPLATE / subdir
+            dst = work_dir / subdir
+            if dst.exists():
+                shutil.rmtree(dst)
+            if src.exists():
+                shutil.copytree(src, dst)
+        claude_src = MORNING_BRIEFING_TEMPLATE / "CLAUDE.md"
+        if claude_src.exists():
+            shutil.copy2(claude_src, work_dir / "CLAUDE.md")
+
+        api_url = os.getenv("PHOENIX_API_URL",
+                            os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        mb_config = {
+            "agent_type": "morning_briefing",
+            "phoenix_api_url": api_url,
+            "phoenix_api_key": config.get("phoenix_api_key", ""),
+            "lookback_hours": config.get("lookback_hours", 12),
+            "target_channels": config.get("target_channels",
+                                          ["whatsapp", "telegram", "ws", "db"]),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **config,
+        }
+        (work_dir / "config.json").write_text(json.dumps(mb_config, indent=2, default=str))
+
+        # Reserved UUID for the morning briefing singleton agent
+        mb_agent_uuid = uuid.UUID("00000000-0000-0000-0000-000000000002")
+        session_row_id = uuid.uuid4()
+        async for db in _get_session():
+            db.add(AgentSession(
+                id=session_row_id,
+                agent_id=mb_agent_uuid,
+                agent_type="morning_briefing",
+                session_role="morning_briefing",
+                status="starting",
+                working_dir=str(work_dir),
+                config=mb_config,
+            ))
+            await db.commit()
+
+        task = asyncio.create_task(
+            self._run_morning_briefing(work_dir, session_row_id, task_key)
+        )
+        _running_tasks[task_key] = task
+        logger.info("Spawned morning_briefing agent in %s", work_dir)
+        return task_key
+
+    async def _run_morning_briefing(self, work_dir: Path,
+                                     session_row_id: uuid.UUID,
+                                     task_key: str) -> None:
+        """Run the morning briefing as a one-shot Claude Code session."""
+        try:
+            from claude_agent_sdk import query, ClaudeAgentOptions
+        except ImportError:
+            logger.error("claude-agent-sdk unavailable for morning briefing")
+            _running_tasks.pop(task_key, None)
+            return
+
+        async for db in _get_session():
+            await self._update_session(db, session_row_id, status="running")
+
+        prompt = (
+            "You are the Phoenix Morning Briefing Agent. Read CLAUDE.md and run "
+            "all 5 phases in order: collect overnight events, compile briefing, "
+            "wake children, dispatch briefing, then report completion. "
+            "This is a one-shot run — exit cleanly when Phase 5 reports success."
+        )
+
+        options = ClaudeAgentOptions(
+            cwd=str(work_dir),
+            permission_mode="dontAsk",
+            allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+        )
+
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if hasattr(message, "session_id"):
+                    async for db in _get_session():
+                        await self._update_session(
+                            db, session_row_id, session_id=message.session_id
+                        )
+                if hasattr(message, "is_error") and getattr(message, "is_error", False):
+                    async for db in _get_session():
+                        await self._update_session(
+                            db, session_row_id, status="error",
+                            error="Morning briefing error",
+                        )
+                    return
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="completed")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Morning briefing crashed")
+            async for db in _get_session():
+                await self._update_session(
+                    db, session_row_id, status="error", error=str(exc)[:500]
+                )
         finally:
             _running_tasks.pop(task_key, None)
 

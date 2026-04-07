@@ -56,6 +56,7 @@ from apps.api.src.routes import trade_signals as trade_signals_routes
 from apps.api.src.routes import budget as budget_routes
 from apps.api.src.routes import agents_sprint as agents_sprint_routes
 from apps.api.src.routes import agent_terminal as agent_terminal_routes
+from apps.api.src.routes import briefing_history as briefing_history_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -179,6 +180,7 @@ app.include_router(budget_routes.router)
 app.include_router(agents_sprint_routes.router)
 app.include_router(agents_sprint_routes.portfolio_router)
 app.include_router(agent_terminal_routes.router)
+app.include_router(briefing_history_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

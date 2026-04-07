@@ -1,0 +1,8 @@
+{
+  "agent_type": "morning_briefing",
+  "lookback_hours": 12,
+  "target_channels": ["whatsapp", "telegram", "ws", "db"],
+  "phoenix_api_url": "",
+  "phoenix_api_key": "",
+  "created_at": ""
+}

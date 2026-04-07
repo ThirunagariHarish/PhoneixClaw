@@ -43,19 +43,41 @@ class MorningRoutineOrchestrator:
             "errors": [],
         }
 
-        # P10: broadened filter — anything not archived/erroring/mid-backtest is eligible
-        EXCLUDE = {"ARCHIVED", "BACKTESTING", "BACKTEST_COMPLETE", "ERROR",
-                   "BACKTEST_REJECTED"}
+        # P10 revised: include ONLY statuses that gateway.create_analyst actually accepts
+        # so we don't silently fail inside the gateway. Agents in CREATED/IDLE are skipped
+        # with a warning — they haven't been approved yet and shouldn't auto-wake.
+        WAKE_ELIGIBLE = ["BACKTEST_COMPLETE", "APPROVED", "PAPER", "RUNNING", "PAUSED"]
         agents: list = []
+        skipped: list[dict] = []
         async for session in get_session():
-            query = select(Agent).where(~Agent.status.in_(list(EXCLUDE)))
+            query = select(Agent).where(Agent.status.in_(WAKE_ELIGIBLE))
             rows = await session.execute(query)
             agents = list(rows.scalars().all())
 
+            # Also surface CREATED agents so the user sees them in the response
+            skipped_query = select(Agent).where(
+                Agent.status.in_(["CREATED", "IDLE", "STOPPED"])
+            )
+            sk_rows = await session.execute(skipped_query)
+            skipped = [
+                {"id": str(a.id), "name": a.name, "status": a.status}
+                for a in sk_rows.scalars().all()
+            ]
+
         results["agents_eligible"] = len(agents)
+        results["agents_skipped"] = skipped
+        if skipped:
+            logger.warning(
+                "[morning] Skipping %d agents not in wake-eligible status: %s",
+                len(skipped),
+                ", ".join(f"{s['name']}({s['status']})" for s in skipped[:10]),
+            )
 
         if not agents:
-            results["message"] = "No eligible agents found (all archived or mid-backtest)"
+            results["message"] = (
+                f"No wake-eligible agents (status in {WAKE_ELIGIBLE}). "
+                f"{len(skipped)} agents skipped — approve them first."
+            )
             return results
 
         logger.info("Morning routine: %d active agents", len(agents))
@@ -124,19 +146,24 @@ class MorningRoutineOrchestrator:
             agent_key = str(agent.id)
             started_fresh = False
             if agent_key not in _running_tasks or _running_tasks[agent_key].done():
-                # Auto-start idle agent (resume working dir if available)
+                # Auto-start agent session. create_analyst signature is (agent_id, config)
+                # — no `resume` kwarg, so pass nothing extra.
                 try:
-                    await gateway.create_analyst(agent.id, resume=True)
+                    spawn_result = await gateway.create_analyst(agent.id)
+                    if not spawn_result or (
+                        isinstance(spawn_result, str)
+                        and (spawn_result.startswith("BUDGET_EXCEEDED")
+                             or spawn_result.startswith("NOT_ELIGIBLE"))
+                    ):
+                        logger.warning(
+                            "[morning] create_analyst rejected %s (status=%s, result=%r)",
+                            agent.name, agent.status, spawn_result,
+                        )
+                        return None
                     started_fresh = True
-                except TypeError:
-                    # Backward-compat: create_analyst without resume kwarg
-                    try:
-                        await gateway.create_analyst(agent.id)
-                        started_fresh = True
-                    except Exception as e2:
-                        logger.warning("Auto-start failed for %s: %s", agent.name, e2)
                 except Exception as e:
                     logger.warning("Auto-start failed for %s: %s", agent.name, e)
+                    return None
 
             prompt = (
                 "MORNING_RESEARCH: Run your pre-market analysis routine. "
