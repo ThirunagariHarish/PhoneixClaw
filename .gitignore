@@ -80,3 +80,4 @@ docker-compose.override.yml
 data/*
 !data/parser_test_cases.json
 *.tsbuildinfo
+.playwright-mcp/

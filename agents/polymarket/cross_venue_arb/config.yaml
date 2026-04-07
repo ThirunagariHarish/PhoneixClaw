@@ -1,0 +1,36 @@
+# cross_venue_arb (F3.2) — DISABLED in v1.0.
+#
+# Activation requirements (v1.x):
+#   1. A real Kalshi MarketVenue implementation (currently a stub).
+#   2. enabled: true below.
+#   3. Per-strategy promotion through the standard PM promotion gate.
+#
+# The orchestrator's agent loader sees this file, registers the agent,
+# and starts it in STOPPED state because `enabled: false`.
+name: cross_venue_arb
+family: polymarket
+version: 0.1.0
+enabled: false
+mode: paper            # paper | live — irrelevant while disabled
+status: stopped        # loader-visible initial state
+
+# Which secondary venue this agent pairs Polymarket against. Must match
+# a `MarketVenue.name` registered with the connector-manager.
+secondary_venue: kalshi
+
+# Edge / risk thresholds (used by detector + risk chain when enabled).
+min_edge_bps: 150          # 1.5% raw edge before fees
+min_liquidity_usd: 5000    # both legs must clear this
+max_notional_usd: 250      # per opportunity, hard cap
+slippage_buffer_bps: 25
+
+# F9 resolution-risk gate is mandatory; both legs must score tradeable.
+require_f9_tradeable_both_legs: true
+
+# Documentation seam for v1.x activation — do not delete.
+activation_notes: |
+  v1.0 ships this folder as a scaffold per Phase 9 DoD. To activate:
+    - replace `services/connector-manager/src/venues/kalshi_venue.py`
+      stub with a real implementation;
+    - flip `enabled: true` here;
+    - run the standard PM promotion flow (paper soak -> promote).

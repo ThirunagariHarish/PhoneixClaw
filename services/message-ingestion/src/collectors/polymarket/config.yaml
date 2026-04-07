@@ -1,0 +1,71 @@
+# Polymarket news collectors — Phase 14
+#
+# Pure ingestion config (v1.0). Each collector polls its feeds on the
+# given interval and publishes normalized items to the `pm:news` Redis
+# stream. Consumed by F6 news reactor in v1.2.
+#
+# Feeds intentionally use public, no-auth endpoints. Add or remove
+# feeds without code changes; the orchestrator (future) will reload
+# this file at startup.
+
+stream: pm:news
+stream_maxlen: 50000
+
+collectors:
+  election:
+    enabled: true
+    poll_interval_seconds: 120
+    feeds:
+      - https://feeds.reuters.com/reuters/politicsNews
+      - https://feeds.npr.org/1014/rss.xml
+      - https://www.politico.com/rss/politicopicks.xml
+
+  sports:
+    enabled: true
+    poll_interval_seconds: 180
+    feeds:
+      - https://www.espn.com/espn/rss/news
+      - https://www.espn.com/espn/rss/nfl/news
+      - https://www.espn.com/espn/rss/nba/news
+      - https://www.espn.com/espn/rss/mlb/news
+
+  macro:
+    enabled: true
+    poll_interval_seconds: 300
+    feeds:
+      - https://www.federalreserve.gov/feeds/press_all.xml
+      - https://www.bls.gov/feed/bls_latest.rss
+    # keyword filter applied on top of feed content to drop non-macro items
+    keywords:
+      - cpi
+      - inflation
+      - nonfarm
+      - payroll
+      - unemployment
+      - fomc
+      - rate cut
+      - rate hike
+      - powell
+      - federal reserve
+      - ppi
+      - gdp
+
+  crypto:
+    enabled: true
+    poll_interval_seconds: 120
+    feeds:
+      - https://www.coindesk.com/arc/outboundfeeds/rss/
+      - https://cointelegraph.com/rss
+    keywords:
+      - bitcoin
+      - btc
+      - ethereum
+      - eth
+      - solana
+      - sol
+      - etf
+      - sec
+      - halving
+      - stablecoin
+      - ripple
+      - xrp
