@@ -37,6 +37,8 @@ class AgentSession(Base):
     position_side: Mapped[str | None] = mapped_column(String(10), nullable=True)
     session_role: Mapped[str] = mapped_column(String(30), nullable=False, default="primary")
     # session_role: 'primary' | 'position_monitor' | 'research' | 'supervisor'
+    # Phase 4 (agents-tab-fix): paper vs live mode recorded per session
+    trading_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="live")
 
     # Runtime visibility fields (Phase 5.1)
     host_name: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -53,6 +53,8 @@ class Agent(Base):
     tokens_used_month_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     budget_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     auto_paused_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Phase 4 (agents-tab-fix): latest backtest/Claude SDK error for fast list reads
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Phase P: runtime status + heartbeat-derived activity marker
     runtime_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
