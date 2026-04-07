@@ -157,81 +157,25 @@ async def _job_supervisor_run() -> None:
 
 
 async def _job_eod_analysis() -> None:
-    """Run EOD analysis: enrich trade_signals, compute missed-trade metrics."""
+    """Spawn the EOD analysis Claude agent at 16:45 ET."""
     try:
-        from apps.api.src.routes.eod_analysis import run_eod_analysis
-        logger.info("[scheduler] EOD analysis starting...")
-        result = await run_eod_analysis()
-        logger.info("[scheduler] EOD analysis done: %s", result)
+        from apps.api.src.services.agent_gateway import gateway
+        logger.info("[scheduler] EOD analysis — spawning agent...")
+        task_key = await gateway.create_eod_analysis_agent()
+        logger.info("[scheduler] eod_analysis agent spawned: %s", task_key)
     except Exception:
-        logger.exception("[scheduler] EOD analysis failed")
+        logger.exception("[scheduler] EOD analysis agent spawn failed")
 
 
 async def _job_daily_summary() -> None:
-    """Compile a daily WhatsApp summary across all agents."""
+    """Spawn the daily-summary Claude agent at 17:00 ET."""
     try:
-        from shared.db.engine import get_session
-        from shared.db.models.agent import Agent
-        from shared.db.models.agent_trade import AgentTrade
-        from sqlalchemy import select, func, and_
-
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        async for session in get_session():
-            # Count today's trades per agent
-            result = await session.execute(
-                select(
-                    AgentTrade.agent_id,
-                    func.count(AgentTrade.id).label("count"),
-                    func.sum(AgentTrade.pnl_dollar).label("pnl"),
-                )
-                .where(AgentTrade.created_at >= today_start)
-                .group_by(AgentTrade.agent_id)
-            )
-            rows = result.all()
-
-            if not rows:
-                logger.info("[scheduler] Daily summary: no trades today")
-                return
-
-            # Get agent names
-            agent_ids = [r.agent_id for r in rows]
-            agents_result = await session.execute(
-                select(Agent).where(Agent.id.in_(agent_ids))
-            )
-            agents_by_id = {a.id: a for a in agents_result.scalars().all()}
-
-            # Build summary
-            lines = [f"Daily Summary — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}", ""]
-            total_pnl = 0.0
-            total_trades = 0
-            for r in rows:
-                agent = agents_by_id.get(r.agent_id)
-                name = agent.name if agent else str(r.agent_id)[:8]
-                pnl = float(r.pnl or 0)
-                total_pnl += pnl
-                total_trades += r.count
-                lines.append(f"• {name}: {r.count} trades, ${pnl:+.2f}")
-            lines.append("")
-            lines.append(f"Total: {total_trades} trades, ${total_pnl:+.2f}")
-
-            body = "\n".join(lines)
-
-            # Dispatch notification
-            try:
-                from apps.api.src.services.notification_dispatcher import notification_dispatcher
-                await notification_dispatcher.dispatch(
-                    event_type="info",
-                    agent_id=None,
-                    title="Phoenix Daily Summary",
-                    body=body,
-                    channels=["whatsapp", "ws", "db"],
-                )
-                logger.info("[scheduler] Daily summary dispatched")
-            except Exception:
-                logger.exception("[scheduler] Failed to dispatch daily summary")
+        from apps.api.src.services.agent_gateway import gateway
+        logger.info("[scheduler] Daily summary — spawning agent...")
+        task_key = await gateway.create_daily_summary_agent()
+        logger.info("[scheduler] daily_summary agent spawned: %s", task_key)
     except Exception:
-        logger.exception("[scheduler] Daily summary failed")
+        logger.exception("[scheduler] Daily summary agent spawn failed")
 
 
 async def _job_nightly_retention() -> None:
@@ -378,14 +322,14 @@ async def _load_agent_crons() -> None:
 
 
 async def _job_trade_feedback() -> None:
-    """T11: Nightly bias-correction feedback loop."""
+    """Spawn the trade-feedback Claude agent at 03:30 ET."""
     try:
-        from apps.api.src.services.trade_outcome_feedback import run_feedback_job
-        logger.info("[scheduler] Trade outcome feedback starting...")
-        result = await run_feedback_job()
-        logger.info("[scheduler] Trade feedback done: %s", result)
+        from apps.api.src.services.agent_gateway import gateway
+        logger.info("[scheduler] Trade feedback — spawning agent...")
+        task_key = await gateway.create_trade_feedback_agent()
+        logger.info("[scheduler] trade_feedback agent spawned: %s", task_key)
     except Exception:
-        logger.exception("[scheduler] Trade feedback failed")
+        logger.exception("[scheduler] Trade feedback agent spawn failed")
 
 
 async def _job_heartbeat_check() -> None:

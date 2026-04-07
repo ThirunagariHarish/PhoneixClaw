@@ -100,3 +100,32 @@ async def send_message(
 
     await session.commit()
     return {"ok": True, "id": str(row.id), "forwarded": forwarded}
+
+
+@router.post("/agent-reply")
+async def post_agent_reply(
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Callback used by the chat-responder Claude session's reply_chat.py tool.
+
+    Persists the generated reply as an AgentChatMessage with role='agent'.
+    Auth: agent-to-API callback using the agent's PHOENIX_API_KEY (X-Agent-Key).
+    """
+    agent_id_raw = body.get("agent_id")
+    content = body.get("content", "")
+    if not agent_id_raw or not content:
+        return {"ok": False, "detail": "agent_id and content required"}
+    try:
+        agent_uuid = uuid.UUID(str(agent_id_raw))
+    except (ValueError, TypeError):
+        return {"ok": False, "detail": "invalid agent_id"}
+
+    row = AgentChatMessage(
+        agent_id=agent_uuid,
+        role="agent",
+        content=str(content)[:4000],
+    )
+    session.add(row)
+    await session.commit()
+    return {"ok": True, "id": str(row.id)}

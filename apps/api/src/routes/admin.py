@@ -59,6 +59,51 @@ class UserUpdate(BaseModel):
     is_admin: bool | None = None
 
 
+@router.get("/trade-outcomes")
+async def list_trade_outcomes(session: DbSession, request: Request,
+                                days: int = 30):
+    """Dump recent trade_outcomes_feedback rows grouped by agent.
+
+    Consumed by the trade-feedback-agent to compute bias multipliers without
+    touching DB models directly.
+    """
+    await _require_admin(request, session)
+    from sqlalchemy import text
+
+    try:
+        res = await session.execute(
+            text(
+                "SELECT agent_id, predicted_sl_mult, actual_mae_atr, "
+                "predicted_tp_mult, actual_mfe_atr, predicted_slip_bps, "
+                "actual_slip_bps, closed_at FROM trade_outcomes_feedback "
+                "WHERE closed_at >= NOW() - (:days || ' days')::interval"
+            ),
+            {"days": days},
+        )
+        rows = res.all()
+    except Exception as exc:
+        return {"per_agent": {}, "error": str(exc)[:200]}
+
+    per_agent: dict[str, list[dict]] = {}
+    for r in rows:
+        aid = str(r[0])
+        per_agent.setdefault(aid, []).append({
+            "predicted_sl_mult": float(r[1]) if r[1] is not None else None,
+            "actual_mae_atr": float(r[2]) if r[2] is not None else None,
+            "predicted_tp_mult": float(r[3]) if r[3] is not None else None,
+            "actual_mfe_atr": float(r[4]) if r[4] is not None else None,
+            "predicted_slip_bps": float(r[5]) if r[5] is not None else None,
+            "actual_slip_bps": float(r[6]) if r[6] is not None else None,
+            "closed_at": r[7].isoformat() if r[7] else None,
+        })
+
+    return {
+        "days": days,
+        "row_count": len(rows),
+        "per_agent": per_agent,
+    }
+
+
 class RoleCreate(BaseModel):
     name: str = Field(..., min_length=1)
     permissions: dict[str, bool] = Field(default_factory=dict)

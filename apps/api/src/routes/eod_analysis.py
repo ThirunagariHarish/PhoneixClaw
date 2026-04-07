@@ -235,9 +235,27 @@ def _format_summary_for_notification(summary: dict) -> str:
 
 @router.post("/eod-analysis")
 async def trigger_eod_analysis():
-    """Manually trigger EOD analysis. Also called by scheduler at 16:45 ET."""
-    result = await run_eod_analysis()
-    return result
+    """Spawn the EOD analysis Claude agent.
+
+    As of the Python→Claude migration, the manual trigger ALWAYS spawns the
+    first-class Claude Code agent. The scheduler cron at 16:45 ET does the
+    same thing via gateway.create_eod_analysis_agent(). Actual output lands
+    in briefing_history a few minutes later.
+    """
+    try:
+        from apps.api.src.services.agent_gateway import gateway
+        task_key = await gateway.create_eod_analysis_agent()
+        return {
+            "status": "spawned",
+            "task_key": task_key,
+            "detail": (
+                "EOD analysis agent running. "
+                "Results will appear in Briefing History (kind=eod) in 2-3 minutes."
+            ),
+        }
+    except Exception as exc:
+        logger.exception("EOD analysis agent spawn failed")
+        return {"status": "error", "error": str(exc)[:500]}
 
 
 @router.get("/eod-analysis/latest")

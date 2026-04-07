@@ -37,6 +37,9 @@ UW_TEMPLATE = REPO_ROOT / "agents" / "templates" / "unusual-whales-agent"
 SOCIAL_TEMPLATE = REPO_ROOT / "agents" / "templates" / "social-sentiment-agent"
 STRATEGY_TEMPLATE = REPO_ROOT / "agents" / "templates" / "strategy-agent"
 MORNING_BRIEFING_TEMPLATE = REPO_ROOT / "agents" / "templates" / "morning-briefing-agent"
+DAILY_SUMMARY_TEMPLATE = REPO_ROOT / "agents" / "templates" / "daily-summary-agent"
+EOD_ANALYSIS_TEMPLATE = REPO_ROOT / "agents" / "templates" / "eod-analysis-agent"
+TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-agent"
 DATA_DIR = REPO_ROOT / "data"
 
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -1221,6 +1224,203 @@ class AgentGateway:
                 )
         finally:
             _running_tasks.pop(task_key, None)
+
+    # ------------------------------------------------------------------
+    # One-shot scheduled agents (daily summary, EOD analysis, trade feedback)
+    # ------------------------------------------------------------------
+
+    async def _spawn_one_shot_agent(
+        self,
+        *,
+        template_dir: Path,
+        subdir: str,
+        agent_type: str,
+        reserved_uuid: uuid.UUID,
+        prompt: str,
+        config: dict | None = None,
+    ) -> str:
+        """Generic one-shot Claude Code agent spawner used by daily summary,
+        EOD analysis, trade feedback, and any other cron-triggered agent.
+
+        Returns a task_key like "{agent_type}:YYYYMMDD". If an agent with the
+        same task_key is already running, returns the existing key (singleton
+        per day).
+        """
+        config = config or {}
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        task_key = f"{agent_type}:{day}"
+        if task_key in _running_tasks and not _running_tasks[task_key].done():
+            return task_key
+
+        work_dir = DATA_DIR / subdir / day
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy template tools + CLAUDE.md
+        tools_src = template_dir / "tools"
+        tools_dst = work_dir / "tools"
+        if tools_dst.exists():
+            shutil.rmtree(tools_dst)
+        if tools_src.exists():
+            shutil.copytree(tools_src, tools_dst)
+        claude_src = template_dir / "CLAUDE.md"
+        if claude_src.exists():
+            shutil.copy2(claude_src, work_dir / "CLAUDE.md")
+
+        # Write config.json with Phoenix API connection info
+        api_url = os.getenv("PHOENIX_API_URL",
+                            os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
+        agent_config = {
+            "agent_type": agent_type,
+            "phoenix_api_url": api_url,
+            "phoenix_api_key": config.get("phoenix_api_key", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **config,
+        }
+        (work_dir / "config.json").write_text(json.dumps(agent_config, indent=2, default=str))
+
+        # Create AgentSession row so the dashboard can see the run
+        session_row_id = uuid.uuid4()
+        async for db in _get_session():
+            db.add(AgentSession(
+                id=session_row_id,
+                agent_id=reserved_uuid,
+                agent_type=agent_type,
+                session_role=agent_type,
+                status="starting",
+                working_dir=str(work_dir),
+                config=agent_config,
+            ))
+            await db.commit()
+
+        task = asyncio.create_task(
+            self._run_one_shot_agent(work_dir, session_row_id, task_key, prompt, agent_type)
+        )
+        _running_tasks[task_key] = task
+        logger.info("Spawned %s agent in %s", agent_type, work_dir)
+        return task_key
+
+    async def _run_one_shot_agent(
+        self,
+        work_dir: Path,
+        session_row_id: uuid.UUID,
+        task_key: str,
+        prompt: str,
+        agent_type: str,
+    ) -> None:
+        """Run a one-shot Claude Code session. Shared by daily_summary, eod,
+        trade_feedback. 30-min hard timeout matches the backtester."""
+        try:
+            from claude_agent_sdk import query, ClaudeAgentOptions
+        except ImportError:
+            logger.error("claude-agent-sdk unavailable for %s", agent_type)
+            _running_tasks.pop(task_key, None)
+            return
+
+        # Reuse the backtester preflight so we fail fast if the CLI is broken
+        preflight_err = _claude_sdk_preflight()
+        if preflight_err:
+            logger.error("[%s] preflight failed: %s", agent_type, preflight_err)
+            async for db in _get_session():
+                await self._update_session(
+                    db, session_row_id, status="error",
+                    error=f"preflight_failed: {preflight_err[:200]}",
+                )
+            _running_tasks.pop(task_key, None)
+            return
+
+        async for db in _get_session():
+            await self._update_session(db, session_row_id, status="running")
+
+        options = ClaudeAgentOptions(
+            cwd=str(work_dir),
+            permission_mode="dontAsk",
+            allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+        )
+
+        timeout_s = int(os.environ.get("ONESHOT_AGENT_TIMEOUT_SECONDS", "1800"))
+
+        async def _pump() -> None:
+            async for message in query(prompt=prompt, options=options):
+                if hasattr(message, "session_id"):
+                    async for db in _get_session():
+                        await self._update_session(
+                            db, session_row_id, session_id=message.session_id
+                        )
+                if hasattr(message, "is_error") and getattr(message, "is_error", False):
+                    async for db in _get_session():
+                        await self._update_session(
+                            db, session_row_id, status="error",
+                            error=f"{agent_type} error",
+                        )
+                    return
+
+        try:
+            await asyncio.wait_for(_pump(), timeout=timeout_s)
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="completed")
+        except asyncio.TimeoutError:
+            logger.error("[%s] hit %ds timeout", agent_type, timeout_s)
+            async for db in _get_session():
+                await self._update_session(
+                    db, session_row_id, status="error",
+                    error=f"sdk_timeout_after_{timeout_s}s",
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("[%s] crashed", agent_type)
+            async for db in _get_session():
+                await self._update_session(
+                    db, session_row_id, status="error", error=str(exc)[:500]
+                )
+        finally:
+            _running_tasks.pop(task_key, None)
+
+    async def create_daily_summary_agent(self, config: dict | None = None) -> str:
+        """Spawn the daily-summary Claude agent. Runs at 17:00 ET."""
+        return await self._spawn_one_shot_agent(
+            template_dir=DAILY_SUMMARY_TEMPLATE,
+            subdir="daily-summary",
+            agent_type="daily_summary",
+            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000004"),
+            prompt=(
+                "You are the Phoenix Daily Summary Agent. Read CLAUDE.md and "
+                "run all 3 phases in order: collect today's PnL, compile the "
+                "narrative, persist and dispatch. Then exit cleanly."
+            ),
+            config=config,
+        )
+
+    async def create_eod_analysis_agent(self, config: dict | None = None) -> str:
+        """Spawn the EOD analysis Claude agent. Runs at 16:45 ET."""
+        return await self._spawn_one_shot_agent(
+            template_dir=EOD_ANALYSIS_TEMPLATE,
+            subdir="eod-analysis",
+            agent_type="eod_analysis",
+            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000003"),
+            prompt=(
+                "You are the Phoenix EOD Analysis Agent. Read CLAUDE.md and "
+                "run all 5 phases in order: collect day trades, enrich "
+                "outcomes, compute missed metrics, compile the EOD brief, "
+                "then persist and dispatch. Exit cleanly when done."
+            ),
+            config=config,
+        )
+
+    async def create_trade_feedback_agent(self, config: dict | None = None) -> str:
+        """Spawn the trade-feedback Claude agent. Runs at 03:30 ET."""
+        return await self._spawn_one_shot_agent(
+            template_dir=TRADE_FEEDBACK_TEMPLATE,
+            subdir="trade-feedback",
+            agent_type="trade_feedback",
+            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000005"),
+            prompt=(
+                "You are the Phoenix Trade Feedback Agent. Read CLAUDE.md and "
+                "run all 3 phases: query outcomes, compute bias multipliers, "
+                "apply them per-agent and report. Exit cleanly when done."
+            ),
+            config=config,
+        )
 
     # ------------------------------------------------------------------
     # Specialized agent factories (UW / Social / Strategy)
