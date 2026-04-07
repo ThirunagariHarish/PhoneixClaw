@@ -126,10 +126,12 @@ function buildEdges(raw: AgentEdge[]): Edge[] {
 
 export default function AgentGraphPage() {
   const navigate = useNavigate()
-  const { data: graphData } = useQuery<GraphData>({
+  const { data: graphData, isLoading, isError, error } = useQuery<GraphData>({
     queryKey: ['agent-graph'],
     queryFn: async () => (await api.get('/api/v2/agents/graph')).data,
     refetchInterval: 15000,
+    retry: 1,
+    throwOnError: false,
   })
 
   const initialNodes = useMemo(() => layoutNodes(graphData?.nodes || []), [graphData?.nodes])
@@ -145,9 +147,12 @@ export default function AgentGraphPage() {
     navigate(`/agents/${node.id}`)
   }, [navigate])
 
-  const liveCount = graphData?.nodes.filter(n => n.status === 'live').length ?? 0
-  const paperCount = graphData?.nodes.filter(n => n.status === 'paper').length ?? 0
-  const totalEdges = graphData?.edges.length ?? 0
+  // Backend returns canonical statuses (RUNNING, PAPER, APPROVED, BACKTESTING, ...)
+  const nodeArr = graphData?.nodes ?? []
+  const edgeArr = graphData?.edges ?? []
+  const liveCount = nodeArr.filter((n) => ['RUNNING', 'APPROVED'].includes(n.status)).length
+  const paperCount = nodeArr.filter((n) => n.status === 'PAPER').length
+  const totalEdges = edgeArr.length
 
   return (
     <div className="space-y-4">
@@ -175,23 +180,41 @@ export default function AgentGraphPage() {
       </div>
 
       <Card className="overflow-hidden" style={{ height: 'calc(100vh - 280px)' }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          fitView
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background gap={20} />
-          <Controls />
-          <MiniMap
-            nodeStrokeWidth={3}
-            nodeColor={(n) => statusBg((n.data as Record<string, unknown>)?.status as string || 'pending')}
-          />
-        </ReactFlow>
+        {isLoading ? (
+          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+            Loading agent graph…
+          </div>
+        ) : isError ? (
+          <div className="h-full flex items-center justify-center text-sm text-rose-500 p-4 text-center">
+            Failed to load graph: {error instanceof Error ? error.message : 'unknown error'}
+          </div>
+        ) : nodeArr.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-sm text-muted-foreground">
+            <div>No agents found yet.</div>
+            <div className="text-xs mt-2">Create an agent to see the network graph.</div>
+          </div>
+        ) : (
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={onNodeClick}
+            nodeTypes={nodeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.3, maxZoom: 1.5 }}
+            minZoom={0.2}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={20} />
+            <Controls />
+            <MiniMap
+              nodeStrokeWidth={3}
+              nodeColor={(n) => statusBg((n.data as Record<string, unknown>)?.status as string || 'pending')}
+            />
+          </ReactFlow>
+        )}
       </Card>
     </div>
   )

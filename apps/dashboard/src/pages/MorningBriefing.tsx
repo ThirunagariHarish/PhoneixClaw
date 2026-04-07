@@ -5,7 +5,10 @@
  * shows the latest briefing dispatched to agents + a manual "Run Now" button.
  */
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import api from '@/lib/api'
 import { agentsApi } from '@/lib/api/agents'
+import { useNavigate } from 'react-router-dom'
 
 interface SchedulerStatus {
   running: boolean
@@ -15,8 +18,10 @@ interface SchedulerStatus {
 
 interface BriefingResult {
   started_at?: string
+  agents_eligible?: number
   agents_woken?: number
   agents_triggered?: number
+  agents_started?: number
   briefing_sent?: boolean
   briefing_preview?: string
   agent_summaries?: Array<{
@@ -27,10 +32,24 @@ interface BriefingResult {
     task_id?: string
   }>
   errors?: string[]
+  agents_skipped?: Array<{ id: string; name: string; status: string }>
   message?: string
+  mode?: string
+}
+
+interface BriefingHistoryRow {
+  id: number
+  kind: string
+  title: string
+  body: string
+  data: Record<string, unknown>
+  agents_woken: number
+  dispatched_to: string[]
+  created_at: string | null
 }
 
 export default function MorningBriefingPage() {
+  const navigate = useNavigate()
   const [status, setStatus] = useState<SchedulerStatus | null>(null)
   const [briefing, setBriefing] = useState<BriefingResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -40,11 +59,23 @@ export default function MorningBriefingPage() {
     agentsApi.schedulerStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
 
+  // Poll the briefing_history table for the latest morning briefing so the
+  // "Latest Run" card always reflects reality (even when the 9am cron fires
+  // the agent path and there's no synchronous response to read).
+  const { data: historyData } = useQuery<{ briefings: BriefingHistoryRow[] }>({
+    queryKey: ['briefing-history', 'morning'],
+    queryFn: async () =>
+      (await api.get('/api/v2/briefings?kind=morning&limit=1')).data,
+    refetchInterval: 5000,
+  })
+  const latestHistory = historyData?.briefings?.[0]
+
   const runManually = async () => {
     setLoading(true)
     setError(null)
     try {
-      const result = await agentsApi.triggerMorningBriefing()
+      // Use python mode so we get synchronous counts back immediately
+      const result = await agentsApi.triggerMorningBriefing('python')
       setBriefing(result)
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || 'Failed to trigger morning briefing')
@@ -118,11 +149,56 @@ export default function MorningBriefingPage() {
         </div>
       )}
 
-      {/* Latest briefing result */}
+      {/* Latest briefing from history (always shown, auto-refreshes) */}
+      {latestHistory && (
+        <div
+          className="bg-gray-800 rounded-lg p-4 border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+          onClick={() => navigate('/briefings')}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-lg font-semibold">Latest Morning Briefing</h2>
+            <span className="text-xs text-gray-400">
+              {latestHistory.created_at
+                ? new Date(latestHistory.created_at).toLocaleString()
+                : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-3 text-sm">
+            <div>
+              <div className="text-gray-400">Agents woken</div>
+              <div className="text-xl font-bold">{latestHistory.agents_woken ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-gray-400">Dispatched</div>
+              <div className="flex gap-1 flex-wrap mt-1">
+                {(latestHistory.dispatched_to ?? []).map((ch) => (
+                  <span key={ch} className="text-xs px-2 py-0.5 rounded bg-gray-700">
+                    {ch}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-400">Title</div>
+              <div className="text-sm">{latestHistory.title}</div>
+            </div>
+          </div>
+          <pre className="text-xs bg-gray-900 rounded p-3 whitespace-pre-wrap max-h-48 overflow-y-auto">
+            {latestHistory.body}
+          </pre>
+          <div className="text-xs text-gray-500 mt-2">
+            Click to view full briefing history →
+          </div>
+        </div>
+      )}
+
+      {/* Latest briefing result from last manual run (python mode synchronous) */}
       {briefing && (
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <h2 className="text-lg font-semibold mb-2">Latest Run</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4 text-sm">
+          <h2 className="text-lg font-semibold mb-2">
+            Last Manual Run ({briefing.mode === 'python' ? 'python' : 'agent'} mode)
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-4 text-sm">
             <div>
               <div className="text-gray-400">Started</div>
               <div>
@@ -130,7 +206,11 @@ export default function MorningBriefingPage() {
               </div>
             </div>
             <div>
-              <div className="text-gray-400">Agents woken</div>
+              <div className="text-gray-400">Eligible</div>
+              <div className="text-xl font-bold">{briefing.agents_eligible ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-gray-400">Woken</div>
               <div className="text-xl font-bold">{briefing.agents_woken ?? 0}</div>
             </div>
             <div>
@@ -138,10 +218,19 @@ export default function MorningBriefingPage() {
               <div className="text-xl font-bold">{briefing.agents_triggered ?? 0}</div>
             </div>
             <div>
-              <div className="text-gray-400">Briefing dispatched</div>
+              <div className="text-gray-400">Dispatched</div>
               <div>{briefing.briefing_sent ? '✓ Yes' : '✗ No'}</div>
             </div>
           </div>
+
+          {briefing.agents_skipped && briefing.agents_skipped.length > 0 && (
+            <div className="mb-4 text-xs bg-amber-900/20 border border-amber-700/40 rounded p-2">
+              <span className="text-amber-400 font-medium">
+                {briefing.agents_skipped.length} skipped:
+              </span>{' '}
+              {briefing.agents_skipped.map((a) => `${a.name}(${a.status})`).join(', ')}
+            </div>
+          )}
 
           {briefing.agent_summaries && briefing.agent_summaries.length > 0 && (
             <div className="mb-4">

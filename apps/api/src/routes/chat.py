@@ -91,5 +91,12 @@ async def send_message(
             ))
         except Exception:
             pass
+        # Fire-and-forget: one-shot Haiku responder writes back an agent reply
+        try:
+            from apps.api.src.services.chat_responder import schedule_reply
+            schedule_reply(agent_id, msg)
+        except Exception:
+            pass
 
+    await session.commit()
     return {"ok": True, "id": str(row.id), "forwarded": forwarded}

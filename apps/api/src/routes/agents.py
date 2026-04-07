@@ -845,15 +845,7 @@ async def get_agent_graph(session: DbSession):
     except Exception as exc:
         logger.debug("[graph] shared-connector edges skipped: %s", exc)
 
-    # P8: Parent → child edges (backtester → analyst, supervisor → children)
-    for a in all_agents:
-        parent = getattr(a, "parent_agent_id", None)
-        if parent:
-            edges_dict.setdefault(
-                (str(parent), str(a.id)),
-                {"from": str(parent), "to": str(a.id),
-                 "type": "parent_child", "intent": "spawned", "count": 1},
-            )
+    # Note: parent→child edges removed — Agent model has no parent_agent_id column
 
     return {"nodes": nodes, "edges": list(edges_dict.values())}
 
@@ -1288,18 +1280,18 @@ async def send_agent_chat(agent_id: str, payload: dict[str, Any], session: DbSes
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    response_text = "Message queued. The trading worker will process it on its next cycle."
-    if agent.worker_status != "RUNNING":
-        response_text = "Agent worker is not running. Start the trading worker to process messages."
-
-    agent_msg = AgentChatMessage(
-        id=uuid.uuid4(), agent_id=uuid.UUID(agent_id),
-        role="agent", content=response_text, message_type="text", extra_data={},
-    )
-    session.add(agent_msg)
     await session.commit()
 
-    return {"user_message": content, "agent_response": response_text, "message_type": msg_type}
+    # Fire-and-forget: spawn a one-shot Haiku responder. Reply lands in
+    # agent_chat_messages with role='agent' within a few seconds, the
+    # frontend polls the chat endpoint and picks it up automatically.
+    try:
+        from apps.api.src.services.chat_responder import schedule_reply
+        schedule_reply(uuid.UUID(agent_id), content)
+    except Exception as exc:
+        logger.warning("[chat] responder dispatch failed: %s", exc)
+
+    return {"user_message": content, "message_type": msg_type, "status": "queued"}
 
 
 @router.post("/{agent_id}/heartbeat")

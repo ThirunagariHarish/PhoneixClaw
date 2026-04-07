@@ -56,6 +56,7 @@ class UserUpdate(BaseModel):
     name: str | None = None
     role: str | None = None
     is_active: bool | None = None
+    is_admin: bool | None = None
 
 
 class RoleCreate(BaseModel):
@@ -114,8 +115,16 @@ async def update_user(user_id: str, payload: UserUpdate, session: DbSession, req
         user.role = payload.role
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.is_admin is not None:
+        user.is_admin = payload.is_admin
     await session.commit()
-    return {"id": str(user.id), "email": user.email, "role": user.role, "is_active": user.is_active}
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "is_admin": user.is_admin,
+    }
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
