@@ -2,11 +2,16 @@
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 import joblib
-import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
+
+# Reliable sklearn/lgbm fallback model names (in preference order)
+_PKL_FALLBACK_NAMES = ["lightgbm", "lgbm", "xgboost", "rf", "random_forest", "logistic"]
 
 
 def predict(features_path: str, models_dir: str = "models") -> dict:
@@ -32,15 +37,73 @@ def predict(features_path: str, models_dir: str = "models") -> dict:
     features_scaled = scaler.transform(df_imp)
 
     model_name = best_info["best_model"]
-    model_path = models / f"{model_name}_model.pkl"
+    pkl_path = models / f"{model_name}_model.pkl"
+    pt_path = models / f"{model_name}_model.pt"
 
-    if model_path.exists():
-        model = joblib.load(model_path)
-        prediction = int(model.predict(features_scaled)[0])
-        confidence = float(model.predict_proba(features_scaled)[0][1]) if hasattr(model, "predict_proba") else float(prediction)
+    model = None
+    used_model_name = model_name
+
+    if pkl_path.exists():
+        # Primary: load the sklearn/joblib .pkl model
+        model = joblib.load(pkl_path)
+        log.info("[inference] Loaded primary model: %s", pkl_path)
+
+    elif pt_path.exists():
+        # PyTorch model found but we cannot load it without the class definition.
+        # Fall back to the best available .pkl model instead.
+        log.warning(
+            "[inference] Best model '%s' is a PyTorch .pt file — cannot load without class. "
+            "Searching for sklearn/lgbm fallback...",
+            model_name,
+        )
+        # Search fallbacks in preference order, then scan for any .pkl in models dir.
+        fallback_candidates = [
+            models / f"{name}_model.pkl" for name in _PKL_FALLBACK_NAMES
+        ] + sorted(models.glob("*_model.pkl"))
+
+        for candidate in fallback_candidates:
+            if candidate.exists():
+                used_model_name = candidate.stem.replace("_model", "")
+                model = joblib.load(candidate)
+                log.warning(
+                    "[inference] Using fallback model '%s' instead of PyTorch '%s'",
+                    used_model_name,
+                    model_name,
+                )
+                break
+
+        if model is None:
+            raise FileNotFoundError(
+                f"Best model '{model_name}' is a PyTorch .pt file and no sklearn/lgbm "
+                f"fallback .pkl was found in '{models_dir}'. "
+                "Retrain with a tree-based model or provide a fallback."
+            )
+
     else:
-        prediction = 0
-        confidence = 0.0
+        # Neither .pkl nor .pt exists — scan for any available model.
+        available_pkls = sorted(models.glob("*_model.pkl"))
+        if available_pkls:
+            candidate = available_pkls[0]
+            used_model_name = candidate.stem.replace("_model", "")
+            model = joblib.load(candidate)
+            log.warning(
+                "[inference] Model '%s' not found; using first available: '%s'",
+                model_name,
+                used_model_name,
+            )
+        else:
+            raise FileNotFoundError(
+                f"No model files found in '{models_dir}'. "
+                f"Expected '{pkl_path}' (.pkl) or '{pt_path}' (.pt). "
+                "Run backtesting to generate a trained model before launching live trading."
+            )
+
+    prediction = int(model.predict(features_scaled)[0])
+    confidence = (
+        float(model.predict_proba(features_scaled)[0][1])
+        if hasattr(model, "predict_proba")
+        else float(prediction)
+    )
 
     # Pattern matching
     patterns = []
@@ -58,7 +121,7 @@ def predict(features_path: str, models_dir: str = "models") -> dict:
     return {
         "prediction": "TRADE" if prediction == 1 else "SKIP",
         "confidence": round(confidence, 4),
-        "model": model_name,
+        "model": used_model_name,
         "pattern_matches": len(patterns),
         "patterns": patterns[:10],
     }
@@ -89,7 +152,10 @@ def main():
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2)
 
-    print(f"Prediction: {result['prediction']} (confidence={result['confidence']}, patterns={result['pattern_matches']})")
+    print(
+        f"Prediction: {result['prediction']} "
+        f"(confidence={result['confidence']}, patterns={result['pattern_matches']})"
+    )
 
 
 if __name__ == "__main__":

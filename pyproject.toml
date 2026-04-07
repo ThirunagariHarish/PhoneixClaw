@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phoenix-trade-bot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Enterprise phoenix trade bot platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -71,6 +71,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = ["benchmark: benchmark test"]
 
 [tool.ruff]
 target-version = "py311"

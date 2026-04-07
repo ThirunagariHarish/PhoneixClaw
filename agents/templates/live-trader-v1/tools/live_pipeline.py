@@ -1,11 +1,12 @@
-"""Live trading pipeline — async loop consuming signals from discord_listener.
+"""Live trading pipeline — async loop consuming signals from Redis stream.
 
 Replaces the subprocess-based decision_engine.py with in-process calls:
-  discord_listener → signal_queue → enrich → predict → risk_check → decide → report
+  discord_redis_consumer → Redis stream → enrich → predict → risk_check → decide → report
 
 Usage:
     python live_pipeline.py --config config.json
 """
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -55,7 +56,7 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     risk_params = config.get("risk_params", {})
 
     # -- Step 1: Parse signal (reuse decision_engine logic) --
-    from decision_engine import _parse_signal, _build_execution_params
+    from decision_engine import _build_execution_params, _parse_signal
     parsed = _parse_signal(raw_signal)
     steps.append({"step": "parse_signal", "status": "ok"})
     log.info("Parsed: ticker=%s direction=%s priority=%s",
@@ -96,7 +97,10 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
             features_path = f.name
 
         models_dir = str(Path(config.get("models_dir", "models")))
-        prediction = predict(features_path, models_dir)
+        try:
+            prediction = predict(features_path, models_dir)
+        finally:
+            Path(features_path).unlink(missing_ok=True)
         steps.append({
             "step": "inference", "status": "ok",
             "prediction": prediction.get("prediction"),
@@ -107,9 +111,6 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
             f"(confidence={prediction.get('confidence', 0):.3f}, "
             f"patterns={prediction.get('pattern_matches', 0)})"
         )
-
-        # Clean up temp file
-        Path(features_path).unlink(missing_ok=True)
     except Exception as e:
         steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
         reasoning.append(f"Inference failed: {e}")
@@ -206,16 +207,95 @@ def _build_result(decision: str, reason: str | None, steps: list, reasoning: lis
     return result
 
 
-async def run_pipeline(config: dict):
-    """Main pipeline loop — consume signals from queue, process, report."""
-    from discord_listener import get_signal_queue
-    from report_to_phoenix import report_trade, report_heartbeat
+async def _redis_signal_stream(config: dict):
+    """Async generator that yields signal dicts from the Redis stream.
 
-    queue = get_signal_queue()
+    Reads from `stream:channel:{connector_id}` (preferred) or
+    `stream:channel:{channel_id}` (fallback), honouring the persisted cursor.
+    Yields indefinitely until the process is stopped.
+    """
+    import os
+
+    try:
+        import redis.asyncio as aioredis
+    except ImportError:
+        log.error("[pipeline] redis-py not installed — cannot consume signals")
+        return
+
+    from discord_redis_consumer import _load_cursor_data, _save_cursor
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    connector_id = config.get("connector_id")
+    channel_id = config.get("channel_id", connector_id)
+
+    if not connector_id and not channel_id:
+        log.error("[pipeline] config missing both connector_id and channel_id — cannot start Redis stream")
+        return
+
+    primary_key = f"stream:channel:{connector_id}" if connector_id else None
+    fallback_key = f"stream:channel:{channel_id}"
+
+    try:
+        redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    except Exception as exc:
+        log.error("[pipeline] Redis connect failed: %s", exc)
+        return
+
+    # Choose stream key: try connector_id key first, fall back to channel_id key.
+    stream_key = primary_key or fallback_key
+    if primary_key and primary_key != fallback_key:
+        try:
+            if await redis_client.xlen(primary_key) == 0 and await redis_client.xlen(fallback_key) > 0:
+                stream_key = fallback_key
+                log.info("[pipeline] Using fallback stream key '%s'", stream_key)
+            else:
+                log.info("[pipeline] Using primary stream key '%s'", stream_key)
+        except Exception:
+            pass
+
+    last_id, total = _load_cursor_data(stream_key)
+    log.info("[pipeline] Redis signal stream starting on '%s' (cursor=%s)", stream_key, last_id)
+
+    try:
+        while True:
+            try:
+                result = await redis_client.xread({stream_key: last_id}, count=50, block=5000)
+                if not result:
+                    continue
+                for _stream, entries in result:
+                    for msg_id, data in entries:
+                        last_id = msg_id
+                        total += 1
+                        _save_cursor(stream_key, last_id, total)
+                        yield {
+                            "stream_id": msg_id,
+                            "channel_id": data.get("channel_id", channel_id),
+                            "channel": data.get("channel", ""),
+                            "author": data.get("author", ""),
+                            "content": data.get("content", ""),
+                            "timestamp": data.get("timestamp", ""),
+                            "message_id": data.get("message_id", ""),
+                        }
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.error("[pipeline] Redis xread error: %s", exc, exc_info=True)
+                await asyncio.sleep(2)
+    finally:
+        try:
+            await redis_client.aclose()
+        except Exception:
+            pass
+
+
+async def run_pipeline(config: dict):
+    """Main pipeline loop — consume signals from Redis stream, process, report."""
+    from report_to_phoenix import report_heartbeat, report_trade
+
     signals_processed = 0
     trades_today = 0
 
-    log.info("Pipeline started, waiting for signals...")
+    log.info("Pipeline started, waiting for signals from Redis stream...")
 
     # Run heartbeat in background
     async def heartbeat_loop():
@@ -232,8 +312,7 @@ async def run_pipeline(config: dict):
 
     asyncio.create_task(heartbeat_loop())
 
-    while True:
-        signal = await queue.get()
+    async for signal in _redis_signal_stream(config):
         signals_processed += 1
         log.info("Processing signal #%d: %s", signals_processed, signal.get("content", "")[:80])
 

@@ -1343,25 +1343,6 @@ async def send_agent_chat(agent_id: str, payload: dict[str, Any], session: DbSes
     return {"user_message": content, "message_type": msg_type, "status": "queued"}
 
 
-@router.post("/{agent_id}/heartbeat")
-async def agent_heartbeat(agent_id: str, session: DbSession, payload: dict[str, Any] | None = None):
-    """Agent reports heartbeat (callback from trading worker or Claude Code)."""
-    agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
-    agent = agent_result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    if payload:
-        if "status" in payload:
-            agent.status = payload["status"]
-        if "signals_processed" in payload:
-            agent.last_signal_at = datetime.now(timezone.utc)
-
-    agent.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return {"ack": True}
-
-
 @router.post("/{agent_id}/command")
 async def send_agent_command(agent_id: str, session: DbSession, payload: dict[str, Any] | None = None):
     """Send operational command to agent (pause/resume/switch_mode/update_config)."""

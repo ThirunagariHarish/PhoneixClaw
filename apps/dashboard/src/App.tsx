@@ -40,6 +40,7 @@ import AgentGraphPage from '@/pages/AgentGraph'
 import MorningBriefingPage from '@/pages/MorningBriefing'
 import BriefingHistoryPage from '@/pages/BriefingHistory'
 import AutoResearchPage from '@/pages/AutoResearch'
+import PolymarketPage from '@/pages/polymarket'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -123,6 +124,7 @@ function AppRoutes() {
         <Route path="morning-briefing" element={<MorningBriefingPage />} />
         <Route path="briefings" element={<BriefingHistoryPage />} />
         <Route path="autoresearch" element={<AutoResearchPage />} />
+        <Route path="polymarket" element={<PolymarketPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

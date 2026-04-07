@@ -47,28 +47,41 @@ MAX_PENDING = 500
 
 
 def _load_cursor(stream_key: str) -> str:
-    """Return saved last_id for this stream, or '0-0' on first start."""
-    if CURSOR_FILE.exists():
-        try:
-            data = json.loads(CURSOR_FILE.read_text())
-            if data.get("stream_key") == stream_key and data.get("last_id"):
-                return data["last_id"]
-        except Exception:
-            pass
+    """Return saved last_id for this stream_key, or '0-0' on first start."""
+    if not CURSOR_FILE.exists():
+        return "0-0"
+    try:
+        data = json.loads(CURSOR_FILE.read_text())
+        if data.get("stream_key") == stream_key and data.get("last_id"):
+            return data["last_id"]
+    except Exception:
+        pass
     return "0-0"
 
 
-def _save_cursor(stream_key: str, last_id: str, count: int) -> None:
-    """Persist the stream cursor to disk so restarts resume where we left off."""
+def _load_cursor_data(stream_key: str) -> tuple[str, int]:
+    """Return (last_id, message_count) for this stream_key, or ('0-0', 0) if not found."""
+    if not CURSOR_FILE.exists():
+        return "0-0", 0
     try:
-        CURSOR_FILE.write_text(
-            json.dumps({
-                "stream_key": stream_key,
-                "last_id": last_id,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "message_count": count,
-            })
-        )
+        data = json.loads(CURSOR_FILE.read_text())
+        if data.get("stream_key") == stream_key:
+            return data.get("last_id", "0-0"), data.get("message_count", 0)
+    except Exception:
+        pass
+    return "0-0", 0
+
+
+def _save_cursor(stream_key: str, last_id: str, count: int = 0) -> None:
+    """Persist the last-consumed Redis stream ID for this stream_key."""
+    try:
+        from datetime import datetime, timezone
+        CURSOR_FILE.write_text(json.dumps({
+            "stream_key": stream_key,
+            "last_id": last_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "message_count": count,
+        }))
     except Exception as exc:
         print(f"[redis_consumer] cursor save failed: {exc}", file=sys.stderr)
 

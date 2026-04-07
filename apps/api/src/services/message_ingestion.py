@@ -13,7 +13,6 @@ no longer run their own Discord clients — they consume from Redis.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import uuid
@@ -40,8 +39,15 @@ async def _get_redis():
     return _redis
 
 
-async def _persist_message(connector_id: str, msg) -> None:
-    """Write a ConnectorMessage to channel_messages table + publish to Redis."""
+_db_write_failures: int = 0
+
+
+async def _persist_message(connector_id: str, msg) -> bool:
+    """Write a ConnectorMessage to channel_messages table + publish to Redis.
+
+    Returns True if the DB write succeeded (safe to publish to Redis).
+    """
+    global _db_write_failures
     try:
         from shared.db.engine import get_session
         from shared.db.models.channel_message import ChannelMessage
@@ -63,7 +69,17 @@ async def _persist_message(connector_id: str, msg) -> None:
             session.add(row)
             await session.commit()
     except Exception as exc:
-        logger.warning("[ingestion] DB persist failed: %s", exc)
+        _db_write_failures += 1
+        logger.error(
+            "[ingestion] DB persist FAILED (total_failures=%d) connector=%s: %s",
+            _db_write_failures,
+            connector_id,
+            exc,
+            exc_info=True,
+        )
+        return False
+
+    # Only publish to Redis when DB write succeeded — avoids data-loss ambiguity.
 
     # Publish to Redis so analyst agents can consume
     try:
@@ -89,14 +105,15 @@ async def _persist_message(connector_id: str, msg) -> None:
             if channel_id and channel_id != connector_id:
                 await redis.xadd(f"stream:channel:{channel_id}", {k: str(v) for k, v in payload.items()}, maxlen=5000)
     except Exception as exc:
-        logger.warning("[ingestion] Redis publish failed: %s", exc)
+        logger.error("[ingestion] Redis publish failed connector=%s: %s", connector_id, exc, exc_info=True)
 
     # P9: Fan out trigger bus wake signals to every agent subscribed via connector_agents
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.connector import ConnectorAgent
-        from sqlalchemy import select
-        from shared.triggers import get_bus, Trigger, TriggerType
+        from shared.triggers import Trigger, TriggerType, get_bus
 
         async for session in get_session():
             res = await session.execute(
@@ -128,6 +145,8 @@ async def _persist_message(connector_id: str, msg) -> None:
             break
     except Exception as exc:
         logger.debug("[ingestion] trigger fan-out skipped: %s", exc)
+
+    return True
 
 
 async def _ingest_loop(connector_id: str, connector) -> None:
@@ -170,10 +189,11 @@ async def start_ingestion() -> None:
     _running = True
 
     try:
+        from sqlalchemy import select
+
+        from shared.crypto.credentials import decrypt_credentials
         from shared.db.engine import get_session
         from shared.db.models.connector import Connector
-        from shared.crypto.credentials import decrypt_credentials
-        from sqlalchemy import select
     except Exception as exc:
         logger.warning("[ingestion] Imports failed: %s", exc)
         _running = False
@@ -245,6 +265,7 @@ def get_ingestion_status() -> dict:
     """Return current ingestion status for dashboard."""
     return {
         "running": _running,
+        "db_write_failures": _db_write_failures,
         "connectors": [
             {"connector_id": cid, "alive": not task.done()}
             for cid, task in _tasks.items()

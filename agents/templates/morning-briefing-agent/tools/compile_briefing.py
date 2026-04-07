@@ -36,6 +36,10 @@ Tickers the agents are watching that have overnight catalysts from the Discord m
 ## Suggested Actions
 1-3 manual decisions the user should make before market open (or "nothing to do")
 
+If a Polymarket section is provided below, append it verbatim AFTER your
+"Suggested Actions" block (do not rewrite or summarise it):
+{pm_section}
+
 Rules:
 - Plain English, no jargon
 - Bullet points, not paragraphs
@@ -62,6 +66,10 @@ def _template_fallback(events: dict) -> str:
     lines.append("")
     lines.append("## Suggested Actions")
     lines.append("- Review positions and confirm daily loss limits before open")
+    pm_md = ((events.get("pm_section") or {}).get("markdown") or "").strip()
+    if pm_md:
+        lines.append("")
+        lines.append(pm_md)
     return "\n".join(lines)
 
 
@@ -105,12 +113,17 @@ def main() -> None:
         ],
     }
 
+    pm_md = ((events.get("pm_section") or {}).get("markdown") or "").strip()
     prompt = PROMPT_TEMPLATE.format(
         date=events.get("collected_at", "")[:10],
         events=json.dumps(trimmed, default=str)[:8000],
+        pm_section=pm_md or "(no Polymarket section today)",
     )
 
     briefing = _call_haiku(prompt) or _template_fallback(events)
+    # Defensive: if Haiku ignored the verbatim instruction, append PM block ourselves.
+    if pm_md and "## Polymarket" not in briefing:
+        briefing = briefing.rstrip() + "\n\n" + pm_md
     Path(args.output).write_text(briefing)
     print(f"[compile] wrote briefing ({len(briefing)} chars) to {args.output}")
 

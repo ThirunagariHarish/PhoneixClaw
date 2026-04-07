@@ -34,6 +34,8 @@ class Strategy(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="CREATED")
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="PAPER")
+    venue: Mapped[str] = mapped_column(String(20), nullable=False, default="equities")
 
     backtest_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     backtest_sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)

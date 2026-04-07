@@ -13,6 +13,11 @@ set -e
 # Without this, the API returns "No module named 'services'" at runtime.
 export PYTHONPATH="${PYTHONPATH:-/app}"
 
+# Cap Node heap for the claude_agent_sdk subprocess so a runaway session
+# fails loudly with a JS heap OOM instead of being silently SIGKILLed by
+# the cgroup OOM-killer (defense in depth on top of the 2G container limit).
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}"
+
 echo "[entrypoint] Phoenix API starting..."
 echo "[entrypoint] PYTHONPATH=${PYTHONPATH}"
 echo "[entrypoint] DATABASE_URL=${DATABASE_URL:-not set}"

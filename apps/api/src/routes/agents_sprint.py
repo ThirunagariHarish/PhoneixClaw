@@ -27,12 +27,12 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func, text, and_
+from sqlalchemy import and_, select, text
 
 from apps.api.src.deps import DbSession
 from shared.db.models.agent import Agent
-from shared.db.models.connector import ConnectorAgent
 from shared.db.models.channel_message import ChannelMessage
+from shared.db.models.connector import ConnectorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,8 @@ async def get_channel_messages(
     """Return raw Discord/Reddit/Twitter messages from every connector this agent
     is subscribed to via connector_agents."""
     sub_q = select(ConnectorAgent.connector_id).where(
-        ConnectorAgent.agent_id == agent_id
+        ConnectorAgent.agent_id == agent_id,
+        ConnectorAgent.is_active.is_(True),
     )
     sub_rows = (await session.execute(sub_q)).all()
     connector_ids = [r[0] for r in sub_rows]
@@ -207,6 +208,10 @@ async def stream_agent_logs(agent_id: uuid.UUID, request: Request):
 class HeartbeatBody(BaseModel):
     status: str | None = None
     message: str | None = None
+    # Extra fields sent by report_to_phoenix.py in live-trader agents
+    signals_processed: int | None = None
+    trades_today: int | None = None
+    timestamp: str | None = None
 
 
 @router.post("/{agent_id}/heartbeat")
@@ -527,7 +532,7 @@ async def get_live_metrics(
         trades = []
 
     try:
-        from shared.metrics.portfolio_math import rolling_sharpe, max_drawdown, current_drawdown
+        from shared.metrics.portfolio_math import current_drawdown, max_drawdown, rolling_sharpe
     except Exception:
         return {
             "sharpe_30d": 0.0, "sharpe_all": 0.0,

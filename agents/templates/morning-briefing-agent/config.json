@@ -2,6 +2,8 @@
   "agent_type": "morning_briefing",
   "lookback_hours": 12,
   "target_channels": ["whatsapp", "telegram", "ws", "db"],
+  "pm_section_enabled": true,
+  "pm_edge_limit": 5,
   "phoenix_api_url": "",
   "phoenix_api_key": "",
   "created_at": ""

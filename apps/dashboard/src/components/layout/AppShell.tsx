@@ -63,6 +63,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/daily-signals', icon: Zap, label: 'Daily Signals' },
       { to: '/zero-dte', icon: Activity, label: '0DTE SPX' },
       { to: '/positions', icon: TrendingUp, label: 'Positions' },
+      { to: '/polymarket', icon: Activity, label: 'Polymarket' },
     ],
   },
   {

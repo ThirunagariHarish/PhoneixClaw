@@ -47,9 +47,34 @@ async def handle_agent_event(entry_id: str, data: dict[str, Any]) -> None:
     events_processed.labels(stream="agent-events").inc()
 
 
+# B2: kill-switch fan-out — any registered PMAgentRuntime is tripped/rearmed
+# when an event lands on stream:kill-switch.
+PM_RUNTIMES: list[Any] = []
+
+
+def register_pm_runtime(runtime: Any) -> None:
+    PM_RUNTIMES.append(runtime)
+
+
+async def handle_kill_switch(entry_id: str, data: dict[str, Any]) -> None:
+    action = (data.get("action") or data.get("type") or "").lower()
+    reason = str(data.get("reason", "stream"))
+    logger.warning("orchestrator kill-switch event %s action=%s reason=%s", entry_id, action, reason)
+    for rt in PM_RUNTIMES:
+        try:
+            if action in ("activate", "trip", "halt", "kill"):
+                rt.trip(reason=reason)
+            elif action in ("deactivate", "rearm", "clear"):
+                rt.rearm()
+        except Exception:
+            logger.exception("pm runtime kill-switch dispatch failed")
+    events_processed.labels(stream="kill-switch").inc()
+
+
 STREAM_HANDLERS: dict[str, Any] = {
     "stream:trade-intents": handle_trade_intent,
     "stream:agent-events": handle_agent_event,
+    "stream:kill-switch": handle_kill_switch,
 }
 
 
