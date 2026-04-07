@@ -817,28 +817,31 @@ async def get_agent_graph(session: DbSession):
         })
 
     # Recent edges from agent_messages (last 24h)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    msgs_result = await session.execute(
-        select(AgentMessage)
-        .where(AgentMessage.created_at >= cutoff)
-        .order_by(desc(AgentMessage.created_at))
-        .limit(500)
-    )
     edges_dict: dict[tuple, dict] = {}
-    for msg in msgs_result.scalars().all():
-        if not msg.to_agent_id:
-            continue
-        key = (str(msg.from_agent_id), str(msg.to_agent_id))
-        if key not in edges_dict:
-            edges_dict[key] = {
-                "from": key[0],
-                "to": key[1],
-                "type": "knowledge_share",
-                "intent": msg.intent,
-                "count": 0,
-                "last_message_at": msg.created_at.isoformat() if msg.created_at else None,
-            }
-        edges_dict[key]["count"] += 1
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        msgs_result = await session.execute(
+            select(AgentMessage)
+            .where(AgentMessage.created_at >= cutoff)
+            .order_by(desc(AgentMessage.created_at))
+            .limit(500)
+        )
+        for msg in msgs_result.scalars().all():
+            if not msg.to_agent_id:
+                continue
+            key = (str(msg.from_agent_id), str(msg.to_agent_id))
+            if key not in edges_dict:
+                edges_dict[key] = {
+                    "from": key[0],
+                    "to": key[1],
+                    "type": "knowledge_share",
+                    "intent": msg.intent,
+                    "count": 0,
+                    "last_message_at": msg.created_at.isoformat() if msg.created_at else None,
+                }
+            edges_dict[key]["count"] += 1
+    except Exception as exc:
+        logger.debug("[graph] agent_messages edges skipped: %s", exc)
 
     # P8: Synthetic edges when agents share a connector (Discord channel → agent)
     try:

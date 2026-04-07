@@ -310,10 +310,13 @@ class AgentGateway:
                 last_text = ""
                 hit_error_message = False
                 first_message_seen = False
+                _total_input_tokens = 0
+                _total_output_tokens = 0
 
                 async def _consume_query() -> bool:
                     """Inner coroutine so we can wrap the whole generator in wait_for."""
                     nonlocal last_text, hit_error_message, first_message_seen
+                    nonlocal _total_input_tokens, _total_output_tokens
                     async for message in query(prompt=prompt, options=options):
                         if not first_message_seen:
                             first_message_seen = True
@@ -330,6 +333,15 @@ class AgentGateway:
                             _session_ids[str(agent_id)] = sid
                             async for db in _get_session():
                                 await self._update_session(db, session_row_id, session_id=sid)
+                        # Accumulate token usage from any message that carries it
+                        _usage = getattr(message, "usage", None)
+                        if _usage is not None:
+                            if hasattr(_usage, "input_tokens"):
+                                _total_input_tokens += int(_usage.input_tokens or 0)
+                                _total_output_tokens += int(_usage.output_tokens or 0)
+                            elif isinstance(_usage, dict):
+                                _total_input_tokens += int(_usage.get("input_tokens", 0))
+                                _total_output_tokens += int(_usage.get("output_tokens", 0))
                         if hasattr(message, "is_error") and getattr(message, "is_error", False):
                             hit_error_message = True
                             async for db in _get_session():
@@ -359,6 +371,22 @@ class AgentGateway:
 
                 if hit_error_message:
                     return
+
+                # Record token usage from this SDK run (best-effort, non-fatal)
+                if _total_input_tokens > 0 or _total_output_tokens > 0:
+                    try:
+                        from apps.api.src.services.token_tracker import record_usage
+                        await record_usage(
+                            instance_id=None,
+                            agent_id=agent_id,
+                            model="claude-sonnet",
+                            input_tokens=_total_input_tokens,
+                            output_tokens=_total_output_tokens,
+                        )
+                        logger.info("[backtester] recorded %d input + %d output tokens for agent %s",
+                                    _total_input_tokens, _total_output_tokens, agent_id)
+                    except Exception as _te:
+                        logger.debug("[backtester] token usage record failed (non-fatal): %s", _te)
 
                 async for db in _get_session():
                     bt = (await db.execute(
