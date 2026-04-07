@@ -29,8 +29,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SONNET_MODEL = os.getenv("LLM_DISCOVERY_MODEL", "claude-sonnet-4-20250514")
-OPUS_MODEL = os.getenv("LLM_REFINEMENT_MODEL", "claude-opus-4-20250514")
+# P12: default to Opus 4.6 (financial reasoning leader per research benchmark)
+# with a Sonnet fallback for the cost-sensitive path.
+STAGE1_MODEL = os.getenv("LLM_DISCOVERY_MODEL", "claude-opus-4-6")
+STAGE2_MODEL = os.getenv("LLM_REFINEMENT_MODEL", "claude-opus-4-6")
+# Back-compat aliases — some callers still import these names
+SONNET_MODEL = STAGE1_MODEL
+OPUS_MODEL = STAGE2_MODEL
+
+# P12: sample size + edge thresholds
+SAMPLES_PER_CLASS = int(os.getenv("LLM_SAMPLES_PER_CLASS", "200"))
+MIN_EDGE = float(os.getenv("LLM_MIN_EDGE", "0.02"))
+MIN_SAMPLE_SIZE = int(os.getenv("LLM_MIN_SAMPLE_SIZE", "20"))
+N_CANDIDATES = int(os.getenv("LLM_N_CANDIDATES", "25"))
+
+# P12: market regimes we stratify sampling over so patterns span the cycle
+REGIMES = ["bull_quiet", "bull_volatile", "bear_quiet", "bear_volatile", "choppy"]
 
 # Features that are LEAKY (describe analyst's past behavior, not market conditions).
 # We explicitly tell Claude to avoid these.
@@ -63,19 +77,54 @@ def _load_explainability(path: Path) -> list[dict]:
         return []
 
 
-def _sample_trades(df, n_per_class: int = 40) -> list[dict]:
-    """Stratified sample of winners and losers. Returns list of trade dicts."""
+def _sample_trades(df, n_per_class: int = SAMPLES_PER_CLASS) -> list[dict]:
+    """Regime-stratified sample of winners and losers (P12).
+
+    Splits `n_per_class` evenly across detected regimes (when a `market_regime`
+    column is available) so patterns aren't dominated by one bull phase. Falls
+    back to a global sample when no regime column exists.
+    """
     if "is_profitable" not in df.columns:
         return []
 
     winners = df[df["is_profitable"] == True]
     losers = df[df["is_profitable"] == False]
 
-    n_w = min(n_per_class, len(winners))
-    n_l = min(n_per_class, len(losers))
+    regime_col = "market_regime" if "market_regime" in df.columns else None
 
-    win_sample = winners.sample(n=n_w, random_state=42) if n_w > 0 else winners.iloc[0:0]
-    lose_sample = losers.sample(n=n_l, random_state=42) if n_l > 0 else losers.iloc[0:0]
+    if regime_col is None:
+        n_w = min(n_per_class, len(winners))
+        n_l = min(n_per_class, len(losers))
+        win_sample = winners.sample(n=n_w, random_state=42) if n_w > 0 else winners.iloc[0:0]
+        lose_sample = losers.sample(n=n_l, random_state=42) if n_l > 0 else losers.iloc[0:0]
+        return _format_trades(win_sample, "WIN") + _format_trades(lose_sample, "LOSS")
+
+    per_regime = max(5, n_per_class // max(1, len(REGIMES)))
+    win_chunks = []
+    lose_chunks = []
+    for regime in REGIMES:
+        w = winners[winners[regime_col] == regime]
+        l = losers[losers[regime_col] == regime]
+        if len(w) > 0:
+            win_chunks.append(w.sample(n=min(per_regime, len(w)), random_state=42))
+        if len(l) > 0:
+            lose_chunks.append(l.sample(n=min(per_regime, len(l)), random_state=42))
+
+    import pandas as _pd
+    win_sample = _pd.concat(win_chunks) if win_chunks else winners.iloc[0:0]
+    lose_sample = _pd.concat(lose_chunks) if lose_chunks else losers.iloc[0:0]
+
+    # Top up with a global sample if regime stratification undershoots
+    deficit_w = n_per_class - len(win_sample)
+    deficit_l = n_per_class - len(lose_sample)
+    if deficit_w > 0 and len(winners) > len(win_sample):
+        extra = winners.drop(win_sample.index, errors="ignore")
+        if len(extra) > 0:
+            win_sample = _pd.concat([win_sample, extra.sample(n=min(deficit_w, len(extra)), random_state=43)])
+    if deficit_l > 0 and len(losers) > len(lose_sample):
+        extra = losers.drop(lose_sample.index, errors="ignore")
+        if len(extra) > 0:
+            lose_sample = _pd.concat([lose_sample, extra.sample(n=min(deficit_l, len(extra)), random_state=43)])
 
     return _format_trades(win_sample, "WIN") + _format_trades(lose_sample, "LOSS")
 
@@ -142,7 +191,7 @@ def _build_discovery_prompt(samples: list[dict], feature_importance: list[dict],
 {samples_text}
 {features_text}
 ## Your Task
-Find {10} to {15} candidate trading patterns that distinguish WIN from LOSS outcomes.
+Find {N_CANDIDATES - 5} to {N_CANDIDATES} candidate trading patterns that distinguish WIN from LOSS outcomes across multiple market regimes.
 
 ### Hard Constraints
 1. **DO NOT use any "leaky" features** that describe the analyst's past behavior:
@@ -165,8 +214,10 @@ Find {10} to {15} candidate trading patterns that distinguish WIN from LOSS outc
   {{
     "name": "short descriptive name",
     "condition": "pandas query string",
+    "plain_english": "ONE sentence describing this to a human trader WITHOUT using feature names (e.g., 'Oversold on a Friday with a volatility spike' not 'rsi_14 < 35 and is_friday == 1 and vix > 20')",
     "rationale": "one sentence explaining why this edge might exist",
-    "expected_direction": "favors_wins" or "avoids_losses"
+    "expected_direction": "favors_wins" or "avoids_losses",
+    "regime": "bull_quiet | bull_volatile | bear_quiet | bear_volatile | choppy | any"
   }},
   ...
 ]
@@ -268,7 +319,7 @@ def _validate_candidate(candidate: dict, df, baseline_wr: float) -> dict | None:
         return None
 
     n = len(subset)
-    if n < 10:
+    if n < MIN_SAMPLE_SIZE:
         return None
 
     if "is_profitable" not in subset.columns:
@@ -276,7 +327,7 @@ def _validate_candidate(candidate: dict, df, baseline_wr: float) -> dict | None:
 
     wr = float(subset["is_profitable"].mean())
     edge = wr - baseline_wr
-    if abs(edge) < 0.03:
+    if abs(edge) < MIN_EDGE:
         return None
 
     avg_return = 0.0
@@ -288,8 +339,10 @@ def _validate_candidate(candidate: dict, df, baseline_wr: float) -> dict | None:
         "name": candidate.get("name", "LLM Pattern"),
         "condition": query,
         "conditions": [query],
+        "plain_english": candidate.get("plain_english", ""),
         "rationale": candidate.get("rationale", ""),
         "expected_direction": candidate.get("expected_direction", ""),
+        "regime": candidate.get("regime", "any"),
         "win_rate": round(wr, 4),
         "edge_vs_baseline": round(edge, 4),
         "sample_size": int(n),
@@ -312,11 +365,12 @@ def _build_refinement_prompt(validated: list[dict], baseline_wr: float) -> str:
 {candidates_text}
 
 ## Your Task
-Pick the **5 strongest patterns** and refine them. For each:
+Pick the **5-8 strongest patterns** and refine them. For each:
 1. Improve the name (make it catchy and descriptive)
 2. Keep the condition string EXACTLY as validated (don't change thresholds — they're proven)
 3. Write a 2-sentence rationale explaining the market mechanism behind the edge
 4. Add a "risk_note" field describing when this pattern might fail
+5. Rewrite `plain_english` so a non-technical trader would instantly understand it (NO feature names, NO numbers with underscores)
 
 ### Output format (strict JSON array, NO markdown fences)
 ```
@@ -324,6 +378,7 @@ Pick the **5 strongest patterns** and refine them. For each:
   {{
     "name": "improved name",
     "condition": "same condition as input",
+    "plain_english": "human-friendly sentence",
     "rationale": "2 sentences on the market mechanism",
     "risk_note": "when this pattern fails",
     "win_rate": <from input>,
@@ -392,8 +447,8 @@ def discover(data_dir: Path, explainability_path: Path | None, output_path: Path
         feature_importance = _load_explainability(explainability_path)
     result_summary["features_loaded"] = len(feature_importance)
 
-    # Sample trades
-    samples = _sample_trades(df, n_per_class=40)
+    # Sample trades (regime-stratified)
+    samples = _sample_trades(df, n_per_class=SAMPLES_PER_CLASS)
     result_summary["samples_drawn"] = len(samples)
     if len(samples) < 20:
         result_summary["errors"].append("Not enough samples for LLM discovery")
@@ -439,6 +494,7 @@ def discover(data_dir: Path, explainability_path: Path | None, output_path: Path
                 if cond in refined_map:
                     r = refined_map[cond]
                     v["name"] = r.get("name", v["name"])
+                    v["plain_english"] = r.get("plain_english", v.get("plain_english", ""))
                     v["rationale"] = r.get("rationale", v.get("rationale", ""))
                     v["risk_note"] = r.get("risk_note", "")
                     v["refined"] = True

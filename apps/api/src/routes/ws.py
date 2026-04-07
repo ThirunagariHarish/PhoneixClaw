@@ -90,6 +90,26 @@ class ConnectionManager:
 manager = ConnectionManager()
 _stream_tasks: dict[str, asyncio.Task] = {}
 
+# Phase H6: connection limits
+MAX_CONNECTIONS_PER_CHANNEL = int(os.environ.get("WS_MAX_PER_CHANNEL", "200"))
+MAX_TOTAL_CONNECTIONS = int(os.environ.get("WS_MAX_TOTAL", "1000"))
+
+
+def _decode_jwt_token(token: str) -> dict | None:
+    """Decode and verify a JWT. Returns the payload dict or None if invalid."""
+    if not token:
+        return None
+    try:
+        from jose import jwt, JWTError
+    except ImportError:
+        return None
+    secret = os.environ.get("JWT_SECRET_KEY", "change-me-in-production")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        return payload
+    except Exception:
+        return None
+
 
 async def _stream_reader(stream: str, channels: list[str]):
     """Background task: read Redis Stream and broadcast to matching WS channels."""
@@ -185,9 +205,31 @@ def _ensure_stream_tasks():
 
 @router.websocket("/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    """Accept WebSocket connection, subscribe to channel, push real-time events."""
+    """Accept WebSocket connection, subscribe to channel, push real-time events.
+
+    Phase H6: Requires JWT auth via ?token=... query param. Enforces per-channel
+    and total connection caps.
+    """
     if channel not in CHANNEL_STREAM_MAP:
         await websocket.close(code=4001, reason=f"Unknown channel: {channel}")
+        return
+
+    # Phase H6: Auth check (allow opt-out via env for local dev)
+    require_auth = os.environ.get("WS_REQUIRE_AUTH", "true").lower() != "false"
+    if require_auth:
+        token = websocket.query_params.get("token")
+        payload = _decode_jwt_token(token) if token else None
+        if not payload:
+            await websocket.close(code=4001, reason="Authentication required")
+            return
+
+    # Phase H6: Connection caps
+    if manager.total_connections >= MAX_TOTAL_CONNECTIONS:
+        await websocket.close(code=4029, reason="Server connection limit reached")
+        return
+    channel_count = len(manager._connections.get(channel, set()))
+    if channel_count >= MAX_CONNECTIONS_PER_CHANNEL:
+        await websocket.close(code=4029, reason=f"Channel {channel} is full")
         return
 
     await websocket.accept()

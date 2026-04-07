@@ -35,20 +35,27 @@ class MorningRoutineOrchestrator:
 
         results = {
             "started_at": datetime.now(timezone.utc).isoformat(),
+            "agents_eligible": 0,
+            "agents_started": 0,
             "agents_woken": 0,
             "agents_triggered": 0,
             "briefing_sent": False,
             "errors": [],
         }
 
+        # P10: broadened filter — anything not archived/erroring/mid-backtest is eligible
+        EXCLUDE = {"ARCHIVED", "BACKTESTING", "BACKTEST_COMPLETE", "ERROR",
+                   "BACKTEST_REJECTED"}
         agents: list = []
         async for session in get_session():
-            query = select(Agent).where(Agent.status.in_(["RUNNING", "PAPER", "APPROVED"]))
+            query = select(Agent).where(~Agent.status.in_(list(EXCLUDE)))
             rows = await session.execute(query)
             agents = list(rows.scalars().all())
 
+        results["agents_eligible"] = len(agents)
+
         if not agents:
-            results["message"] = "No active agents found"
+            results["message"] = "No eligible agents found (all archived or mid-backtest)"
             return results
 
         logger.info("Morning routine: %d active agents", len(agents))
@@ -64,6 +71,8 @@ class MorningRoutineOrchestrator:
                 triggered = await self._trigger_pre_market(agent)
                 if triggered:
                     results["agents_triggered"] += 1
+                    if triggered.get("auto_started"):
+                        results["agents_started"] += 1
                     agent_summaries.append({
                         "agent_id": str(agent.id),
                         "name": agent.name,
@@ -104,9 +113,30 @@ class MorningRoutineOrchestrator:
             logger.warning("Wake greeting failed for %s: %s", agent.name, exc)
 
     async def _trigger_pre_market(self, agent) -> dict | None:
-        """Send the morning_research task to the agent via send_task."""
+        """Send the morning_research task to the agent.
+
+        P10 + P9: if the agent has no running session, auto-start one first, then
+        push a trigger through the Redis trigger bus so the agent actually wakes.
+        """
         try:
-            from apps.api.src.services.agent_gateway import gateway
+            from apps.api.src.services.agent_gateway import gateway, _running_tasks
+
+            agent_key = str(agent.id)
+            started_fresh = False
+            if agent_key not in _running_tasks or _running_tasks[agent_key].done():
+                # Auto-start idle agent (resume working dir if available)
+                try:
+                    await gateway.create_analyst(agent.id, resume=True)
+                    started_fresh = True
+                except TypeError:
+                    # Backward-compat: create_analyst without resume kwarg
+                    try:
+                        await gateway.create_analyst(agent.id)
+                        started_fresh = True
+                    except Exception as e2:
+                        logger.warning("Auto-start failed for %s: %s", agent.name, e2)
+                except Exception as e:
+                    logger.warning("Auto-start failed for %s: %s", agent.name, e)
 
             prompt = (
                 "MORNING_RESEARCH: Run your pre-market analysis routine. "
@@ -118,7 +148,19 @@ class MorningRoutineOrchestrator:
                 "5) Send a brief summary to Phoenix via report_to_phoenix.py with event_type=morning_briefing_complete"
             )
 
-            return await gateway.send_task(agent.id, prompt)
+            result = await gateway.send_task(agent.id, prompt)
+            # Always publish via trigger bus so the agent's consumer loop picks it up
+            try:
+                await gateway.dispatch_trigger(
+                    agent.id,
+                    "cron:morning_briefing",
+                    {"prompt": prompt, "auto_started": started_fresh},
+                )
+            except Exception:
+                pass
+            if isinstance(result, dict):
+                result["auto_started"] = started_fresh
+            return result
         except Exception as exc:
             logger.error("Pre-market trigger failed for %s: %s", agent.name, exc)
             return None

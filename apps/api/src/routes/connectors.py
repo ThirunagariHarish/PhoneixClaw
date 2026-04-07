@@ -375,6 +375,37 @@ async def test_connector(connector_id: str, session: DbSession):
                 else:
                     detail = f"Reddit OAuth returned {resp.status_code}: {resp.text[:100]}"
 
+        elif connector.type == "whatsapp":
+            # P15: Meta WhatsApp Cloud API — validate by fetching phone-number metadata
+            access_token = creds.get("access_token", "")
+            phone_id = creds.get("phone_number_id", "")
+            if not access_token or not phone_id:
+                return {"connection_status": "ERROR",
+                        "detail": "Missing access_token or phone_number_id"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"https://graph.facebook.com/v18.0/{phone_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if resp.status_code == 200:
+                    conn_status = "connected"
+                    detail = resp.json().get("display_phone_number", "WhatsApp connected")
+                else:
+                    detail = f"WhatsApp API returned {resp.status_code}"
+
+        elif connector.type == "telegram":
+            # P15: Telegram Bot API — validate via getMe
+            bot_token = creds.get("bot_token", "")
+            if not bot_token:
+                return {"connection_status": "ERROR", "detail": "Missing bot_token"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"https://api.telegram.org/bot{bot_token}/getMe")
+                if resp.status_code == 200 and resp.json().get("ok"):
+                    conn_status = "connected"
+                    detail = "@" + resp.json().get("result", {}).get("username", "bot")
+                else:
+                    detail = f"Telegram API returned {resp.status_code}"
+
         elif connector.type == "twitter":
             bearer = creds.get("bearer_token", "")
             if not bearer:

@@ -61,6 +61,7 @@ type PlatformType =
   | 'discord' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
   | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier' | 'robinhood'
   | 'yfinance' | 'polygon' | 'alphavantage'
+  | 'whatsapp' | 'telegram'
 
 // ─── Platform Metadata ──────────────────────────────────────────────────────
 
@@ -88,6 +89,8 @@ const PLATFORMS: PlatformMeta[] = [
   { type: 'yfinance',        label: 'Yahoo Finance',   description: 'Free historical OHLCV and options data',  category: 'data',   icon: TrendingUp,    color: 'text-violet-500',  bgColor: 'bg-violet-500/10' },
   { type: 'polygon',         label: 'Polygon.io',      description: 'Real-time and historical market data',    category: 'data',   icon: BarChart3,     color: 'text-cyan-500',    bgColor: 'bg-cyan-500/10' },
   { type: 'alphavantage',    label: 'Alpha Vantage',   description: 'Free stock API with technical indicators', category: 'data',   icon: Activity,      color: 'text-lime-500',    bgColor: 'bg-lime-500/10' },
+  { type: 'whatsapp',        label: 'WhatsApp',        description: 'Per-agent tagged threads via Meta Cloud API', category: 'data', icon: MessageSquare, color: 'text-green-400',   bgColor: 'bg-green-500/10' },
+  { type: 'telegram',        label: 'Telegram Bot',    description: 'Per-agent groups via Telegram Bot API',      category: 'data', icon: MessageSquare, color: 'text-sky-400',     bgColor: 'bg-sky-500/10' },
 ]
 
 function platformMeta(type: string): PlatformMeta {
@@ -420,6 +423,13 @@ function AddConnectorWizard({
   const [yfinanceForm, setYfinanceForm] = useState({ display_name: '' })
   const [polygonForm, setPolygonForm] = useState({ display_name: '', api_key: '' })
   const [alphaVantageForm, setAlphaVantageForm] = useState({ display_name: '', api_key: '' })
+  // P15: WhatsApp + Telegram
+  const [whatsappForm, setWhatsappForm] = useState({
+    display_name: '', access_token: '', phone_number_id: '', verify_token: '', default_thread_id: ''
+  })
+  const [telegramForm, setTelegramForm] = useState({
+    display_name: '', bot_token: '', default_chat_id: '', base_group_chat_id: ''
+  })
 
   // Tags (shared across all connectors)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -438,6 +448,8 @@ function AddConnectorWizard({
       setTwitterForm({ display_name: '', bearer_token: '', accounts: '' })
       setUwForm({ display_name: '', api_key: '', symbols: '', min_premium: '' })
       setNewsForm({ display_name: '', api_key: '', sources: '', symbols: '' })
+      setWhatsappForm({ display_name: '', access_token: '', phone_number_id: '', verify_token: '', default_thread_id: '' })
+      setTelegramForm({ display_name: '', bot_token: '', default_chat_id: '', base_group_chat_id: '' })
       setWebhookForm({ display_name: '', secret_header: '', allowed_origins: '' })
       setAlpacaForm({ display_name: '', api_key: '', api_secret: '', mode: 'paper' })
       setIbkrForm({ display_name: '', host: '127.0.0.1', port: '7497', client_id: '1' })
@@ -626,6 +638,25 @@ function AddConnectorWizard({
           config = { provider: 'alpha_vantage' }
           break
         }
+        case 'whatsapp': {
+          name = whatsappForm.display_name
+          credentials = {
+            access_token: whatsappForm.access_token,
+            phone_number_id: whatsappForm.phone_number_id,
+            verify_token: whatsappForm.verify_token,
+          }
+          config = { default_thread_id: whatsappForm.default_thread_id }
+          break
+        }
+        case 'telegram': {
+          name = telegramForm.display_name
+          credentials = { bot_token: telegramForm.bot_token }
+          config = {
+            default_chat_id: telegramForm.default_chat_id,
+            base_group_chat_id: telegramForm.base_group_chat_id,
+          }
+          break
+        }
         default: break
       }
 
@@ -675,6 +706,10 @@ function AddConnectorWizard({
         return !!(polygonForm.display_name && polygonForm.api_key)
       case 'alphavantage':
         return !!(alphaVantageForm.display_name && alphaVantageForm.api_key)
+      case 'whatsapp':
+        return !!(whatsappForm.display_name && whatsappForm.access_token && whatsappForm.phone_number_id)
+      case 'telegram':
+        return !!(telegramForm.display_name && telegramForm.bot_token)
       default:
         return false
     }
@@ -898,6 +933,61 @@ function AddConnectorWizard({
                 <Label>Keyword Filter (optional)</Label>
                 <Input value={newsForm.symbols} onChange={(e) => setNewsForm((f) => ({ ...f, symbols: e.target.value }))} placeholder="AAPL, earnings, Fed" />
                 <p className="text-xs text-muted-foreground">Comma-separated keywords to filter articles</p>
+              </div>
+            </div>
+          )}
+
+          {/* P15: WhatsApp */}
+          {platform === 'whatsapp' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={whatsappForm.display_name} onChange={(e) => setWhatsappForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Trade Alerts WhatsApp" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Phone Number ID</Label>
+                <Input value={whatsappForm.phone_number_id} onChange={(e) => setWhatsappForm((f) => ({ ...f, phone_number_id: e.target.value }))} placeholder="From Meta developer console" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Access Token</Label>
+                <Input type="password" value={whatsappForm.access_token} onChange={(e) => setWhatsappForm((f) => ({ ...f, access_token: e.target.value }))} placeholder="Meta Cloud API access token" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Webhook Verify Token</Label>
+                <Input value={whatsappForm.verify_token} onChange={(e) => setWhatsappForm((f) => ({ ...f, verify_token: e.target.value }))} placeholder="Shared secret for /webhook/whatsapp" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Default Thread / Phone Number</Label>
+                <Input value={whatsappForm.default_thread_id} onChange={(e) => setWhatsappForm((f) => ({ ...f, default_thread_id: e.target.value }))} placeholder="+14155551234 or group ID" />
+              </div>
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-400">
+                ⚠ Meta restricts programmatic group creation. Create WhatsApp groups manually, invite the bot, then tag each group to an agent. Outbound messages auto-prepend [agent:name].
+              </div>
+            </div>
+          )}
+
+          {/* P15: Telegram */}
+          {platform === 'telegram' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={telegramForm.display_name} onChange={(e) => setTelegramForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="e.g. Phoenix Telegram Bot" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Bot Token</Label>
+                <Input type="password" value={telegramForm.bot_token} onChange={(e) => setTelegramForm((f) => ({ ...f, bot_token: e.target.value }))} placeholder="From @BotFather" className="font-mono" />
+                <p className="text-xs text-muted-foreground">Message @BotFather on Telegram to create a new bot.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Default Chat ID</Label>
+                <Input value={telegramForm.default_chat_id} onChange={(e) => setTelegramForm((f) => ({ ...f, default_chat_id: e.target.value }))} placeholder="-1001234567890 or @channelname" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Base Group Chat ID (optional)</Label>
+                <Input value={telegramForm.base_group_chat_id} onChange={(e) => setTelegramForm((f) => ({ ...f, base_group_chat_id: e.target.value }))} placeholder="Supergroup where bot generates per-agent invite links" className="font-mono" />
+              </div>
+              <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-400">
+                Telegram supports auto-generated per-agent invite links via `createChatInviteLink`. Set the base group above and Phoenix will mint one link per new agent.
               </div>
             </div>
           )}

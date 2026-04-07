@@ -73,7 +73,7 @@ async def send_message(
     session.add(row)
     await session.flush()
 
-    # Forward to running agent via gateway.send_task() if it's a real agent
+    # Forward to running agent: trigger-bus (P9) + legacy send_task
     forwarded = None
     if agent_id != _TRADE_CHAT_AGENT_ID:
         try:
@@ -81,5 +81,15 @@ async def send_message(
             forwarded = await gateway.send_task(agent_id, msg)
         except Exception as exc:
             forwarded = {"status": "error", "error": str(exc)[:200]}
+        # Publish wake trigger — reaches the agent even if send_task failed
+        try:
+            from shared.triggers import get_bus, Trigger, TriggerType
+            await get_bus().publish(Trigger(
+                agent_id=str(agent_id),
+                type=TriggerType.CHAT_MESSAGE,
+                payload={"message": msg, "message_id": str(row.id)},
+            ))
+        except Exception:
+            pass
 
     return {"ok": True, "id": str(row.id), "forwarded": forwarded}

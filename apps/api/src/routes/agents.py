@@ -48,6 +48,7 @@ class AgentResponse(BaseModel):
     type: str
     status: str
     worker_status: str = "STOPPED"
+    runtime_status: str = "unknown"  # P4: derived from last_activity_at / heartbeat age
     config: dict[str, Any]
     channel_name: str | None = None
     analyst_name: str | None = None
@@ -63,6 +64,26 @@ class AgentResponse(BaseModel):
     last_trade_at: str | None = None
     created_at: str
 
+    @staticmethod
+    def _derive_runtime_status(a: Agent) -> str:
+        """P4: 'alive' if heartbeat within 3min, 'stale' if older, else 'stopped'."""
+        last = getattr(a, "last_activity_at", None)
+        if not last:
+            return "stopped"
+        try:
+            now = datetime.now(timezone.utc)
+            # naive → assume UTC
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            age = (now - last).total_seconds()
+            if age < 180:
+                return "alive"
+            if age < 900:
+                return "stale"
+            return "stopped"
+        except Exception:
+            return "unknown"
+
     @classmethod
     def from_model(cls, a: Agent) -> "AgentResponse":
         return cls(
@@ -71,6 +92,7 @@ class AgentResponse(BaseModel):
             type=a.type,
             status=a.status,
             worker_status=a.worker_status or "STOPPED",
+            runtime_status=cls._derive_runtime_status(a),
             config=a.config or {},
             channel_name=a.channel_name,
             analyst_name=a.analyst_name,
@@ -797,6 +819,41 @@ async def get_agent_graph(session: DbSession):
                 "last_message_at": msg.created_at.isoformat() if msg.created_at else None,
             }
         edges_dict[key]["count"] += 1
+
+    # P8: Synthetic edges when agents share a connector (Discord channel → agent)
+    try:
+        from shared.db.models.connector import ConnectorAgent
+        ca_res = await session.execute(select(ConnectorAgent))
+        by_connector: dict[str, list[str]] = {}
+        for ca in ca_res.scalars().all():
+            by_connector.setdefault(str(ca.connector_id), []).append(str(ca.agent_id))
+        for conn_id, agent_ids in by_connector.items():
+            if len(agent_ids) < 2:
+                continue
+            for i, a_id in enumerate(agent_ids):
+                for b_id in agent_ids[i + 1:]:
+                    key = (a_id, b_id)
+                    rev = (b_id, a_id)
+                    if key not in edges_dict and rev not in edges_dict:
+                        edges_dict[key] = {
+                            "from": a_id, "to": b_id,
+                            "type": "shared_connector",
+                            "intent": "same_channel",
+                            "count": 1,
+                            "connector_id": conn_id,
+                        }
+    except Exception as exc:
+        logger.debug("[graph] shared-connector edges skipped: %s", exc)
+
+    # P8: Parent → child edges (backtester → analyst, supervisor → children)
+    for a in all_agents:
+        parent = getattr(a, "parent_agent_id", None)
+        if parent:
+            edges_dict.setdefault(
+                (str(parent), str(a.id)),
+                {"from": str(parent), "to": str(a.id),
+                 "type": "parent_child", "intent": "spawned", "count": 1},
+            )
 
     return {"nodes": nodes, "edges": list(edges_dict.values())}
 

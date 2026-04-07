@@ -91,6 +91,44 @@ async def _persist_message(connector_id: str, msg) -> None:
     except Exception as exc:
         logger.warning("[ingestion] Redis publish failed: %s", exc)
 
+    # P9: Fan out trigger bus wake signals to every agent subscribed via connector_agents
+    try:
+        from shared.db.engine import get_session
+        from shared.db.models.connector import ConnectorAgent
+        from sqlalchemy import select
+        from shared.triggers import get_bus, Trigger, TriggerType
+
+        async for session in get_session():
+            res = await session.execute(
+                select(ConnectorAgent).where(
+                    ConnectorAgent.connector_id == uuid.UUID(connector_id)
+                )
+            )
+            subs = list(res.scalars().all())
+            if subs:
+                bus = get_bus()
+                for sub in subs:
+                    channel_filter = getattr(sub, "channel", "*") or "*"
+                    if channel_filter != "*" and channel_filter != (msg.channel or ""):
+                        continue
+                    try:
+                        await bus.publish(Trigger(
+                            agent_id=str(sub.agent_id),
+                            type=TriggerType.CHANNEL_NEW_MESSAGE,
+                            payload={
+                                "connector_id": connector_id,
+                                "channel": msg.channel or "",
+                                "author": msg.author or "",
+                                "content": (msg.content or "")[:2000],
+                                "tickers": getattr(msg, "tickers", []) or [],
+                            },
+                        ))
+                    except Exception:
+                        pass
+            break
+    except Exception as exc:
+        logger.debug("[ingestion] trigger fan-out skipped: %s", exc)
+
 
 async def _ingest_loop(connector_id: str, connector) -> None:
     """Main loop: call connector.stream_messages() and persist each."""

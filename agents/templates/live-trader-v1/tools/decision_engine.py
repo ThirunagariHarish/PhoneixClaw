@@ -262,21 +262,41 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
                              f"(confidence={ta_result.get('confidence', 0):.3f})")
     steps.append(ta_step)
 
-    # -- Step 5: TA alignment check --
-    ta_aligned = True
-    if ta_result and ta_result.get("overall_verdict"):
-        ta_verdict = ta_result["overall_verdict"]
-        if direction == "buy" and ta_verdict == "bearish" and ta_result.get("confidence", 0) > 0.5:
-            ta_aligned = False
-            reasoning.append("TA strongly contradicts buy signal (bearish with high confidence)")
-        elif direction == "sell" and ta_verdict == "bullish" and ta_result.get("confidence", 0) > 0.5:
-            ta_aligned = False
-            reasoning.append("TA strongly contradicts sell signal (bullish with high confidence)")
-        else:
-            reasoning.append("TA does not contradict signal direction")
+    # -- Step 5: TA confidence fusion (T9) — soft instead of binary veto --
+    raw_confidence = float(prediction.get("confidence", 0))
+    ta_score = float(ta_result.get("confidence", 0.0)) if ta_result else 0.0
+    ta_verdict = ta_result.get("overall_verdict") if ta_result else None
 
-    # -- Step 6: Final decision --
-    confidence = prediction.get("confidence", 0)
+    fused = 0.6 * raw_confidence + 0.4 * ta_score
+    ta_disagrees = (
+        (direction == "buy" and ta_verdict == "bearish")
+        or (direction == "sell" and ta_verdict == "bullish")
+    )
+    if ta_disagrees:
+        fused -= 0.15 * ta_score
+        reasoning.append(f"TA disagrees ({ta_verdict}, conf={ta_score:.2f}) — fused penalty applied")
+
+    # Hard veto only on catastrophic disagreement
+    hard_veto = ta_disagrees and ta_score > 0.85 and raw_confidence < 0.6
+
+    # T10: regime recalibration (no-op if no calibration stored)
+    try:
+        from trade_intelligence import get_intelligence
+        import os as _os
+        _models_dir = _os.environ.get("PHOENIX_MODELS_DIR") or str(TOOLS_DIR.parent / "models")
+        _intel = get_intelligence(_models_dir)
+        regime = enriched.get("market_regime") or enriched.get("regime")
+        calibrated_confidence = _intel.apply_regime_calibration(raw_confidence, regime)
+        if abs(calibrated_confidence - raw_confidence) > 0.02:
+            reasoning.append(
+                f"Regime '{regime}' recalibrated confidence "
+                f"{raw_confidence:.3f} → {calibrated_confidence:.3f}"
+            )
+    except Exception:
+        calibrated_confidence = raw_confidence
+
+    confidence = calibrated_confidence
+    prediction["confidence"] = confidence  # downstream consumers read it back
     threshold = risk_params.get("confidence_threshold", 0.65)
     model_says_trade = prediction.get("prediction") == "TRADE"
 
@@ -285,13 +305,33 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
         return _build_decision("REJECT", "model_skip", steps, reasoning, parsed,
                                enriched, prediction, risk_result, ta_result)
 
-    if not ta_aligned:
-        reasoning.append("Rejected due to TA misalignment despite model approval")
-        return _build_decision("REJECT", "ta_misalignment", steps, reasoning, parsed,
+    if hard_veto:
+        reasoning.append("HARD VETO: TA catastrophically disagrees with low-confidence signal")
+        return _build_decision("REJECT", "ta_hard_veto", steps, reasoning, parsed,
                                enriched, prediction, risk_result, ta_result)
+
+    reasoning.append(f"Fused confidence = {fused:.3f} (raw={raw_confidence:.3f}, ta={ta_score:.3f})")
 
     # -- Build execution parameters --
     exec_params = _build_execution_params(parsed, enriched, prediction, risk_params, ta_result)
+
+    # T2: EV gate — reject if expected value doesn't clear the threshold
+    if not exec_params.get("ev_gate_pass", True):
+        reasoning.append(
+            f"EV gate FAILED: EV={exec_params.get('expected_value')} "
+            f"E[win]={exec_params.get('expected_pnl_on_win')} "
+            f"E[loss]={exec_params.get('expected_pnl_on_loss')}"
+        )
+        return _build_decision("REJECT", "ev_gate_failed", steps, reasoning, parsed,
+                               enriched, prediction, risk_result, ta_result)
+
+    # T5: stale-signal guard — if fill probability is low, only keep marketable orders
+    if exec_params.get("fill_prob_60s", 1.0) < 0.4:
+        reasoning.append(
+            f"Low fill probability ({exec_params['fill_prob_60s']:.2f}) — marking as stale"
+        )
+        return _build_decision("REJECT", "stale_signal", steps, reasoning, parsed,
+                               enriched, prediction, risk_result, ta_result)
 
     # -- Step 7: Paper trading mode (route to watchlist instead of broker) --
     current_mode = config.get("current_mode") or config.get("mode") or "live"
@@ -334,32 +374,90 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
 
 def _build_execution_params(parsed: dict, enriched: dict, prediction: dict,
                             risk_params: dict, ta_result: dict | None) -> dict:
-    """Compute position sizing and stop-loss/take-profit levels."""
+    """Compute sizing, SL/TP, limit price, and exit-bucket hints.
+
+    Phase T intelligence layer:
+      T3 — learned SL/TP ATR multiples
+      T5 — learned limit price adjustment (entry slippage + fillability)
+      T7 — fractional Kelly sizing
+      T4 — exit bucket hint for the position monitor
+    All heads fall back to prior defaults when their model artifact is missing.
+    """
     ticker = parsed.get("ticker", "")
     direction = parsed.get("direction", "buy")
     price = parsed.get("signal_price") or enriched.get("last_close", 0)
 
     atr = enriched.get("atr_14") or (price * 0.02)
-    confidence = prediction.get("confidence", 0.65)
+    confidence = float(prediction.get("confidence", 0.65))
 
     max_pct = risk_params.get("max_position_size_pct", 5.0)
-    position_pct = max_pct * min(confidence, 1.0)
+
+    # Load intelligence heads — the models dir is passed via env/config
+    try:
+        from trade_intelligence import get_intelligence
+        import os as _os
+        models_dir = _os.environ.get("PHOENIX_MODELS_DIR") or str(TOOLS_DIR.parent / "models")
+        intel = get_intelligence(models_dir)
+        feature_names = None
+        fn_path = Path(models_dir) / "feature_names.json"
+        if fn_path.exists():
+            try:
+                feature_names = json.loads(fn_path.read_text())
+            except Exception:
+                feature_names = None
+
+        sl_mult, tp_mult = intel.predict_sl_tp_multiples(enriched, feature_names)
+        e_win, e_loss = intel.predict_pnl(enriched, feature_names)
+        slip_bps = intel.predict_entry_slippage_bps(enriched, feature_names)
+        p_fill = intel.predict_fill_probability(enriched, feature_names)
+        exit_bucket, exit_hold = intel.predict_exit_bucket(enriched, feature_names)
+
+        # T7: fractional Kelly (uses model confidence as p_win)
+        kelly_pct = intel.position_pct_kelly(confidence, e_win, e_loss, max_pct)
+        position_pct = kelly_pct if kelly_pct > 0 else max_pct * min(confidence, 1.0)
+
+        # T2: EV sanity
+        ev = confidence * e_win + (1 - confidence) * e_loss
+        ev_ok = ev >= intel.ev_threshold()
+    except Exception as _exc:
+        log.debug("[intelligence] unavailable, using priors: %s", _exc)
+        sl_mult, tp_mult = 2.0, 3.0
+        slip_bps, p_fill = 0.0, 0.85
+        exit_bucket, exit_hold = "5_30m", 20.0
+        e_win, e_loss, ev, ev_ok = 0.04, -0.03, 0.0, True
+        position_pct = max_pct * min(confidence, 1.0)
+
+    side_sign = 1 if direction == "buy" else -1
+    # T5: apply slippage-based buffer to the limit price
+    adjusted_price = price * (1 + (slip_bps / 10000.0) * side_sign) if price else price
 
     if direction == "buy":
-        stop_loss = round(price - 2 * atr, 2)
-        take_profit = round(price + 3 * atr, 2)
+        stop_loss = round(adjusted_price - sl_mult * atr, 2)
+        take_profit = round(adjusted_price + tp_mult * atr, 2)
     else:
-        stop_loss = round(price + 2 * atr, 2)
-        take_profit = round(price - 3 * atr, 2)
+        stop_loss = round(adjusted_price + sl_mult * atr, 2)
+        take_profit = round(adjusted_price - tp_mult * atr, 2)
 
     return {
         "ticker": ticker,
         "direction": direction,
-        "entry_price": round(price, 2) if price else None,
-        "stop_loss": stop_loss if price else None,
-        "take_profit": take_profit if price else None,
+        "entry_price": round(adjusted_price, 2) if adjusted_price else None,
+        "signal_price": round(price, 2) if price else None,
+        "stop_loss": stop_loss if adjusted_price else None,
+        "take_profit": take_profit if adjusted_price else None,
         "position_size_pct": round(position_pct, 2),
         "atr_used": round(atr, 4) if atr else None,
+        "sl_atr_mult": round(sl_mult, 2),
+        "tp_atr_mult": round(tp_mult, 2),
+        "entry_slip_bps": round(slip_bps, 2),
+        "fill_prob_60s": round(p_fill, 3),
+        "exit_bucket": exit_bucket,
+        "expected_hold_min": round(exit_hold, 1),
+        "expected_pnl_on_win": round(e_win, 4),
+        "expected_pnl_on_loss": round(e_loss, 4),
+        "expected_value": round(ev, 4),
+        "ev_gate_pass": bool(ev_ok),
+        "kelly_fraction_applied": True,
         "option_type": parsed.get("option_type"),
         "strike": parsed.get("strike"),
         "expiry": parsed.get("expiry"),

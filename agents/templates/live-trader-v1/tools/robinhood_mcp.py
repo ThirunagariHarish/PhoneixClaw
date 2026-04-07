@@ -720,12 +720,111 @@ def _tool_get_watchlist(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# P13 — HFT / algo tools
+# ---------------------------------------------------------------------------
+
+_nbbo_cache: dict[str, tuple[float, dict]] = {}
+_account_cache: tuple[float, dict] | None = None
+
+
+def _tool_get_nbbo(args: dict) -> dict:
+    """P13: Return NBBO snapshot {bid, ask, mid, spread_pct, stale_ms} cached 500ms."""
+    import time as _time
+    ticker = args["ticker"]
+    now = _time.time()
+    cached = _nbbo_cache.get(ticker)
+    if cached and (now - cached[0]) * 1000 < 500:
+        return cached[1]
+    quote = _tool_get_quote({"ticker": ticker})
+    bid = float(quote.get("bid", 0) or 0)
+    ask = float(quote.get("ask", 0) or 0)
+    last = float(quote.get("price", 0) or 0)
+    mid = (bid + ask) / 2 if (bid and ask and ask > bid) else last
+    spread_pct = ((ask - bid) / mid) if mid > 0 else 0.0
+    nbbo = {
+        "ticker": ticker,
+        "bid": bid,
+        "ask": ask,
+        "mid": round(mid, 2),
+        "last": last,
+        "spread_pct": round(spread_pct, 6),
+        "spread_bps": round(spread_pct * 10000, 2),
+        "stale_ms": 0,
+        "fetched_at": now,
+    }
+    _nbbo_cache[ticker] = (now, nbbo)
+    return nbbo
+
+
+def _tool_get_account_snapshot(_args: dict) -> dict:
+    """P13: Account snapshot cached 500ms for pre-trade risk checks."""
+    import time as _time
+    global _account_cache
+    now = _time.time()
+    if _account_cache and (now - _account_cache[0]) * 1000 < 500:
+        return _account_cache[1]
+    snap = _tool_get_account({})
+    _account_cache = (now, snap)
+    return snap
+
+
+def _tool_smart_limit_order(args: dict) -> dict:
+    """P13: Place a limit order pegged to the current NBBO midpoint.
+
+    Pre-trade: checks buying power, fetches NBBO, decides marketable vs passive.
+    Uses existing place_stock_order / place_option_order under the hood.
+    """
+    ticker = args["ticker"]
+    side = args.get("side", "buy")
+    quantity = float(args["quantity"])
+    buffer_bps = float(args.get("buffer_bps", 5.0))
+
+    nbbo = _tool_get_nbbo({"ticker": ticker})
+    if nbbo.get("mid", 0) <= 0:
+        return {"status": "error", "reason": "no_nbbo"}
+
+    acct = _tool_get_account_snapshot({})
+    buying_power = float(acct.get("buying_power") or 0)
+    notional = quantity * nbbo["mid"]
+    if side == "buy" and notional > buying_power:
+        return {
+            "status": "rejected",
+            "reason": "insufficient_buying_power",
+            "needed": round(notional, 2),
+            "available": round(buying_power, 2),
+        }
+
+    # Peg to mid + side-directional offset
+    bps_offset = (buffer_bps / 10000.0) * nbbo["mid"]
+    half_spread = (nbbo["ask"] - nbbo["bid"]) / 2 if nbbo["ask"] > nbbo["bid"] else 0.0
+    offset = max(bps_offset, half_spread, 0.01)
+    limit_price = round(
+        nbbo["mid"] + (offset if side == "buy" else -offset), 2
+    )
+
+    return _tool_place_stock_order({
+        "ticker": ticker,
+        "quantity": quantity,
+        "side": side,
+        "price": limit_price,
+    }) | {
+        "nbbo": nbbo,
+        "limit_price": limit_price,
+        "buffer_bps_used": buffer_bps,
+        "notional": round(notional, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tool registry & JSON schemas
 # ---------------------------------------------------------------------------
 
 TOOL_HANDLERS: dict[str, Any] = {
     "robinhood_login": _tool_robinhood_login,
     "get_quote": _tool_get_quote,
+    "get_nbbo": _tool_get_nbbo,
+    "get_account_snapshot": _tool_get_account_snapshot,
+    "smart_limit_order": _tool_smart_limit_order,
     "get_positions": _tool_get_positions,
     "place_stock_order": _tool_place_stock_order,
     "place_option_order": _tool_place_option_order,

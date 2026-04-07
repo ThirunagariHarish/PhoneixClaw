@@ -116,10 +116,60 @@ class NotificationDispatcher:
                 event_type, agent_id, final_title, final_body, data
             )
         if "whatsapp" in channels:
-            results["whatsapp"] = await self._send_whatsapp(final_title, final_body)
+            # P15: prepend per-agent tag so manual groups can route by prefix
+            tag_body = final_body
+            if agent_id:
+                try:
+                    from shared.db.engine import get_session
+                    from shared.db.models.agent import Agent
+                    from sqlalchemy import select
+                    async for sess in get_session():
+                        a = (await sess.execute(
+                            select(Agent).where(Agent.id == uuid.UUID(agent_id))
+                        )).scalar_one_or_none()
+                        if a:
+                            tag_body = f"[agent:{a.name}] {final_body}"
+                        break
+                except Exception:
+                    pass
+            results["whatsapp"] = await self._send_whatsapp(final_title, tag_body)
+
+        if "telegram" in channels:
+            results["telegram"] = await self._send_telegram(agent_id, final_title, final_body)
 
         logger.info("Notification %s dispatched: %s", event_type, results)
         return results
+
+    async def _send_telegram(self, agent_id: str | None, title: str, body: str) -> bool:
+        """P15: Route through the Telegram bot. Looks up a per-agent chat_id if
+        configured in agents.config.telegram_chat_id, else falls back to the
+        default chat from env var."""
+        try:
+            from shared.telegram import get_sender
+            chat_id: str | int | None = None
+            if agent_id:
+                try:
+                    from shared.db.engine import get_session
+                    from shared.db.models.agent import Agent
+                    from sqlalchemy import select
+                    async for sess in get_session():
+                        a = (await sess.execute(
+                            select(Agent).where(Agent.id == uuid.UUID(agent_id))
+                        )).scalar_one_or_none()
+                        if a and a.config:
+                            chat_id = a.config.get("telegram_chat_id")
+                        break
+                except Exception:
+                    pass
+            if not chat_id:
+                chat_id = os.getenv("TELEGRAM_DEFAULT_CHAT_ID")
+            if not chat_id:
+                return False
+            res = await get_sender().send_message(chat_id, f"*{title}*\n{body}")
+            return bool(res.get("ok"))
+        except Exception as exc:
+            logger.debug("Telegram send failed: %s", exc)
+            return False
 
     async def _save_to_db(self, event_type: str, agent_id: str | None,
                           title: str, body: str, data: dict) -> bool:

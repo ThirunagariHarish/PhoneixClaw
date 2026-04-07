@@ -46,6 +46,18 @@ class Agent(Base):
     pending_improvements: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     last_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase H7: Token budget tracking + enforcement
+    daily_token_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    monthly_token_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tokens_used_today_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    tokens_used_month_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    budget_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_paused_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Phase P: runtime status + heartbeat-derived activity marker
+    runtime_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

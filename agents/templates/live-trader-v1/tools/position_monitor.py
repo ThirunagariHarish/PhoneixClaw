@@ -26,6 +26,21 @@ TICK_FAST = 60
 TICK_TA = 300
 TICK_CONVICTION = 900
 
+# T4: cadence override by predicted exit bucket. Short-hold trades poll fast;
+# swing trades poll slower to save CPU and API quota.
+EXIT_BUCKET_CADENCE = {
+    "lt_5m":   {"fast": 10,  "ta": 60,   "conviction": 180},
+    "5_30m":   {"fast": 30,  "ta": 180,  "conviction": 600},
+    "30m_2h":  {"fast": 60,  "ta": 300,  "conviction": 900},
+    "2h_eod":  {"fast": 120, "ta": 600,  "conviction": 1800},
+    "next_day":{"fast": 300, "ta": 1200, "conviction": 3600},
+}
+
+
+def cadence_for_bucket(bucket: str | None) -> tuple[int, int, int]:
+    cfg = EXIT_BUCKET_CADENCE.get(bucket or "30m_2h", EXIT_BUCKET_CADENCE["30m_2h"])
+    return cfg["fast"], cfg["ta"], cfg["conviction"]
+
 
 def _now_et() -> datetime:
     """Return current time in US/Eastern (offset-aware)."""

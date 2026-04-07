@@ -16,6 +16,7 @@ from apps.api.src.middleware.auth import JWTAuthMiddleware
 from apps.api.src.middleware.error_handler import ErrorHandlerMiddleware
 from apps.api.src.middleware.rate_limit import RateLimitMiddleware
 from apps.api.src.middleware.logging import LoggingMiddleware
+from apps.api.src.middleware.idempotency import IdempotencyMiddleware, set_shutting_down
 from apps.api.src.routes import auth as auth_routes
 from apps.api.src.routes import connectors as connector_routes
 from apps.api.src.routes import trades as trades_routes
@@ -52,6 +53,9 @@ from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
 from apps.api.src.routes import scheduler_status as scheduler_status_routes
 from apps.api.src.routes import eod_analysis as eod_analysis_routes
 from apps.api.src.routes import trade_signals as trade_signals_routes
+from apps.api.src.routes import budget as budget_routes
+from apps.api.src.routes import agents_sprint as agents_sprint_routes
+from apps.api.src.routes import agent_terminal as agent_terminal_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -80,7 +84,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         _log.exception("Failed to start message ingestion: %s", exc)
 
+    # Phase H3: Recover orphaned agent sessions from previous container lifecycle
+    try:
+        from apps.api.src.services.agent_runtime_recovery import recover_agents_on_startup
+        recovery_summary = await recover_agents_on_startup()
+        _log.info("Agent recovery: %s", recovery_summary)
+    except Exception as exc:
+        _log.exception("Agent recovery failed: %s", exc)
+
     yield
+
+    # H10: mark API as draining so IdempotencyMiddleware returns 503 to new POSTs.
+    set_shutting_down(True)
+    import asyncio as _asyncio
+    drain_timeout = float(os.getenv("SHUTDOWN_DRAIN_SECONDS", "30"))
+    try:
+        await _asyncio.sleep(min(drain_timeout, 2.0))  # brief quiesce for in-flight
+    except Exception:
+        pass
 
     # Shutdown in reverse order
     if stop_ingestion_fn is not None:
@@ -106,6 +127,7 @@ app = FastAPI(
 )
 
 app.add_middleware(ErrorHandlerMiddleware)
+app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(JWTAuthMiddleware)
@@ -153,11 +175,48 @@ app.include_router(whatsapp_webhook_routes.router)
 app.include_router(scheduler_status_routes.router)
 app.include_router(eod_analysis_routes.router)
 app.include_router(trade_signals_routes.router)
+app.include_router(budget_routes.router)
+app.include_router(agents_sprint_routes.router)
+app.include_router(agents_sprint_routes.portfolio_router)
+app.include_router(agent_terminal_routes.router)
+
+# Phase H2: wire Prometheus /metrics endpoint
+try:
+    from shared.metrics import create_metrics_route
+    create_metrics_route(app)
+except Exception as _exc:
+    import logging as _logging
+    _logging.getLogger(__name__).warning("Failed to mount /metrics: %s", _exc)
 
 
 @app.get("/health")
-async def health() -> dict:
-    """Health check for load balancers and CI. Returns 200 when service is ready."""
+async def health():
+    """Aggregate health check — verifies DB, Redis, scheduler, ingestion, disk.
+
+    Returns 200 with details if all subsystems are healthy.
+    Returns 503 with details if any critical subsystem is degraded.
+    """
+    from fastapi.responses import JSONResponse
+    try:
+        from apps.api.src.services.db_health import aggregate_health
+        report = await aggregate_health()
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "service": "phoenix-api", "error": str(exc)[:200]},
+        )
+
+    report["service"] = "phoenix-api"
+    status_code = 200 if report.get("status") == "ready" else 503
+    return JSONResponse(status_code=status_code, content=report)
+
+
+@app.get("/health/lite")
+async def health_lite() -> dict:
+    """Minimal health check for load balancers — does NOT touch DB.
+
+    Use this for k8s liveness probes; use /health for readiness probes.
+    """
     return {"status": "ready", "service": "phoenix-api"}
 
 

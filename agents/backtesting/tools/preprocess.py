@@ -21,7 +21,12 @@ EXCLUDE_COLS = [
     "trade_id", "is_profitable", "entry_message_raw", "exit_messages_raw",
     "analyst", "channel", "ticker", "side", "option_type",
     "day_of_week", "hour_bucket", "market_regime", "vix_regime", "signal_type",
+    # T1: multi-head labels are targets, not features
+    "y_win", "y_pnl_pct", "y_mfe_atr", "y_mae_atr", "y_hold_minutes",
+    "y_exit_bucket", "y_entry_slip_bps", "y_fill_60s",
 ]
+
+EXIT_BUCKET_LABELS = ["lt_5m", "5_30m", "30m_2h", "2h_eod", "next_day"]
 
 CATEGORICAL_COLS = [
     "analyst", "ticker", "side", "option_type",
@@ -120,6 +125,38 @@ def main():
     np.save(output_dir / "y_val.npy", y_val)
     np.save(output_dir / "y_test.npy", y_test)
 
+    # --- T1: Multi-head label panel (regression + exit bucket) ------------------
+    def _save_regression_label(col: str, stem: str) -> None:
+        if col not in df.columns:
+            return
+        vals = pd.to_numeric(df[col], errors="coerce").astype(np.float32).values
+        np.save(output_dir / f"{stem}_train.npy", vals[:train_end])
+        np.save(output_dir / f"{stem}_val.npy", vals[train_end:val_end])
+        np.save(output_dir / f"{stem}_test.npy", vals[val_end:])
+
+    _save_regression_label("y_pnl_pct", "y_pnl")
+    _save_regression_label("y_mfe_atr", "y_mfe_atr")
+    _save_regression_label("y_mae_atr", "y_mae_atr")
+    _save_regression_label("y_hold_minutes", "y_hold")
+    _save_regression_label("y_entry_slip_bps", "y_slip")
+
+    if "y_fill_60s" in df.columns:
+        fill = pd.to_numeric(df["y_fill_60s"], errors="coerce").astype(np.float32).values
+        np.save(output_dir / "y_fill_train.npy", fill[:train_end])
+        np.save(output_dir / "y_fill_val.npy", fill[train_end:val_end])
+        np.save(output_dir / "y_fill_test.npy", fill[val_end:])
+
+    if "y_exit_bucket" in df.columns:
+        bucket_to_idx = {b: i for i, b in enumerate(EXIT_BUCKET_LABELS)}
+        bucket_int = df["y_exit_bucket"].fillna("5_30m").map(
+            lambda b: bucket_to_idx.get(b, 1)
+        ).astype(np.int32).values
+        np.save(output_dir / "y_exit_bucket_train.npy", bucket_int[:train_end])
+        np.save(output_dir / "y_exit_bucket_val.npy", bucket_int[train_end:val_end])
+        np.save(output_dir / "y_exit_bucket_test.npy", bucket_int[val_end:])
+        with open(output_dir / "exit_bucket_labels.json", "w") as f:
+            json.dump(EXIT_BUCKET_LABELS, f)
+
     with open(output_dir / "feature_names.json", "w") as f:
         json.dump(feature_cols, f)
 
@@ -180,6 +217,13 @@ def main():
         "has_candles": candle_path.exists(),
         "has_text": text_path.exists(),
         "categorical_features": len(available_cats),
+        "label_heads": {
+            head: (head in df.columns and df[head].notna().any())
+            for head in [
+                "y_win", "y_pnl_pct", "y_mfe_atr", "y_mae_atr",
+                "y_hold_minutes", "y_exit_bucket", "y_entry_slip_bps", "y_fill_60s",
+            ]
+        },
     }
     with open(output_dir / "preprocessing_summary.json", "w") as f:
         json.dump(summary, f, indent=2)

@@ -1,4 +1,4 @@
-"""Scheduler status endpoint — for dashboard health check."""
+"""Scheduler + concurrency status endpoint — for dashboard health check."""
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
@@ -6,9 +6,30 @@ router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 
 @router.get("/status")
 async def scheduler_status():
-    """Return current scheduler state and upcoming jobs."""
+    """Return current scheduler state and upcoming jobs + agent concurrency."""
+    out = {}
     try:
         from apps.api.src.services.scheduler import get_scheduler_status
-        return get_scheduler_status()
+        out["scheduler"] = get_scheduler_status()
     except Exception as exc:
-        return {"running": False, "error": str(exc)[:200]}
+        out["scheduler"] = {"running": False, "error": str(exc)[:200]}
+
+    try:
+        from apps.api.src.services.agent_gateway import get_concurrency_status
+        out["concurrency"] = get_concurrency_status()
+    except Exception as exc:
+        out["concurrency"] = {"error": str(exc)[:200]}
+
+    try:
+        from apps.api.src.services.message_ingestion import get_ingestion_status
+        out["ingestion"] = get_ingestion_status()
+    except Exception as exc:
+        out["ingestion"] = {"error": str(exc)[:200]}
+
+    # Backward compat: keep `running` and `jobs` at the top level so existing
+    # dashboard pages continue to work.
+    if isinstance(out["scheduler"], dict):
+        out["running"] = out["scheduler"].get("running", False)
+        if "jobs" in out["scheduler"]:
+            out["jobs"] = out["scheduler"]["jobs"]
+    return out

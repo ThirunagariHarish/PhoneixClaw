@@ -30,6 +30,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { EquityCurveChart } from '@/components/EquityCurveChart'
+import { MetricsCards } from '@/components/MetricsCards'
+import { AgentMessagesTab } from '@/components/AgentMessagesTab'
+import { AgentScheduleTab } from '@/components/AgentScheduleTab'
+import { AgentTerminal } from '@/components/AgentTerminal'
 
 /* ---------- Types ---------- */
 
@@ -105,6 +110,69 @@ const LIVE = new Set(['LIVE', 'PAPER', 'RUNNING'])
 /* ================================================================
    PORTFOLIO TAB
    ================================================================ */
+/* P12: Pattern row — plain English primary, raw rule collapsible */
+function PatternRow({ p, i }: { p: Record<string, unknown>; i: number }) {
+  const [showRaw, setShowRaw] = useState(false)
+  const name = String(p.name || p.pattern || `Pattern ${i + 1}`)
+  const plainEnglish = String(p.plain_english || p.description || '')
+  const rationale = String(p.rationale || '')
+  const riskNote = String(p.risk_note || '')
+  const condition = String(p.condition || '')
+  const winRate = typeof p.win_rate === 'number' ? (p.win_rate * 100).toFixed(1) : null
+  const edge = typeof p.edge_vs_baseline === 'number' ? (p.edge_vs_baseline * 100).toFixed(1) : null
+  const sampleSize = p.sample_size ?? null
+  const source = String(p.source || '')
+  const regime = String(p.regime || '')
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1">
+          <p className="text-sm font-semibold">{name}</p>
+          {plainEnglish && (
+            <p className="text-sm text-foreground/80 mt-1 leading-relaxed">{plainEnglish}</p>
+          )}
+          {rationale && (
+            <p className="text-xs text-muted-foreground mt-1 italic">{rationale}</p>
+          )}
+          {riskNote && (
+            <p className="text-xs text-amber-600 mt-1">⚠ {riskNote}</p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {winRate && <Badge variant="default" className="text-xs">{winRate}% WR</Badge>}
+          {edge && (
+            <Badge
+              variant={parseFloat(edge) > 0 ? 'default' : 'outline'}
+              className={`text-xs ${parseFloat(edge) > 0 ? 'bg-emerald-500/20 text-emerald-600' : 'bg-rose-500/20 text-rose-600'}`}
+            >
+              {parseFloat(edge) > 0 ? '+' : ''}{edge}% edge
+            </Badge>
+          )}
+        </div>
+      </div>
+      <div className="flex gap-2 mt-2 text-[10px] text-muted-foreground items-center">
+        {sampleSize != null && <span>n={String(sampleSize)}</span>}
+        {source && <Badge variant="outline" className="text-[10px]">{source}</Badge>}
+        {regime && regime !== 'any' && <Badge variant="outline" className="text-[10px]">{regime}</Badge>}
+        {condition && (
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="ml-auto text-[10px] underline hover:text-foreground"
+          >
+            {showRaw ? 'hide rule' : 'show rule'}
+          </button>
+        )}
+      </div>
+      {showRaw && condition && (
+        <pre className="text-xs font-mono text-muted-foreground mt-2 bg-muted p-2 rounded whitespace-pre-wrap">
+          {condition}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
   const queryClient = useQueryClient()
   const { data: positions = [] } = useQuery<Position[]>({
@@ -1171,18 +1239,7 @@ function BacktestingSection({ id, status }: { id: string; status: string }) {
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Discovered Patterns ({artifacts.patterns.length})</CardTitle></CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {artifacts.patterns.slice(0, 30).map((p, i) => (
-                    <div key={i} className="rounded-lg border p-3">
-                      <p className="text-sm font-medium">{String(p.name || p.pattern || `Pattern ${i + 1}`)}</p>
-                      {p.description && <p className="text-xs text-muted-foreground mt-0.5">{String(p.description)}</p>}
-                      {p.condition && <p className="text-xs font-mono text-muted-foreground mt-1">{String(p.condition)}</p>}
-                      <div className="flex gap-3 mt-1.5 text-[10px] text-muted-foreground">
-                        {p.support != null && <span>Support: {String(p.support)}</span>}
-                        {p.confidence != null && <span>Confidence: {Number(p.confidence).toFixed(2)}</span>}
-                        {p.lift != null && <span>Lift: {Number(p.lift).toFixed(2)}</span>}
-                      </div>
-                    </div>
-                  ))}
+                  {artifacts.patterns.slice(0, 30).map((p, i) => <PatternRow key={i} p={p} i={i} />)}
                 </div>
               </CardContent>
             </Card>
@@ -1314,23 +1371,38 @@ function RuntimeTab({ id }: { id: string }) {
 function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
   return (
     <Tabs defaultValue="portfolio">
-      <TabsList className="grid w-full grid-cols-6 max-w-2xl">
+      <TabsList className="grid w-full grid-cols-9 max-w-4xl">
         <TabsTrigger value="portfolio" className="text-xs"><TrendingUp className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Portfolio</TabsTrigger>
         <TabsTrigger value="trades" className="text-xs"><List className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Trades</TabsTrigger>
         <TabsTrigger value="chat" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Chat</TabsTrigger>
+        <TabsTrigger value="messages" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Feed</TabsTrigger>
         <TabsTrigger value="intelligence" className="text-xs"><Shield className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Intel</TabsTrigger>
         <TabsTrigger value="logs" className="text-xs"><ScrollText className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Logs</TabsTrigger>
+        <TabsTrigger value="schedule" className="text-xs"><Clock className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Schedule</TabsTrigger>
         <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
         <TabsTrigger value="runtime" className="text-xs"><Terminal className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Runtime</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="portfolio" className="mt-4"><PortfolioTab id={id} agent={agent} /></TabsContent>
+      <TabsContent value="portfolio" className="mt-4">
+        <div className="space-y-4">
+          <MetricsCards agentId={id} />
+          <EquityCurveChart agentId={id} />
+          <PortfolioTab id={id} agent={agent} />
+        </div>
+      </TabsContent>
       <TabsContent value="trades" className="mt-4"><TradesTab id={id} /></TabsContent>
       <TabsContent value="chat" className="mt-4"><ChatTab id={id} agentName={agent.name} /></TabsContent>
+      <TabsContent value="messages" className="mt-4"><AgentMessagesTab agentId={id} /></TabsContent>
       <TabsContent value="intelligence" className="mt-4"><IntelligenceTab id={id} /></TabsContent>
       <TabsContent value="logs" className="mt-4"><LogsTab id={id} /></TabsContent>
+      <TabsContent value="schedule" className="mt-4"><AgentScheduleTab agentId={id} /></TabsContent>
       <TabsContent value="rules" className="mt-4"><RulesTab id={id} /></TabsContent>
-      <TabsContent value="runtime" className="mt-4"><RuntimeTab id={id} /></TabsContent>
+      <TabsContent value="runtime" className="mt-4">
+        <div className="space-y-4">
+          <RuntimeTab id={id} />
+          <AgentTerminal agentId={id} />
+        </div>
+      </TabsContent>
     </Tabs>
   )
 }

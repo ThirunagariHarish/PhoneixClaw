@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { AiAssistPopover } from '@/components/AiAssistPopover'
+import { EquityCurveChart } from '@/components/EquityCurveChart'
+import { toast } from 'sonner'
 import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
   Plug, MessageSquare, Globe, Radio, Activity, Newspaper, Webhook, TrendingUp, Landmark, BarChart3,
@@ -171,6 +173,57 @@ interface WizardFormData {
   smart_hold_enabled: boolean
   smart_hold_buffer_pct: number
   source_config: Record<string, unknown>
+}
+
+/* P1: Spawn typed agent quick form (UW / social / strategy / supervisor) */
+function QuickSpawnTypedAgent() {
+  const qc = useQueryClient()
+  const [name, setName] = useState('')
+  const [type, setType] = useState('unusual_whales')
+
+  const spawn = useMutation({
+    mutationFn: async () => {
+      return (await api.post('/api/v2/agents/spawn-typed', { name, type, config: {} })).data
+    },
+    onSuccess: (d) => {
+      toast.success(`Spawned ${type}: ${d.agent_id}`)
+      setName('')
+      qc.invalidateQueries({ queryKey: ['agents'] })
+    },
+    onError: (e: unknown) => toast.error(`Spawn failed: ${String(e)}`),
+  })
+
+  return (
+    <div className="flex items-center gap-2 p-3 rounded-lg border bg-muted/30">
+      <Shield className="w-4 h-4 text-muted-foreground" />
+      <span className="text-xs text-muted-foreground whitespace-nowrap">Quick spawn:</span>
+      <Input
+        placeholder="Agent name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="max-w-xs h-8 text-xs"
+      />
+      <Select value={type} onValueChange={setType}>
+        <SelectTrigger className="w-44 h-8 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="unusual_whales">Unusual Whales</SelectItem>
+          <SelectItem value="social_sentiment">Social Sentiment</SelectItem>
+          <SelectItem value="strategy">Strategy Agent</SelectItem>
+          <SelectItem value="supervisor">AutoResearch Supervisor</SelectItem>
+        </SelectContent>
+      </Select>
+      <Button
+        size="sm"
+        onClick={() => spawn.mutate()}
+        disabled={!name || spawn.isPending}
+      >
+        <Plus className="w-3 h-3 mr-1" />
+        Spawn
+      </Button>
+    </div>
+  )
 }
 
 const DEFAULT_FORM: WizardFormData = {
@@ -1285,6 +1338,13 @@ export default function AgentsPage() {
           <MetricCard title="P&L Today" value={`$${(stats.daily_pnl ?? 0).toLocaleString()}`} trend={(stats.daily_pnl ?? 0) >= 0 ? 'up' : 'down'} />
         </div>
       )}
+
+      {/* P6: Global portfolio equity curve */}
+      <EquityCurveChart title="Global Portfolio (all agents)" days={30} />
+
+      {/* P1: Quick spawn typed agent */}
+      <QuickSpawnTypedAgent />
+
 
       {/* Leaderboard */}
       {agents.filter((a) => ['RUNNING', 'PAPER', 'BACKTEST_COMPLETE'].includes(a.status)).length > 0 && (

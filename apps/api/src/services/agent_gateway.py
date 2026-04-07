@@ -41,6 +41,36 @@ DATA_DIR = REPO_ROOT / "data"
 _running_tasks: dict[str, asyncio.Task] = {}
 _session_ids: dict[str, str] = {}
 
+# Phase H5: Concurrency limits to prevent OOM from too many subprocesses
+MAX_CONCURRENT_BACKTESTS = int(os.environ.get("MAX_CONCURRENT_BACKTESTS", "4"))
+MAX_CONCURRENT_LIVE_AGENTS = int(os.environ.get("MAX_CONCURRENT_LIVE_AGENTS", "20"))
+MAX_CONCURRENT_POSITION_AGENTS = int(os.environ.get("MAX_CONCURRENT_POSITION_AGENTS", "50"))
+
+_backtest_sem = asyncio.Semaphore(MAX_CONCURRENT_BACKTESTS)
+_live_agent_sem = asyncio.Semaphore(MAX_CONCURRENT_LIVE_AGENTS)
+_position_agent_sem = asyncio.Semaphore(MAX_CONCURRENT_POSITION_AGENTS)
+
+
+def get_concurrency_status() -> dict:
+    """Return current semaphore utilization for /scheduler/status dashboard."""
+    return {
+        "backtests": {
+            "max": MAX_CONCURRENT_BACKTESTS,
+            "available": _backtest_sem._value,
+            "in_use": MAX_CONCURRENT_BACKTESTS - _backtest_sem._value,
+        },
+        "live_agents": {
+            "max": MAX_CONCURRENT_LIVE_AGENTS,
+            "available": _live_agent_sem._value,
+            "in_use": MAX_CONCURRENT_LIVE_AGENTS - _live_agent_sem._value,
+        },
+        "position_agents": {
+            "max": MAX_CONCURRENT_POSITION_AGENTS,
+            "available": _position_agent_sem._value,
+            "in_use": MAX_CONCURRENT_POSITION_AGENTS - _position_agent_sem._value,
+        },
+    }
+
 
 class AgentGateway:
     """Singleton gateway for all Claude Code agent operations."""
@@ -58,7 +88,20 @@ class AgentGateway:
         If one is already RUNNING in DB or in _running_tasks, returns existing key.
         Each re-run writes to a versioned subdirectory output/v{N}/ so prior
         artifacts are preserved for comparison.
+
+        Phase H7: Refuses to spawn if the agent is over its token budget.
         """
+        # Phase H7 budget check
+        try:
+            from apps.api.src.services.budget_enforcer import check_budget
+            budget = await check_budget(agent_id)
+            if not budget.get("ok"):
+                logger.warning("Backtest spawn rejected for %s: %s",
+                               agent_id, budget.get("reason"))
+                return f"BUDGET_EXCEEDED:{budget.get('reason')}"
+        except Exception as exc:
+            logger.warning("Budget check failed for %s, allowing: %s", agent_id, exc)
+
         task_key = str(agent_id)
 
         # Check in-memory task first
@@ -162,7 +205,25 @@ class AgentGateway:
         work_dir: Path,
         session_row_id: uuid.UUID,
     ) -> None:
-        """Run backtesting via Claude Code agent with retries. No subprocess fallback."""
+        """Run backtesting via Claude Code agent with retries. No subprocess fallback.
+
+        Phase H5: bounded by `_backtest_sem` (default 4 concurrent). Excess
+        callers wait in the semaphore queue until a slot frees.
+        """
+        async with _backtest_sem:
+            await self._run_backtester_inner(
+                agent_id, backtest_id, config, work_dir, session_row_id
+            )
+
+    async def _run_backtester_inner(
+        self,
+        agent_id: uuid.UUID,
+        backtest_id: uuid.UUID,
+        config: dict,
+        work_dir: Path,
+        session_row_id: uuid.UUID,
+    ) -> None:
+        """Original backtester body — wrapped by _run_backtester for the semaphore."""
         _chown_to_phoenix(work_dir)
         use_claude = _can_use_claude_sdk()
 
@@ -315,6 +376,17 @@ class AgentGateway:
         self, agent_id: uuid.UUID, config: dict | None = None
     ) -> str:
         """Start a live trading Claude Code agent session."""
+        # Phase H7 budget check
+        try:
+            from apps.api.src.services.budget_enforcer import check_budget
+            budget = await check_budget(agent_id)
+            if not budget.get("ok"):
+                logger.warning("Analyst spawn rejected for %s: %s",
+                               agent_id, budget.get("reason"))
+                return f"BUDGET_EXCEEDED:{budget.get('reason')}"
+        except Exception as exc:
+            logger.warning("Budget check failed for %s, allowing: %s", agent_id, exc)
+
         agent_key = str(agent_id)
         if agent_key in _running_tasks and not _running_tasks[agent_key].done():
             return agent_key
@@ -356,7 +428,21 @@ class AgentGateway:
         session_row_id: uuid.UUID,
         resume: bool = False,
     ) -> None:
-        """Run the live trading agent as a Claude Code session."""
+        """Run the live trading agent as a Claude Code session.
+
+        Phase H5: bounded by `_live_agent_sem` (default 20 concurrent).
+        """
+        async with _live_agent_sem:
+            await self._run_analyst_inner(agent_id, work_dir, session_row_id, resume)
+
+    async def _run_analyst_inner(
+        self,
+        agent_id: uuid.UUID,
+        work_dir: Path,
+        session_row_id: uuid.UUID,
+        resume: bool = False,
+    ) -> None:
+        """Original analyst body."""
         agent_key = str(agent_id)
 
         try:
@@ -731,7 +817,12 @@ class AgentGateway:
                     ticker, side, work_dir)
         return str(session_row_id)
 
-    async def _run_position_agent(
+    async def _run_position_agent(self, *args, **kwargs) -> None:
+        """Phase H5: bounded by `_position_agent_sem` (default 50 concurrent)."""
+        async with _position_agent_sem:
+            await self._run_position_agent_inner(*args, **kwargs)
+
+    async def _run_position_agent_inner(
         self,
         parent_agent_id: uuid.UUID,
         position_id: str,
@@ -1194,6 +1285,37 @@ class AgentGateway:
         )
         _running_tasks[agent_key] = task
         return {"status": "resuming", "agent_id": agent_key}
+
+    async def dispatch_trigger(self, agent_id: uuid.UUID, trigger_type: str,
+                                payload: dict | None = None) -> dict:
+        """P9: Push a typed trigger to an agent via the Redis trigger bus.
+
+        Also writes to `pending_tasks.json` as a redundant local signal so agents
+        without Redis connectivity still wake. Safe to call even if the agent is
+        not running — the trigger will be consumed next time it starts.
+        """
+        workdir: str | None = None
+        async for db in _get_session():
+            sess = (await db.execute(
+                select(AgentSession)
+                .where(AgentSession.agent_id == agent_id, AgentSession.status == "running")
+                .order_by(AgentSession.started_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if sess and sess.working_dir:
+                workdir = sess.working_dir
+            break
+
+        try:
+            from shared.triggers import get_bus, Trigger, TriggerType
+            tt = TriggerType(trigger_type) if not isinstance(trigger_type, TriggerType) else trigger_type
+            await get_bus().publish(
+                Trigger(agent_id=str(agent_id), type=tt, payload=payload or {}),
+                workdir=workdir,
+            )
+            return {"status": "published", "workdir": workdir}
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)[:200]}
 
     async def send_task(self, agent_id: uuid.UUID, task_prompt: str) -> dict:
         """Send a task/query to a running agent.

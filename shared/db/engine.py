@@ -3,6 +3,12 @@ Async SQLAlchemy engine and session factory for Phoenix v2.
 
 Uses DATABASE_URL from environment (postgresql+asyncpg).
 Reference: ImplementationPlan.md M1.6.
+
+Phase H1: Replaced NullPool with QueuePool for production. NullPool opens
+a fresh TCP connection for every query (catastrophic under load).
+QueuePool reuses connections across requests, with pool_pre_ping to
+detect dead connections, and a 30s statement timeout to kill runaway
+queries before they exhaust the pool.
 """
 
 import os
@@ -13,6 +19,7 @@ from sqlalchemy.pool import NullPool
 
 _DEFAULT_URL = "postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoenixtrader"
 
+
 def get_database_url() -> str:
     return (
         os.environ.get("API_DATABASE_URL")
@@ -21,13 +28,40 @@ def get_database_url() -> str:
     )
 
 
-def get_engine():
-    """Create async engine. Use NullPool for migrations."""
-    return create_async_engine(
-        get_database_url(),
-        echo=os.environ.get("SQL_ECHO", "").lower() == "true",
-        poolclass=NullPool,
-    )
+def get_engine(*, use_null_pool: bool = False):
+    """Create async engine.
+
+    Args:
+        use_null_pool: If True, use NullPool (one connection per query).
+            Required for Alembic migrations and one-shot scripts.
+            Default False — uses QueuePool sized for production load.
+    """
+    pool_size = int(os.environ.get("DB_POOL_SIZE", "20"))
+    max_overflow = int(os.environ.get("DB_MAX_OVERFLOW", "10"))
+    statement_timeout_ms = int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "30000"))
+
+    kwargs: dict = {
+        "echo": os.environ.get("SQL_ECHO", "").lower() == "true",
+        "connect_args": {
+            "server_settings": {
+                "statement_timeout": str(statement_timeout_ms),
+                "application_name": "phoenix-api",
+            },
+            "command_timeout": 60,
+        },
+    }
+
+    if use_null_pool:
+        kwargs["poolclass"] = NullPool
+    else:
+        # asyncpg uses an internal pool by default; we configure SQLAlchemy's
+        # AsyncAdaptedQueuePool by setting pool_size + max_overflow
+        kwargs["pool_size"] = pool_size
+        kwargs["max_overflow"] = max_overflow
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_recycle"] = 3600  # Recycle connections every hour
+
+    return create_async_engine(get_database_url(), **kwargs)
 
 
 def get_session_factory(engine=None):

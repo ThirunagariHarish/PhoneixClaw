@@ -61,5 +61,27 @@ else
   }
 fi
 
-echo "[entrypoint] Schema ready. Starting uvicorn..."
-exec uvicorn apps.api.src.main:app --host 0.0.0.0 --port 8011 "$@"
+echo "[entrypoint] Schema ready. Starting API server..."
+
+# Phase H9: multi-worker via gunicorn + UvicornWorker.
+# WEB_CONCURRENCY controls how many worker processes spawn.
+# The scheduler uses a Postgres advisory lock so only ONE worker runs cron jobs,
+# regardless of how many workers are alive (see services/scheduler.py).
+WORKERS=${WEB_CONCURRENCY:-4}
+
+if command -v gunicorn >/dev/null 2>&1; then
+  echo "[entrypoint] Starting gunicorn with $WORKERS workers"
+  exec gunicorn apps.api.src.main:app \
+    --workers "$WORKERS" \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8011 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile - \
+    --error-logfile - \
+    "$@"
+else
+  echo "[entrypoint] gunicorn not found, falling back to single uvicorn worker"
+  exec uvicorn apps.api.src.main:app --host 0.0.0.0 --port 8011 "$@"
+fi

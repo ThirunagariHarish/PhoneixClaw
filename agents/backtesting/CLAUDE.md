@@ -21,6 +21,18 @@ Run: `python tools/transform.py --config config.json --output output/transformed
 
 This reads Discord history, parses trade signals, reconstructs partial exits, computes profit labels, and attaches sentiment scores.
 
+### Step 1b: Multi-head label panel (T1)
+Run: `python tools/compute_labels.py --input output/transformed.parquet --output output/transformed.parquet`
+
+Augments each trade row with targets for every downstream intelligence model head:
+- `y_win` (binary, reused from `is_profitable`)
+- `y_pnl_pct` (regression — PnL magnitude)
+- `y_mfe_atr` / `y_mae_atr` — Max Favorable / Adverse Excursion divided by ATR14 (targets for the SL/TP quantile regressors in T3)
+- `y_hold_minutes`, `y_exit_bucket` — exit-timing heads (T4)
+- `y_entry_slip_bps`, `y_fill_60s` — left NaN; populated by the live execution feedback loop (T5/T8)
+
+MFE/MAE are replayed from cached yfinance 5m/1h bars over each trade's actual hold window. Safe to re-run; skips work if labels already exist unless `--force`.
+
 ### Step 2: Enrichment (~200 features)
 Run: `python tools/enrich.py --input output/transformed.parquet --output output/enriched.parquet`
 
