@@ -70,30 +70,32 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # ─── Ollama (AI/LLM) ───────────────────────────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
+  # ─── Ollama (AI/LLM) — DISABLED in production to stay within 8GB VPS RAM ──
+  # Ollama consumes 4 GB alone; with the rest of the stack this exceeds 8 GB.
+  # Re-enable when running on a 16 GB+ host or add: profiles: [ollama]
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 4G
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #   restart: unless-stopped
 
-  phoenix-ollama-init:
-    image: curlimages/curl:latest
-    depends_on:
-      ollama:
-        condition: service_started
-    entrypoint: >
-      sh -c "sleep 30 && curl -sf http://ollama:11434/api/pull -d '{\"name\":\"llama3.2:1b\",\"stream\":false}' || true"
-    restart: "no"
+  # phoenix-ollama-init:
+  #   image: curlimages/curl:latest
+  #   depends_on:
+  #     ollama:
+  #       condition: service_started
+  #   entrypoint: >
+  #     sh -c "sleep 30 && curl -sf http://ollama:11434/api/pull -d '{"name":"llama3.2:1b","stream":false}' || true"
+  #   restart: "no"
 
   # ─── Core Application ──────────────────────────────────────────────────
   phoenix-api:
@@ -106,16 +108,21 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
       - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:11434}
       - OLLAMA_EXPAND_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
       - LLM_GATEWAY_URL=http://phoenix-llm-gateway:8050
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # Phoenix internal API URL — used by Claude Code subprocesses for backtest progress callbacks.
       # Must be the internal service name so Docker-spawned Claude agents can reach the API.
       - PHOENIX_API_URL=http://phoenix-api:8011
-      # Cap gunicorn workers — each may spawn a Node `claude` CLI child;
-      # 2 workers × ~900M peak RSS fits inside the 2G cgroup limit below.
-      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+      # CORS — set CORS_ORIGINS to your production frontend domain in .env
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      # Trading safety guards — keep DRY_RUN_MODE=true until broker integration verified
+      - DRY_RUN_MODE=${DRY_RUN_MODE:-true}
+      - ENABLE_TRADING=${ENABLE_TRADING:-false}
+      # WEB_CONCURRENCY=1: agent gateway uses in-memory dicts (_running_tasks, _session_ids)
+      # that are broken under multiple workers. Use 1 worker until these are moved to Redis.
+      - WEB_CONCURRENCY=1
       # NODE_OPTIONS is set in entrypoint.sh as defense-in-depth (V8 heap cap).
     depends_on:
       postgres:
@@ -177,11 +184,11 @@ services:
       context: .
       dockerfile: services/llm-gateway/Dockerfile
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:11434}
       - OLLAMA_DEFAULT_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
     depends_on:
-      ollama:
-        condition: service_started
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -254,6 +261,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      phoenix-db-migrate:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -297,4 +306,4 @@ services:
 volumes:
   pgdata:
   miniodata:
-  ollama_data:
+  # ollama_data:  # re-enable when Ollama service is re-enabled

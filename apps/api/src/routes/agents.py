@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, desc
 
@@ -114,18 +114,28 @@ class AgentResponse(BaseModel):
 
 @router.get("", response_model=list[AgentResponse])
 async def list_agents(
+    request: Request,
     session: DbSession,
     agent_type: str | None = Query(None, alias="type"),
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List agents with optional filters."""
+    """List agents with optional filters. Non-admins only see their own agents."""
     query = select(Agent).order_by(desc(Agent.created_at))
     if agent_type:
         query = query.where(Agent.type == agent_type)
     if status_filter:
         query = query.where(Agent.status == status_filter)
+    # Enforce per-user isolation unless the caller is an admin
+    caller_id = getattr(request.state, "user_id", None)
+    is_admin = getattr(request.state, "is_admin", False)
+    if caller_id and not is_admin:
+        import uuid as _uuid
+        try:
+            query = query.where(Agent.user_id == _uuid.UUID(caller_id))
+        except (ValueError, AttributeError):
+            pass
     query = query.limit(limit).offset(offset)
     result = await session.execute(query)
     return [AgentResponse.from_model(a) for a in result.scalars().all()]
@@ -157,7 +167,7 @@ async def agent_stats(session: DbSession):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=AgentResponse)
-async def create_agent(payload: AgentCreate, session: DbSession):
+async def create_agent(request: Request, payload: AgentCreate, session: DbSession):
     """Create a new agent and kick off backtesting locally."""
     import secrets
     import re
@@ -178,8 +188,16 @@ async def create_agent(payload: AgentCreate, session: DbSession):
     phoenix_api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
 
     agent_id = uuid.uuid4()
+    caller_id = getattr(request.state, "user_id", None)
+    agent_user_id: uuid.UUID | None = None
+    if caller_id:
+        try:
+            agent_user_id = uuid.UUID(caller_id)
+        except (ValueError, AttributeError):
+            pass
     agent = Agent(
         id=agent_id,
+        user_id=agent_user_id,
         name=payload.name,
         type=agent_type,
         status="BACKTESTING",

@@ -280,10 +280,10 @@ async def _heal_stuck_backtests(log=None) -> None:
             # Find stuck backtests
             result = await db.execute(
                 text("""
-                    SELECT id, agent_id, started_at
+                    SELECT id, agent_id, created_at
                     FROM agent_backtests
                     WHERE status = 'RUNNING'
-                      AND started_at < :cutoff
+                      AND created_at < :cutoff
                 """),
                 {"cutoff": cutoff},
             )
@@ -295,7 +295,7 @@ async def _heal_stuck_backtests(log=None) -> None:
             _log.warning("[backtest_heal] found %d stuck backtest(s) — resetting", len(stuck))
             stuck_agent_ids = set()
             for row in stuck:
-                bt_id, agent_id_str, started_at = row
+                bt_id, agent_id_str, created_at = row
                 await db.execute(
                     text("""
                         UPDATE agent_backtests
@@ -308,8 +308,8 @@ async def _heal_stuck_backtests(log=None) -> None:
                 )
                 stuck_agent_ids.add(str(agent_id_str))
                 _log.warning(
-                    "[backtest_heal] reset backtest %s (agent %s, started %s)",
-                    bt_id, agent_id_str, started_at,
+                    "[backtest_heal] reset backtest %s (agent %s, created %s)",
+                    bt_id, agent_id_str, created_at,
                 )
 
             # Flip parent agents back to CREATED so the user can retry
@@ -343,6 +343,19 @@ async def lifespan(app: FastAPI):
         _log.info("[startup] ANTHROPIC_API_KEY set (len=%d)", len(_key))
     else:
         _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+
+    # Security guard: refuse to start with the default JWT secret
+    _jwt_secret = os.environ.get("JWT_SECRET_KEY", "")
+    _unsafe_defaults = {"change-me-in-production", "changeme", "secret", ""}
+    if _jwt_secret.lower() in _unsafe_defaults:
+        _log.critical(
+            "[startup] UNSAFE JWT_SECRET_KEY detected ('%s'). "
+            "Set a strong random secret in .env before running in production.",
+            _jwt_secret[:20] or "(empty)",
+        )
+    else:
+        _log.info("[startup] JWT_SECRET_KEY configured (len=%d)", len(_jwt_secret))
+
     _log.info("[startup] HOME=%s", os.environ.get("HOME", "(unset)"))
     import shutil as _shutil
     _claude_bin = _shutil.which("claude")
