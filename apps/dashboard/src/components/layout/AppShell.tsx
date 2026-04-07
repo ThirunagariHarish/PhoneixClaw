@@ -51,6 +51,8 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/performance', icon: BarChart3, label: 'Performance' },
       { to: '/backtests', icon: FlaskConical, label: 'Backtests' },
       { to: '/agent-graph', icon: Network, label: 'Agent Graph' },
+      { to: '/morning-briefing', icon: Zap, label: 'Morning Briefing' },
+      { to: '/autoresearch', icon: FlaskConical, label: 'AutoResearch' },
     ],
   },
   {

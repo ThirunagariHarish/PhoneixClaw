@@ -366,10 +366,68 @@ def _build_execution_params(parsed: dict, enriched: dict, prediction: dict,
     }
 
 
+def _log_signal_to_phoenix(decision: str, reason: str | None,
+                            parsed: dict | None, enriched: dict | None,
+                            prediction: dict | None) -> None:
+    """Log this decision to the trade_signals table via Phoenix API.
+
+    Non-blocking: fails silently if API is unreachable.
+    """
+    try:
+        from log_trade_signal import log_signal
+    except ImportError:
+        return
+
+    if not parsed:
+        return
+
+    ticker = parsed.get("ticker")
+    if not ticker:
+        return
+
+    direction = parsed.get("direction")
+
+    # Map internal decision codes → canonical values
+    decision_lower = (decision or "").lower()
+    if decision_lower == "execute":
+        canonical = "executed"
+    elif decision_lower == "reject":
+        canonical = "rejected"
+    elif decision_lower == "watchlist":
+        canonical = "watchlist"
+    elif decision_lower == "paper":
+        canonical = "paper"
+    else:
+        canonical = "rejected"
+
+    # Merge enriched features with the parsed signal context for the snapshot
+    features = {}
+    if enriched:
+        features.update(enriched)
+    if parsed.get("signal_price") is not None:
+        features["signal_price"] = parsed.get("signal_price")
+
+    try:
+        log_signal(
+            ticker=ticker,
+            direction=direction,
+            decision=canonical,
+            predicted_prob=(prediction or {}).get("confidence"),
+            model_confidence=(prediction or {}).get("confidence"),
+            rejection_reason=reason,
+            features=features,
+        )
+    except Exception:
+        pass
+
+
 def _build_decision(decision: str, reason: str | None, steps: list, reasoning: list,
                     parsed: dict | None = None, enriched: dict | None = None,
                     prediction: dict | None = None, risk_result: dict | None = None,
                     ta_result: dict | None = None) -> dict:
+    # Log to Phoenix trade_signals table (non-blocking, silent on failure)
+    _log_signal_to_phoenix(decision, reason, parsed, enriched, prediction)
+
     result = {
         "decision": decision,
         "reason": reason,

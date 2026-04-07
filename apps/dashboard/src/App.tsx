@@ -37,6 +37,8 @@ import AgentDashboardPage from '@/pages/AgentDashboard'
 import LogsPage from '@/pages/Logs'
 import BacktestsPage from '@/pages/Backtests'
 import AgentGraphPage from '@/pages/AgentGraph'
+import MorningBriefingPage from '@/pages/MorningBriefing'
+import AutoResearchPage from '@/pages/AutoResearch'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -117,6 +119,8 @@ function AppRoutes() {
         <Route path="logs" element={<LogsPage />} />
         <Route path="backtests" element={<BacktestsPage />} />
         <Route path="agent-graph" element={<AgentGraphPage />} />
+        <Route path="morning-briefing" element={<MorningBriefingPage />} />
+        <Route path="autoresearch" element={<AutoResearchPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

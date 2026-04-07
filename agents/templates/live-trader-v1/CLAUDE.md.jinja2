@@ -85,7 +85,10 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 3. Report market context to Phoenix
 
 ### Market Hours — Signal Processing
-1. Start the Discord listener: `python tools/discord_listener.py --config config.json`
+1. Consume Discord signals from the centralized Redis stream (the API service runs the
+   single Discord client and publishes to Redis):
+   `python tools/discord_redis_consumer.py --config config.json --output pending_signals.json --max-seconds 30`
+   Run this in a loop. The legacy `tools/discord_listener.py` is no longer used.
 2. When a trade signal is detected (written to `pending_signals.json`):
    a. Parse the signal (ticker, price, direction, option details)
    b. Run `python tools/enrich_single.py --signal pending_signals.json` for 200+ market attributes

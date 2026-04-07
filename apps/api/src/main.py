@@ -49,14 +49,51 @@ from apps.api.src.routes import token_usage as token_usage_routes
 from apps.api.src.routes import system_logs as system_logs_routes
 from apps.api.src.routes import morning_routine as morning_routine_routes
 from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
+from apps.api.src.routes import scheduler_status as scheduler_status_routes
+from apps.api.src.routes import eod_analysis as eod_analysis_routes
+from apps.api.src.routes import trade_signals as trade_signals_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown. DB/Redis connections in M1.3+."""
+    """Startup and shutdown lifecycle."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    # Start scheduler (morning briefing, supervisor, EOD analysis, heartbeat)
+    stop_scheduler_fn = None
+    try:
+        from apps.api.src.services.scheduler import start_scheduler, stop_scheduler
+        start_scheduler()
+        stop_scheduler_fn = stop_scheduler
+    except Exception as exc:
+        _log.exception("Failed to start scheduler: %s", exc)
+
+    # Start message ingestion daemon (Discord listener → channel_messages + Redis)
+    stop_ingestion_fn = None
+    try:
+        from apps.api.src.services.message_ingestion import start_ingestion, stop_ingestion
+        await start_ingestion()
+        stop_ingestion_fn = stop_ingestion
+    except Exception as exc:
+        _log.exception("Failed to start message ingestion: %s", exc)
+
     yield
+
+    # Shutdown in reverse order
+    if stop_ingestion_fn is not None:
+        try:
+            await stop_ingestion_fn()
+        except Exception:
+            _log.exception("Failed to stop ingestion")
+
+    if stop_scheduler_fn is not None:
+        try:
+            await stop_scheduler_fn()
+        except Exception:
+            _log.exception("Failed to stop scheduler")
 
 
 app = FastAPI(
@@ -113,6 +150,9 @@ app.include_router(token_usage_routes.router)
 app.include_router(system_logs_routes.router)
 app.include_router(morning_routine_routes.router)
 app.include_router(whatsapp_webhook_routes.router)
+app.include_router(scheduler_status_routes.router)
+app.include_router(eod_analysis_routes.router)
+app.include_router(trade_signals_routes.router)
 
 
 @app.get("/health")

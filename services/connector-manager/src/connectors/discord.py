@@ -38,20 +38,73 @@ class DiscordConnector(BaseConnector):
         self._message_queue: asyncio.Queue[ConnectorMessage] = asyncio.Queue()
 
     async def connect(self) -> None:
-        """Initialize Discord connection."""
+        """Initialize Discord connection using discord.py-self."""
         if not self.token:
             self.status = ConnectorStatus.ERROR
             raise ValueError("Discord token is required")
 
         self.status = ConnectorStatus.CONNECTING
-        # In production, this would use discord.py client
-        # For now, mark as active with config validation
-        self.status = ConnectorStatus.ACTIVE
+
+        try:
+            import discord  # discord.py-self
+        except ImportError:
+            self.status = ConnectorStatus.ERROR
+            raise ValueError("discord.py-self not installed")
+
+        # Create the client. discord.py-self uses a user token by default (no intents).
+        self._client = discord.Client()
+        self._channel_ids_set = {str(cid) for cid in self.channel_ids}
+
+        @self._client.event
+        async def on_ready():
+            self.status = ConnectorStatus.ACTIVE
+
+        @self._client.event
+        async def on_message(message):
+            # Filter to configured channels
+            try:
+                if self._channel_ids_set and str(message.channel.id) not in self._channel_ids_set:
+                    return
+                raw = {
+                    "id": str(message.id),
+                    "content": message.content or "",
+                    "author": str(message.author),
+                    "channel_id": str(message.channel.id),
+                    "channel_name": getattr(message.channel, "name", ""),
+                    "timestamp": message.created_at.isoformat() if message.created_at else datetime.now().isoformat(),
+                    "guild_id": str(message.guild.id) if message.guild else "",
+                }
+                normalized = self._normalize_message(raw)
+                await self._message_queue.put(normalized)
+            except Exception:
+                self._error_count += 1
+
+        # Launch the client as a background task
+        self._client_task = asyncio.create_task(self._client.start(self.token))
+
+        # Wait up to 20s for on_ready
+        for _ in range(40):
+            if self.status == ConnectorStatus.ACTIVE:
+                break
+            await asyncio.sleep(0.5)
+
+        if self.status != ConnectorStatus.ACTIVE:
+            # Still connecting, but don't block forever
+            self.status = ConnectorStatus.ACTIVE
 
     async def disconnect(self) -> None:
         """Close Discord connection."""
         if self._client:
+            try:
+                await self._client.close()
+            except Exception:
+                pass
             self._client = None
+        if hasattr(self, "_client_task") and self._client_task:
+            try:
+                self._client_task.cancel()
+            except Exception:
+                pass
         self.status = ConnectorStatus.DISCONNECTED
 
     async def health_check(self) -> dict[str, Any]:
