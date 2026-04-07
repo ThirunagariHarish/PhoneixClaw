@@ -1,3 +1,8 @@
+# DEPRECATED -- This file is scheduled for deletion after the next release cycle.
+# It has been superseded by discord_redis_consumer.py.
+# DO NOT invoke this tool from any CLAUDE.md or agent script.
+# See docs/architecture-agents-tab-fix.md ADR-005 for context.
+# Last active reference audit: 2026-04-07
 """Discord channel listener — detects trade signals and queues them for processing.
 
 Priority-based timing:
