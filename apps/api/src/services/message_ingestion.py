@@ -5,7 +5,7 @@ For every active Discord connector:
 2. Calls connector.stream_messages() in a background task
 3. Persists each message to `channel_messages` table
 4. Publishes to Redis stream `stream:channel:{connector_id}` so live
-   analyst agents can subscribe via their discord_listener.py tool
+   analyst agents can subscribe via their discord_redis_consumer.py tool
 
 This is the SINGLE source of truth for Discord messages. Analyst agents
 no longer run their own Discord clients — they consume from Redis.

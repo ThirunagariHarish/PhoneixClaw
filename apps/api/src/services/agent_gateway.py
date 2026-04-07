@@ -229,6 +229,16 @@ class AgentGateway:
     ) -> None:
         """Original backtester body — wrapped by _run_backtester for the semaphore."""
         _chown_to_phoenix(work_dir)
+
+        # Transition backtest from PENDING → RUNNING now that we're actually executing
+        async for db in _get_session():
+            bt = (await db.execute(
+                select(AgentBacktest).where(AgentBacktest.id == backtest_id)
+            )).scalar_one_or_none()
+            if bt and bt.status == "PENDING":
+                bt.status = "RUNNING"
+                await db.commit()
+
         use_claude = _can_use_claude_sdk()
 
         if not use_claude:

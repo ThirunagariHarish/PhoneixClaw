@@ -209,7 +209,7 @@ async def create_agent(payload: AgentCreate, session: DbSession):
     backtest = AgentBacktest(
         id=uuid.uuid4(),
         agent_id=agent_id,
-        status="RUNNING",
+        status="PENDING",
         strategy_template=f"{agent_type}_default",
         start_date=now - timedelta(days=730),
         end_date=now,
@@ -1062,13 +1062,13 @@ async def complete_agent_backtest(agent_id: str, session: DbSession):
 
     bt_result = await session.execute(
         select(AgentBacktest)
-        .where(AgentBacktest.agent_id == agent.id, AgentBacktest.status == "RUNNING")
+        .where(AgentBacktest.agent_id == agent.id, AgentBacktest.status.in_(["PENDING", "RUNNING"]))
         .order_by(desc(AgentBacktest.created_at))
         .limit(1)
     )
     bt = bt_result.scalar_one_or_none()
     if not bt:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No running backtest found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active backtest found")
 
     try:
         from services.backtest_runner.src.pipeline import run_backtest_pipeline

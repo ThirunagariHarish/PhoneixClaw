@@ -330,7 +330,7 @@ def create_live_agent(config_path: str, models_dir: str, output_dir: str):
             "all_models": best_model.get("all_models", []),
         },
         "tools": [
-            "discord_listener", "inference", "enrich_single", "risk_check",
+            "discord_redis_consumer", "inference", "enrich_single", "risk_check",
             "robinhood_mcp", "technical_analysis", "portfolio_tracker",
             "position_monitor", "pre_market_analyzer", "decision_engine",
             "report_to_phoenix",
