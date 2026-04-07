@@ -1559,6 +1559,28 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     work_dir = data_dir / f"backtest_{agent_id}"
     output_dir = work_dir / "output"
 
+    # Resolve versioned output directory from latest.json
+    version_dir = output_dir
+    latest_file = work_dir / "latest.json"
+    if latest_file.exists():
+        import json as _json_latest
+        try:
+            latest_data = _json_latest.loads(latest_file.read_text())
+            vdir = latest_data.get("output_dir", "")
+            if vdir and Path(vdir).exists():
+                version_dir = Path(vdir)
+            else:
+                v_num = latest_data.get("version")
+                if v_num and (output_dir / f"v{v_num}").exists():
+                    version_dir = output_dir / f"v{v_num}"
+        except Exception:
+            pass
+    if version_dir == output_dir:
+        for vd in sorted(output_dir.glob("v*"), reverse=True):
+            if vd.is_dir():
+                version_dir = vd
+                break
+
     def _find_file(*candidates: Path) -> Path | None:
         for c in candidates:
             if c.exists():
@@ -1568,6 +1590,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     feature_names: list[str] = metrics.get("feature_names", [])
     if not feature_names:
         fn_file = _find_file(
+            version_dir / "feature_names.json",
+            version_dir / "preprocessed" / "feature_names.json",
             work_dir / "feature_names.json",
             work_dir / "preprocessed" / "feature_names.json",
             output_dir / "feature_names.json",
@@ -1578,6 +1602,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
             feature_names = _json.loads(fn_file.read_text())
         if not feature_names:
             meta_file = _find_file(
+                version_dir / "meta.json",
+                version_dir / "preprocessed" / "meta.json",
                 work_dir / "preprocessed" / "meta.json",
                 work_dir / "meta.json",
                 output_dir / "meta.json",
@@ -1593,7 +1619,7 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     all_model_results: list[dict] = metrics.get("all_model_results", [])
     if not all_model_results:
         import json as _json
-        for mdir in [work_dir / "models", output_dir / "models"]:
+        for mdir in [version_dir / "models", work_dir / "models", output_dir / "models"]:
             if mdir.exists():
                 for rf in sorted(mdir.glob("*_results.json")):
                     try:
@@ -1606,6 +1632,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     preprocessing_summary: dict = metrics.get("preprocessing_summary", {})
     if not preprocessing_summary:
         ps_file = _find_file(
+            version_dir / "preprocessed" / "preprocessing_summary.json",
+            version_dir / "preprocessing_summary.json",
             work_dir / "preprocessed" / "preprocessing_summary.json",
             work_dir / "preprocessing_summary.json",
             output_dir / "preprocessed" / "preprocessing_summary.json",
@@ -1619,6 +1647,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
                 pass
         if not preprocessing_summary:
             meta_file = _find_file(
+                version_dir / "meta.json",
+                version_dir / "preprocessed" / "meta.json",
                 work_dir / "preprocessed" / "meta.json",
                 work_dir / "meta.json",
                 output_dir / "meta.json",
@@ -1640,6 +1670,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     explainability: dict = metrics.get("explainability", {})
     if not explainability:
         expl_file = _find_file(
+            version_dir / "models" / "explainability.json",
+            version_dir / "explainability.json",
             work_dir / "explainability.json",
             work_dir / "models" / "explainability.json",
             output_dir / "models" / "explainability.json",
@@ -1655,6 +1687,8 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
     patterns: list = metrics.get("patterns", [])
     if not patterns:
         pat_file = _find_file(
+            version_dir / "models" / "patterns.json",
+            version_dir / "patterns.json",
             work_dir / "patterns.json",
             work_dir / "models" / "patterns.json",
             output_dir / "models" / "patterns.json",
@@ -1670,6 +1704,7 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
 
     if not patterns:
         enriched_for_patterns = _find_file(
+            version_dir / "enriched.parquet",
             work_dir / "enriched.parquet",
             output_dir / "enriched.parquet",
         )
@@ -1686,7 +1721,7 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
                 pass
 
     downloadable_files: list[dict] = []
-    for scan_root in [work_dir, output_dir]:
+    for scan_root in [version_dir, work_dir, output_dir]:
         if scan_root.exists():
             for fpath in sorted(scan_root.rglob("*")):
                 if fpath.is_file() and fpath.stat().st_size > 0:
@@ -1709,6 +1744,7 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
 
     if computed_total_trades == 0 or computed_win_rate is None:
         enriched_file = _find_file(
+            version_dir / "enriched.parquet",
             work_dir / "enriched.parquet",
             output_dir / "enriched.parquet",
         )
@@ -1733,6 +1769,57 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
             computed_sharpe = best.get("sharpe_ratio", 0.0)
         if computed_drawdown is None:
             computed_drawdown = best.get("max_drawdown_pct", 0.0)
+
+    # Persist computed metrics back to DB so the /backtest endpoint also returns them
+    needs_update = False
+    if (bt.total_trades or 0) == 0 and computed_total_trades > 0:
+        bt.total_trades = computed_total_trades
+        needs_update = True
+    if bt.win_rate is None and computed_win_rate is not None:
+        bt.win_rate = computed_win_rate
+        needs_update = True
+    if bt.total_return is None and computed_total_return is not None:
+        bt.total_return = computed_total_return
+        needs_update = True
+    if bt.sharpe_ratio is None and computed_sharpe is not None:
+        bt.sharpe_ratio = computed_sharpe
+        needs_update = True
+    if bt.max_drawdown is None and computed_drawdown is not None:
+        bt.max_drawdown = computed_drawdown
+        needs_update = True
+    if not bt.metrics and (all_model_results or feature_names or patterns):
+        bt.metrics = {
+            "all_model_results": all_model_results,
+            "feature_names": feature_names,
+            "patterns": patterns,
+            "preprocessing_summary": preprocessing_summary,
+            "explainability": explainability,
+            "best_model": all_model_results[0].get("model_name") if all_model_results else None,
+            "accuracy": all_model_results[0].get("accuracy") if all_model_results else None,
+            "total_trades": computed_total_trades,
+            "win_rate": computed_win_rate,
+        }
+        needs_update = True
+
+    if needs_update:
+        try:
+            from shared.db.models.agent import Agent as _Agent
+            agent_result = await session.execute(
+                select(_Agent).where(_Agent.id == uuid.UUID(agent_id))
+            )
+            agent_row = agent_result.scalar_one_or_none()
+            if agent_row:
+                if bt.total_trades:
+                    agent_row.total_trades = bt.total_trades
+                if bt.win_rate is not None:
+                    agent_row.win_rate = bt.win_rate
+                if all_model_results:
+                    best_m = max(all_model_results, key=lambda r: r.get("auc_roc", r.get("accuracy", 0)) or 0)
+                    agent_row.model_type = best_m.get("model_name")
+                    agent_row.model_accuracy = best_m.get("accuracy")
+            await session.commit()
+        except Exception:
+            pass
 
     return {
         "backtest_id": str(bt.id),

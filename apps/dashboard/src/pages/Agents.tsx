@@ -3,7 +3,7 @@
  * Cards for agent overview, 4-step creation wizard, detail panel.
  * M1.11.
  */
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '@/lib/api'
@@ -258,6 +258,25 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
     enabled: agent.status === 'BACKTEST_COMPLETE',
     staleTime: 60_000,
   })
+
+  // Trigger artifacts endpoint to backfill DB when backtest metrics are empty
+  const backtestMissing = backtest && backtest.win_rate == null && backtest.total_return == null
+  const { data: artifacts } = useQuery<Record<string, unknown>>({
+    queryKey: ['agent-backtest-artifacts-backfill', agent.id],
+    queryFn: async () => {
+      try { return (await api.get(`/api/v2/agents/${agent.id}/backtest-artifacts`)).data } catch { return null }
+    },
+    enabled: agent.status === 'BACKTEST_COMPLETE' && !!backtestMissing,
+    staleTime: 120_000,
+  })
+
+  const queryClient = useQueryClient()
+  // If artifacts returned data, invalidate the backtest query to pick up persisted values
+  React.useEffect(() => {
+    if (artifacts && (artifacts.total_trades as number) > 0) {
+      queryClient.invalidateQueries({ queryKey: ['agent-backtest', agent.id] })
+    }
+  }, [artifacts, agent.id, queryClient])
 
   const isLocked = agent.status === 'BACKTESTING'
 

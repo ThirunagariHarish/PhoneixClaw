@@ -256,6 +256,85 @@ async def _update_progress(
     await session.commit()
 
 
+def _resolve_version_dir(work_dir: Path, output_dir: Path) -> Path:
+    """Find the latest versioned output directory (e.g. output/v2/)."""
+    latest_file = work_dir / "latest.json"
+    if latest_file.exists():
+        try:
+            data = json.loads(latest_file.read_text())
+            vdir = data.get("output_dir", "")
+            if vdir and Path(vdir).exists():
+                return Path(vdir)
+            v_num = data.get("version")
+            if v_num and (output_dir / f"v{v_num}").exists():
+                return output_dir / f"v{v_num}"
+        except Exception:
+            pass
+    for vd in sorted(output_dir.glob("v*"), reverse=True):
+        if vd.is_dir():
+            return vd
+    return output_dir
+
+
+def _backfill_metrics_from_files(version_dir: Path, work_dir: Path, output_dir: Path, m: dict) -> dict:
+    """Read model results from disk and compute summary metrics."""
+    m = dict(m)
+
+    # Collect model results
+    all_results = []
+    for mdir in [version_dir / "models", work_dir / "models", output_dir / "models"]:
+        if mdir.exists():
+            for rf in sorted(mdir.glob("*_results.json")):
+                try:
+                    all_results.append(json.loads(rf.read_text()))
+                except Exception:
+                    pass
+            if all_results:
+                break
+
+    if all_results:
+        m["all_model_results"] = all_results
+        best = max(all_results, key=lambda r: r.get("auc_roc", r.get("accuracy", 0)) or 0)
+        m["best_model"] = best.get("model_name", "unknown")
+        m["accuracy"] = best.get("accuracy", 0)
+
+    # Read enriched parquet for trade stats
+    for enriched_path in [version_dir / "enriched.parquet", work_dir / "enriched.parquet", output_dir / "enriched.parquet"]:
+        if enriched_path.exists():
+            try:
+                import pandas as pd
+                edf = pd.read_parquet(enriched_path)
+                m["total_trades"] = len(edf)
+                if "win" in edf.columns:
+                    m["win_rate"] = round(float(edf["win"].mean()), 4)
+                elif "pnl_pct" in edf.columns:
+                    m["win_rate"] = round(float((edf["pnl_pct"] > 0).mean()), 4)
+                if "pnl_pct" in edf.columns:
+                    m["total_return"] = round(float(edf["pnl_pct"].sum()), 2)
+            except Exception:
+                pass
+            break
+
+    # Read meta.json for feature info
+    for meta_path in [version_dir / "meta.json", work_dir / "meta.json", output_dir / "meta.json"]:
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                m["feature_names"] = meta.get("feature_columns", [])
+                m.setdefault("preprocessing_summary", {
+                    "total_rows": meta.get("total_rows", 0),
+                    "train_rows": meta.get("train_rows", 0),
+                    "val_rows": meta.get("val_rows", 0),
+                    "test_rows": meta.get("test_rows", 0),
+                    "feature_count": meta.get("num_features", len(meta.get("feature_columns", []))),
+                })
+            except Exception:
+                pass
+            break
+
+    return m
+
+
 async def _mark_completed(session, agent_id: uuid.UUID, backtest_id: uuid.UUID) -> None:
     now = datetime.now(timezone.utc)
 
@@ -268,6 +347,15 @@ async def _mark_completed(session, agent_id: uuid.UUID, backtest_id: uuid.UUID) 
         bt.completed_at = now
 
         m = bt.metrics or {}
+
+        # Backfill metrics from output files when DB metrics are empty
+        if not m.get("total_trades") and not m.get("win_rate"):
+            work_dir = REPO_ROOT / "data" / f"backtest_{agent_id}"
+            output_dir = work_dir / "output"
+            version_dir = _resolve_version_dir(work_dir, output_dir)
+            m = _backfill_metrics_from_files(version_dir, work_dir, output_dir, m)
+            bt.metrics = m
+
         bt.total_trades = m.get("total_trades") or m.get("trades") or 0
         bt.win_rate = m.get("win_rate")
         bt.sharpe_ratio = m.get("sharpe_ratio")
