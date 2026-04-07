@@ -39,12 +39,38 @@ async def trigger_morning_briefing(
             logger.exception("Morning briefing agent spawn failed")
             return {"status": "error", "mode": "agent", "error": str(exc)[:500]}
 
-    # python fallback
+    # python fallback — defensive import so a PYTHONPATH misconfig in prod
+    # returns a clear error string instead of a stack trace
     try:
-        from services.orchestrator.src.morning_routine import morning_routine
+        try:
+            from services.orchestrator.src.morning_routine import morning_routine
+        except ImportError as imp_exc:
+            # Fallback for when PYTHONPATH doesn't include the repo root
+            import sys
+            from pathlib import Path
+            repo_root = Path(__file__).resolve().parents[4]
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+                logger.warning("[morning] injected repo_root=%s into sys.path", repo_root)
+            try:
+                from services.orchestrator.src.morning_routine import morning_routine
+            except ImportError:
+                logger.exception("[morning] import still failing after sys.path fix")
+                return {
+                    "status": "error", "mode": "python",
+                    "error": f"import_failed: {imp_exc}",
+                    "started_at": None, "agents_eligible": 0,
+                    "agents_woken": 0, "agents_triggered": 0,
+                    "briefing_sent": False,
+                }
+
         result = await morning_routine.execute()
         result["mode"] = "python"
         return result
     except Exception as exc:
         logger.exception("Morning routine failed")
-        return {"status": "error", "mode": "python", "error": str(exc)[:500]}
+        return {
+            "status": "error", "mode": "python", "error": str(exc)[:500],
+            "started_at": None, "agents_eligible": 0,
+            "agents_woken": 0, "agents_triggered": 0, "briefing_sent": False,
+        }

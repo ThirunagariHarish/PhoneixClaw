@@ -77,6 +77,11 @@ export default function MorningBriefingPage() {
       // Use python mode so we get synchronous counts back immediately
       const result = await agentsApi.triggerMorningBriefing('python')
       setBriefing(result)
+      // Surface any backend-reported error into the UI banner
+      if (result?.status === 'error' || (result as any)?.error) {
+        const errMsg = (result as any)?.error || 'Unknown backend error'
+        setError(`Backend error: ${errMsg}`)
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || 'Failed to trigger morning briefing')
     } finally {

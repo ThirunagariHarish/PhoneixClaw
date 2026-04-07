@@ -6,7 +6,17 @@ Reference: ImplementationPlan.md Section 2, Section 5 M1.1, M1.3.
 """
 
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Belt-and-braces PYTHONPATH fix: make sure the repo root is importable so
+# `from services.orchestrator...` works even if gunicorn was launched without
+# PYTHONPATH=/app. Without this, the API returns "No module named 'services'"
+# at runtime when routes try to import sibling packages.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

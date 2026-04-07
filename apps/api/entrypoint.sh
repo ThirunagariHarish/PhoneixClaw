@@ -8,7 +8,13 @@
 
 set -e
 
+# CRITICAL: export PYTHONPATH globally so gunicorn workers can import
+# sibling packages like `services.orchestrator.src.morning_routine`.
+# Without this, the API returns "No module named 'services'" at runtime.
+export PYTHONPATH="${PYTHONPATH:-/app}"
+
 echo "[entrypoint] Phoenix API starting..."
+echo "[entrypoint] PYTHONPATH=${PYTHONPATH}"
 echo "[entrypoint] DATABASE_URL=${DATABASE_URL:-not set}"
 
 # Wait for Postgres to be reachable (max 60s)
