@@ -25,10 +25,10 @@ import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
   Plug, MessageSquare, Globe, Radio, Activity, Newspaper, Webhook, TrendingUp, Landmark, BarChart3,
   CheckSquare, Square as SquareIcon, Hash, Loader2, Eye, ArrowUpRight, ArrowDownRight, Minus,
-  FlaskConical, Zap, Shield,
+  FlaskConical, Zap, Shield, AlertCircle,
 } from 'lucide-react'
 
-interface AgentData {
+export interface AgentData {
   id: string
   name: string
   type: string
@@ -46,6 +46,7 @@ interface AgentData {
   win_rate?: number
   last_signal_at?: string
   last_trade_at?: string
+  error_message?: string | null
 }
 
 interface AgentStats {
@@ -84,6 +85,7 @@ const STATUS_CONFIG: Record<string, { color: string; bgColor: string; borderColo
   RUNNING:           { color: 'text-green-600 dark:text-green-400',   bgColor: 'bg-green-500/10',    borderColor: 'border-green-500/30',   label: 'Live Trading' },
   PAUSED:            { color: 'text-zinc-500 dark:text-zinc-400',     bgColor: 'bg-zinc-500/10',     borderColor: 'border-zinc-500/30',    label: 'Paused' },
   CREATED:           { color: 'text-muted-foreground',                bgColor: 'bg-muted/50',        borderColor: 'border-border',         label: 'Created' },
+  ERROR:             { color: 'text-red-600 dark:text-red-400',       bgColor: 'bg-red-500/10',      borderColor: 'border-red-500/30',     label: 'Error' },
 }
 
 function getStatusConfig(status: string) {
@@ -296,6 +298,31 @@ const DEFAULT_FORM: WizardFormData = {
   source_config: {},
 }
 
+/**
+ * Pure function extracted from the wizard canAdvance() guard.
+ * Exported for unit testing (see tests/unit/Agents.canAdvance.test.tsx).
+ */
+export function computeCanAdvance(
+  step: number,
+  name: string,
+  type: string,
+  connector_ids: string[],
+  selected_channel: SelectedChannel | null,
+): boolean {
+  switch (step) {
+    case 0: {
+      if (name.trim().length === 0) return false
+      if (type === 'trading') {
+        return connector_ids.length === 1 && selected_channel !== null
+      }
+      return true
+    }
+    case 1: return true
+    case 2: return true
+    default: return false
+  }
+}
+
 function MiniEquityCurve({ data }: { data: Array<{ equity: number }> }) {
   if (!data || data.length < 2) return null
   const vals = data.map((d) => d.equity)
@@ -348,7 +375,7 @@ function MetricPill({ label, value, trend }: { label: string; value: string; tre
   )
 }
 
-function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote }: {
+export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote }: {
   agent: AgentData
   onSelect: () => void
   onPause: () => void
@@ -439,7 +466,22 @@ function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onP
           {sc.label}
         </div>
 
-        {/* BACKTESTING: spinner */}
+        {/* ERROR: error message banner */}
+        {agent.status === 'ERROR' && agent.error_message && (
+          <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
+            <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className="text-[11px] text-red-600 dark:text-red-400 break-words">{agent.error_message}</p>
+              <button
+                disabled
+                title="Contact your administrator to retry the backtest"
+                className="text-[10px] font-medium text-red-500/60 cursor-not-allowed underline-offset-2"
+              >
+                Retry (contact admin)
+              </button>
+            </div>
+          </div>
+        )}
         {agent.status === 'BACKTESTING' && <BacktestingSpinner />}
 
         {/* BACKTEST_COMPLETE: rich metrics preview */}
@@ -1311,20 +1353,8 @@ export default function AgentsPage() {
     onSuccess: invalidateAgents,
   })
 
-  const canAdvance = (step: number): boolean => {
-    switch (step) {
-      case 0: {
-        if (form.name.trim().length === 0) return false
-        if (form.type === 'trading') {
-          return form.connector_ids.length === 1 && form.selected_channel !== null
-        }
-        return form.connector_ids.length > 0
-      }
-      case 1: return true
-      case 2: return true
-      default: return false
-    }
-  }
+  const canAdvance = (step: number): boolean =>
+    computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel)
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1506,6 +1536,18 @@ export default function AgentsPage() {
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
                 <BacktestingSpinner />
                 <p className="text-xs text-muted-foreground mt-2">Backtest will complete automatically. Agent will be ready for review once done.</p>
+              </div>
+            )}
+
+            {selected.status === 'ERROR' && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+                <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-red-600 dark:text-red-400">Agent Error</p>
+                  <p className="text-xs text-red-600/80 dark:text-red-400/80 break-words">
+                    {selected.error_message ?? 'An unknown error occurred. Contact your administrator.'}
+                  </p>
+                </div>
               </div>
             )}
 
