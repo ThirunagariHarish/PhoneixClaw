@@ -5,6 +5,40 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2025-07-14 — Skills / Tools Tab
+
+New read-only "Skills" tab on each live agent's detail page, surfacing the
+agent's full tool and skill manifest without any backend changes.
+1 new file, 1 modified file, zero TypeScript errors. Cortex APPROVED,
+Quill 18/19 green (1 P3 informational deviation, acknowledged).
+
+### Added
+
+- **Skills / Tools tab** (`/agents/:id` → 10th tab "Skills") powered by
+  `AgentSkillsTab.tsx` — displays tools, skills, MCP servers, and
+  character/identity info sourced from the existing
+  `GET /api/v2/agents/:id/manifest` endpoint. No new API routes or DB
+  migrations required.
+  - **Tools panel** — name, description, category badge, active/inactive
+    indicator for each tool in the agent manifest.
+  - **Skills panel** — name, description, category badge for each skill.
+  - **MCP Servers panel** — inferred from agent config; Robinhood MCP with
+    Paper/Live badge.
+  - **Character & Identity panel** — agent character type, analyst, channel,
+    active mode.
+- `Wrench` icon imported from `lucide-react` for the Skills tab trigger.
+
+### Changed
+
+- `AgentDashboard.tsx` (`LiveSection`): tab grid expanded from `grid-cols-9`
+  to `grid-cols-10`; `TabsTrigger` + `TabsContent` added for `value="skills"`.
+
+### Known limitations
+
+- Manifest data is read-only; editing tools/skills from the UI is deferred.
+- `AgentSkillsTab` query key uses codebase convention (minor deviation from
+  spec typo, P3 informational — no user-facing impact).
+
 ## [0.3.0] — 2026-04-08 — Agents Tab Bug-Fix + Pipeline Hardening
 
 Bug-fix and hardening release resolving P0 signal pipeline failures, agent

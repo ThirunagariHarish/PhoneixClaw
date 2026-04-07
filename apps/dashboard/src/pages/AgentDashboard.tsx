@@ -26,7 +26,7 @@ import {
   Shield, TrendingUp, List, ScrollText, BookOpen,
   ChevronDown, ChevronUp, Check, X,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
-  FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock,
+  FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -35,6 +35,7 @@ import { MetricsCards } from '@/components/MetricsCards'
 import { AgentMessagesTab } from '@/components/AgentMessagesTab'
 import { AgentScheduleTab } from '@/components/AgentScheduleTab'
 import { AgentTerminal } from '@/components/AgentTerminal'
+import { AgentSkillsTab } from '@/components/AgentSkillsTab'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
@@ -1372,7 +1373,7 @@ function RuntimeTab({ id }: { id: string }) {
 function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
   return (
     <Tabs defaultValue="portfolio">
-      <TabsList className="grid w-full grid-cols-9 max-w-4xl">
+      <TabsList className="grid w-full grid-cols-10 max-w-4xl">
         <TabsTrigger value="portfolio" className="text-xs"><TrendingUp className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Portfolio</TabsTrigger>
         <TabsTrigger value="trades" className="text-xs"><List className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Trades</TabsTrigger>
         <TabsTrigger value="chat" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Chat</TabsTrigger>
@@ -1382,6 +1383,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
         <TabsTrigger value="schedule" className="text-xs"><Clock className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Schedule</TabsTrigger>
         <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
         <TabsTrigger value="runtime" className="text-xs"><Terminal className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Runtime</TabsTrigger>
+        <TabsTrigger value="skills" className="text-xs"><Wrench className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Skills</TabsTrigger>
       </TabsList>
 
       <TabsContent value="portfolio" className="mt-4">
@@ -1407,6 +1409,9 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
           <RuntimeTab id={id} />
           <AgentTerminal agentId={id} />
         </div>
+      </TabsContent>
+      <TabsContent value="skills" className="mt-4">
+        <AgentSkillsTab agentId={id} agent={agent} />
       </TabsContent>
     </Tabs>
   )
