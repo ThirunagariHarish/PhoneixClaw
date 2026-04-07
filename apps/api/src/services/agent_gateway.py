@@ -245,8 +245,24 @@ class AgentGateway:
             await _syslog(db, agent_id, backtest_id, "claude_agent_start", 2,
                           "Starting Claude Code agent for backtesting")
 
+        # F2: pre-flight checks — fail fast if the CLI is broken or the key is missing
+        preflight_err = _claude_sdk_preflight()
+        if preflight_err:
+            logger.error("[backtester] preflight failed for agent %s: %s", agent_id, preflight_err)
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="error",
+                                           error=f"preflight_failed: {preflight_err[:200]}")
+                await _syslog(db, agent_id, backtest_id, "sdk_preflight_fail", 3,
+                              f"Claude SDK preflight failed: {preflight_err[:300]}")
+                await _mark_backtest_failed(db, agent_id, backtest_id,
+                                             "claude_agent", f"preflight: {preflight_err[:300]}")
+            return
+
         max_attempts = 3
         last_error = ""
+
+        # F1: hard timeout on the full query() generator
+        BACKTEST_QUERY_TIMEOUT = int(os.environ.get("BACKTEST_QUERY_TIMEOUT_SECONDS", "1800"))
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -259,25 +275,63 @@ class AgentGateway:
                     allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
                 )
 
+                # F1: announce BEFORE entering the loop so we can tell "never
+                # called" from "called but hanging"
+                async for db in _get_session():
+                    await _syslog(db, agent_id, backtest_id, "sdk_query_begin", 2,
+                                  f"Calling claude_agent_sdk.query() "
+                                  f"(attempt {attempt}/{max_attempts}, "
+                                  f"timeout={BACKTEST_QUERY_TIMEOUT}s)")
+
                 last_text = ""
                 hit_error_message = False
-                async for message in query(prompt=prompt, options=options):
-                    if hasattr(message, "content") and isinstance(message.content, list):
-                        for block in message.content:
-                            if hasattr(block, "text"):
-                                last_text = block.text[-500:]
-                    if hasattr(message, "session_id"):
-                        sid = message.session_id
-                        _session_ids[str(agent_id)] = sid
-                        async for db in _get_session():
-                            await self._update_session(db, session_row_id, session_id=sid)
-                    if hasattr(message, "is_error") and getattr(message, "is_error", False):
-                        hit_error_message = True
-                        async for db in _get_session():
-                            await self._update_session(db, session_row_id, status="error",
-                                                       error=f"Claude agent error: {last_text[:500]}")
-                            await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", last_text[:500])
-                        break
+                first_message_seen = False
+
+                async def _consume_query() -> bool:
+                    """Inner coroutine so we can wrap the whole generator in wait_for."""
+                    nonlocal last_text, hit_error_message, first_message_seen
+                    async for message in query(prompt=prompt, options=options):
+                        if not first_message_seen:
+                            first_message_seen = True
+                            async for db in _get_session():
+                                await _syslog(db, agent_id, backtest_id,
+                                              "sdk_first_message", 1,
+                                              f"First SDK message received: {type(message).__name__}")
+                        if hasattr(message, "content") and isinstance(message.content, list):
+                            for block in message.content:
+                                if hasattr(block, "text"):
+                                    last_text = block.text[-500:]
+                        if hasattr(message, "session_id"):
+                            sid = message.session_id
+                            _session_ids[str(agent_id)] = sid
+                            async for db in _get_session():
+                                await self._update_session(db, session_row_id, session_id=sid)
+                        if hasattr(message, "is_error") and getattr(message, "is_error", False):
+                            hit_error_message = True
+                            async for db in _get_session():
+                                await self._update_session(db, session_row_id, status="error",
+                                                           error=f"Claude agent error: {last_text[:500]}")
+                                await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", last_text[:500])
+                            break
+                    return hit_error_message
+
+                try:
+                    hit_error_message = await asyncio.wait_for(
+                        _consume_query(), timeout=BACKTEST_QUERY_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.error("[backtester] SDK query hung past %ds for agent %s",
+                                 BACKTEST_QUERY_TIMEOUT, agent_id)
+                    async for db in _get_session():
+                        await self._update_session(db, session_row_id, status="error",
+                                                   error=f"sdk_timeout_after_{BACKTEST_QUERY_TIMEOUT}s")
+                        await _syslog(db, agent_id, backtest_id, "sdk_timeout", 3,
+                                      f"Claude SDK query hung >{BACKTEST_QUERY_TIMEOUT}s without completing "
+                                      f"(first_message_seen={first_message_seen}). "
+                                      f"Check /api/v2/admin/claude-sdk-check for diagnostics.")
+                        await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent",
+                                                     f"sdk_timeout_{BACKTEST_QUERY_TIMEOUT}s")
+                    return
 
                 if hit_error_message:
                     return
@@ -1624,6 +1678,53 @@ def _sdk_unavailable_reason() -> str:
     if not shutil.which("claude"):
         return "claude CLI not found in PATH"
     return "unknown"
+
+
+def _claude_sdk_preflight() -> str | None:
+    """F2: fail-fast checks before entering the Claude SDK query loop.
+
+    Returns None if everything looks good, or a string error message
+    describing what's wrong. Runs quickly (<5s) with subprocess timeouts.
+    """
+    import subprocess as _sp
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "ANTHROPIC_API_KEY not set in container env"
+
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return "claude CLI binary not found in PATH"
+
+    try:
+        proc = _sp.run(
+            [claude_bin, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode != 0:
+            return f"claude --version exited {proc.returncode}: {proc.stderr[:200]}"
+    except _sp.TimeoutExpired:
+        return "claude --version hung >5s (binary may be broken)"
+    except Exception as exc:
+        return f"claude --version spawn failed: {exc}"
+
+    # Verify the SDK import still works (caught earlier but belt-and-braces)
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except Exception as exc:
+        return f"claude_agent_sdk import failed: {exc}"
+
+    # Verify ~/.claude is writable
+    home = os.environ.get("HOME", "/root")
+    claude_dir = Path(home) / ".claude"
+    try:
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        test_file = claude_dir / ".phoenix_preflight"
+        test_file.write_text("ok")
+        test_file.unlink()
+    except Exception as exc:
+        return f"{claude_dir} not writable: {exc}"
+
+    return None
 
 
 def _chown_to_phoenix(path: Path) -> None:

@@ -133,28 +133,16 @@ def _release_scheduler_lock() -> None:
 async def _job_morning_briefing() -> None:
     """Spawn the morning-briefing agent at 9:00 ET.
 
-    Primary path: spawn the first-class agent template that runs the 5-phase
-    briefing flow as a Claude Code session. If that spawn fails for any reason
-    (agent SDK unavailable, budget exceeded, template missing), fall back to
-    the legacy Python orchestrator so the briefing still goes out.
+    First-class Claude Code agent only. No Python fallback — if the spawn
+    fails, the failure is loud and the user gets notified via the dashboard.
     """
     try:
         from apps.api.src.services.agent_gateway import gateway
         logger.info("[scheduler] Morning briefing — spawning agent...")
         task_key = await gateway.create_morning_briefing_agent()
         logger.info("[scheduler] morning_briefing_agent spawned: %s", task_key)
-        return
-    except Exception as exc:
-        logger.warning("[scheduler] Agent spawn failed (%s), falling back to Python", exc)
-
-    try:
-        from services.orchestrator.src.morning_routine import morning_routine
-        logger.info("[scheduler] Morning briefing (fallback Python)...")
-        result = await morning_routine.execute()
-        logger.info("[scheduler] Morning briefing done: eligible=%s woken=%s",
-                    result.get("agents_eligible"), result.get("agents_woken"))
     except Exception:
-        logger.exception("[scheduler] Morning briefing failed")
+        logger.exception("[scheduler] Morning briefing agent spawn failed")
 
 
 async def _job_supervisor_run() -> None:

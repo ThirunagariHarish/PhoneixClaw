@@ -43,10 +43,10 @@ export const agentsApi = {
   graph: () => api.get(`/api/v2/agents/graph`).then((r) => r.data),
 
   // ── Scheduler / system ──
-  // Force python mode so the response has full counts; the 9am cron still
-  // uses the agent path via gateway.create_morning_briefing_agent().
-  triggerMorningBriefing: (mode: 'agent' | 'python' = 'python') =>
-    api.post(`/api/v2/agents/morning-briefing?mode=${mode}`).then((r) => r.data),
+  // Always spawns the first-class Claude Code morning-briefing agent.
+  // Actual briefing body appears in Briefing History (polled separately).
+  triggerMorningBriefing: () =>
+    api.post(`/api/v2/agents/morning-briefing`).then((r) => r.data),
 
   triggerSupervisor: () =>
     api.post(`/api/v2/agents/supervisor/run`).then((r) => r.data),

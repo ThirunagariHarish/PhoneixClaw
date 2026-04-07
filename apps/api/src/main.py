@@ -67,6 +67,7 @@ from apps.api.src.routes import budget as budget_routes
 from apps.api.src.routes import agents_sprint as agents_sprint_routes
 from apps.api.src.routes import agent_terminal as agent_terminal_routes
 from apps.api.src.routes import briefing_history as briefing_history_routes
+from apps.api.src.routes import claude_sdk_check as claude_sdk_check_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -205,6 +206,17 @@ async def lifespan(app: FastAPI):
     import logging as _logging
     _log = _logging.getLogger(__name__)
 
+    # Environment sanity check — log Claude SDK preconditions on every boot
+    _key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if _key:
+        _log.info("[startup] ANTHROPIC_API_KEY set (len=%d)", len(_key))
+    else:
+        _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+    _log.info("[startup] HOME=%s", os.environ.get("HOME", "(unset)"))
+    import shutil as _shutil
+    _claude_bin = _shutil.which("claude")
+    _log.info("[startup] claude CLI: %s", _claude_bin or "(NOT FOUND)")
+
     # CRITICAL: self-heal any schema drift from failed migrations BEFORE
     # scheduler/ingestion start (they both query tables that may be missing).
     try:
@@ -326,6 +338,7 @@ app.include_router(agents_sprint_routes.router)
 app.include_router(agents_sprint_routes.portfolio_router)
 app.include_router(agent_terminal_routes.router)
 app.include_router(briefing_history_routes.router)
+app.include_router(claude_sdk_check_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

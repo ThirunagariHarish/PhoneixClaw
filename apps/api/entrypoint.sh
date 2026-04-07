@@ -17,6 +17,27 @@ echo "[entrypoint] Phoenix API starting..."
 echo "[entrypoint] PYTHONPATH=${PYTHONPATH}"
 echo "[entrypoint] DATABASE_URL=${DATABASE_URL:-not set}"
 
+# Claude Code CLI config dir — prevents the SDK subprocess from hanging on
+# first-run setup when $HOME/.claude doesn't exist or isn't writable.
+CLAUDE_HOME="${HOME:-/root}/.claude"
+mkdir -p "$CLAUDE_HOME" 2>/dev/null || true
+chmod 755 "$CLAUDE_HOME" 2>/dev/null || true
+echo "[entrypoint] Claude CLI config dir: $CLAUDE_HOME"
+
+# Sanity-check that the claude CLI binary is reachable
+if command -v claude >/dev/null 2>&1; then
+  echo "[entrypoint] claude CLI: $(claude --version 2>&1 | head -1)"
+else
+  echo "[entrypoint] WARNING: claude CLI not found in PATH"
+fi
+
+# Sanity-check ANTHROPIC_API_KEY is present (only log length, not value)
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "[entrypoint] ANTHROPIC_API_KEY: set (len=${#ANTHROPIC_API_KEY})"
+else
+  echo "[entrypoint] WARNING: ANTHROPIC_API_KEY is not set — Claude SDK will hang"
+fi
+
 # Wait for Postgres to be reachable (max 60s)
 if [ -n "${DATABASE_URL:-}" ]; then
   echo "[entrypoint] Waiting for database..."

@@ -16,25 +16,11 @@ interface SchedulerStatus {
   reason?: string
 }
 
-interface BriefingResult {
-  started_at?: string
-  agents_eligible?: number
-  agents_woken?: number
-  agents_triggered?: number
-  agents_started?: number
-  briefing_sent?: boolean
-  briefing_preview?: string
-  agent_summaries?: Array<{
-    agent_id: string
-    name: string
-    channel: string
-    character: string
-    task_id?: string
-  }>
-  errors?: string[]
-  agents_skipped?: Array<{ id: string; name: string; status: string }>
-  message?: string
-  mode?: string
+interface SpawnResult {
+  status?: string
+  task_key?: string
+  detail?: string
+  error?: string
 }
 
 interface BriefingHistoryRow {
@@ -51,7 +37,7 @@ interface BriefingHistoryRow {
 export default function MorningBriefingPage() {
   const navigate = useNavigate()
   const [status, setStatus] = useState<SchedulerStatus | null>(null)
-  const [briefing, setBriefing] = useState<BriefingResult | null>(null)
+  const [spawn, setSpawn] = useState<SpawnResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,9 +45,8 @@ export default function MorningBriefingPage() {
     agentsApi.schedulerStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
 
-  // Poll the briefing_history table for the latest morning briefing so the
-  // "Latest Run" card always reflects reality (even when the 9am cron fires
-  // the agent path and there's no synchronous response to read).
+  // Poll the briefing_history table for the latest morning briefing — this is
+  // the single source of truth for what the agent produced (manual or cron).
   const { data: historyData } = useQuery<{ briefings: BriefingHistoryRow[] }>({
     queryKey: ['briefing-history', 'morning'],
     queryFn: async () =>
@@ -73,17 +58,15 @@ export default function MorningBriefingPage() {
   const runManually = async () => {
     setLoading(true)
     setError(null)
+    setSpawn(null)
     try {
-      // Use python mode so we get synchronous counts back immediately
-      const result = await agentsApi.triggerMorningBriefing('python')
-      setBriefing(result)
-      // Surface any backend-reported error into the UI banner
-      if (result?.status === 'error' || (result as any)?.error) {
-        const errMsg = (result as any)?.error || 'Unknown backend error'
-        setError(`Backend error: ${errMsg}`)
+      const result = await agentsApi.triggerMorningBriefing()
+      setSpawn(result)
+      if (result?.status === 'error' || result?.error) {
+        setError(`Backend error: ${result?.error || 'unknown'}`)
       }
     } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || 'Failed to trigger morning briefing')
+      setError(e?.response?.data?.detail || e?.message || 'Failed to spawn morning briefing agent')
     } finally {
       setLoading(false)
     }
@@ -197,82 +180,19 @@ export default function MorningBriefingPage() {
         </div>
       )}
 
-      {/* Latest briefing result from last manual run (python mode synchronous) */}
-      {briefing && (
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <h2 className="text-lg font-semibold mb-2">
-            Last Manual Run ({briefing.mode === 'python' ? 'python' : 'agent'} mode)
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-4 text-sm">
-            <div>
-              <div className="text-gray-400">Started</div>
-              <div>
-                {briefing.started_at ? new Date(briefing.started_at).toLocaleTimeString() : '-'}
-              </div>
-            </div>
-            <div>
-              <div className="text-gray-400">Eligible</div>
-              <div className="text-xl font-bold">{briefing.agents_eligible ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-gray-400">Woken</div>
-              <div className="text-xl font-bold">{briefing.agents_woken ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-gray-400">Triggered</div>
-              <div className="text-xl font-bold">{briefing.agents_triggered ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-gray-400">Dispatched</div>
-              <div>{briefing.briefing_sent ? '✓ Yes' : '✗ No'}</div>
-            </div>
+      {/* Spawn confirmation card (brief toast-like info while agent runs) */}
+      {spawn && spawn.status === 'spawned' && (
+        <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-4 text-sm">
+          <div className="font-semibold text-blue-300 mb-1">
+            ✓ Morning briefing agent spawned
           </div>
-
-          {briefing.agents_skipped && briefing.agents_skipped.length > 0 && (
-            <div className="mb-4 text-xs bg-amber-900/20 border border-amber-700/40 rounded p-2">
-              <span className="text-amber-400 font-medium">
-                {briefing.agents_skipped.length} skipped:
-              </span>{' '}
-              {briefing.agents_skipped.map((a) => `${a.name}(${a.status})`).join(', ')}
-            </div>
-          )}
-
-          {briefing.agent_summaries && briefing.agent_summaries.length > 0 && (
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold mb-2">Per-agent</h3>
-              <div className="space-y-1 text-sm">
-                {briefing.agent_summaries.map((a) => (
-                  <div key={a.agent_id} className="flex justify-between">
-                    <span>
-                      <span className="font-medium">{a.name}</span>{' '}
-                      <span className="text-gray-400">({a.channel})</span>
-                    </span>
-                    <span className="text-gray-400 text-xs">{a.character}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {briefing.briefing_preview && (
-            <div>
-              <h3 className="text-sm font-semibold mb-2">Briefing Text</h3>
-              <pre className="text-xs bg-gray-900 rounded p-3 whitespace-pre-wrap">
-                {briefing.briefing_preview}
-              </pre>
-            </div>
-          )}
-
-          {briefing.errors && briefing.errors.length > 0 && (
-            <div className="mt-4">
-              <h3 className="text-sm font-semibold text-red-400 mb-2">Errors</h3>
-              <ul className="text-xs text-red-300 list-disc ml-5">
-                {briefing.errors.map((e, i) => (
-                  <li key={i}>{e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <div className="text-blue-200/80">{spawn.detail || 'Running…'}</div>
+          <div className="text-xs text-gray-400 mt-2 font-mono">
+            task_key: {spawn.task_key}
+          </div>
+          <div className="text-xs text-gray-400 mt-1">
+            The briefing body will appear above once the agent completes (auto-refresh every 5s).
+          </div>
         </div>
       )}
     </div>

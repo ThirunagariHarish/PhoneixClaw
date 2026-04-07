@@ -1001,6 +1001,53 @@ async def get_agent_backtest(agent_id: str, session: DbSession):
     }
 
 
+@router.post("/{agent_id}/kill-backtest")
+async def kill_backtest(agent_id: str, session: DbSession):
+    """F4: Cancel a stuck backtest task and mark its row as FAILED.
+
+    Finds any asyncio task for this agent in the agent_gateway's _running_tasks
+    map, cancels it, and updates the latest RUNNING backtest row to FAILED.
+    """
+    from apps.api.src.services.agent_gateway import _running_tasks
+    from shared.db.models.agent import AgentBacktest
+
+    agent_uuid = uuid.UUID(agent_id)
+    cancelled_keys: list[str] = []
+
+    for key in list(_running_tasks.keys()):
+        if key.startswith(agent_id) or str(agent_uuid) in key:
+            task = _running_tasks.get(key)
+            if task and not task.done():
+                task.cancel()
+                cancelled_keys.append(key)
+
+    # Mark any running backtest row for this agent as FAILED
+    bt_result = await session.execute(
+        select(AgentBacktest)
+        .where(AgentBacktest.agent_id == agent_uuid,
+               AgentBacktest.status.in_(["RUNNING", "PENDING"]))
+    )
+    killed_rows = 0
+    for bt in bt_result.scalars().all():
+        bt.status = "FAILED"
+        bt.error_message = "killed_by_user via /kill-backtest"
+        killed_rows += 1
+
+    # Reset agent status if it was stuck in BACKTESTING
+    agent_result = await session.execute(select(Agent).where(Agent.id == agent_uuid))
+    agent = agent_result.scalar_one_or_none()
+    if agent and agent.status == "BACKTESTING":
+        agent.status = "CREATED"
+
+    await session.commit()
+
+    return {
+        "killed": True,
+        "cancelled_tasks": cancelled_keys,
+        "failed_backtests": killed_rows,
+    }
+
+
 @router.post("/{agent_id}/backtest-complete")
 async def complete_agent_backtest(agent_id: str, session: DbSession):
     """Run the backtest pipeline for an agent."""
