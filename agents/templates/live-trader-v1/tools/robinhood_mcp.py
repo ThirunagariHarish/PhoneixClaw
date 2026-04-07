@@ -174,6 +174,53 @@ def _retry(fn, *args, **kwargs):
     raise last_exc  # type: ignore[misc]
 
 
+def _load_credentials() -> tuple[str, str, str]:
+    """Load Robinhood credentials from env vars, then config.json in CWD.
+
+    Order of precedence:
+      1. Env vars: RH_USERNAME, RH_PASSWORD, RH_TOTP_SECRET
+      2. ROBINHOOD_CONFIG env var pointing to a JSON file
+      3. ./config.json in current working directory (the agent's work_dir)
+         Looks under the `robinhood_credentials` key first (Phoenix spawn format),
+         then the `robinhood` key (local dev format).
+    """
+    username = os.environ.get("RH_USERNAME", "")
+    password = os.environ.get("RH_PASSWORD", "")
+    totp_secret = os.environ.get("RH_TOTP_SECRET", "")
+
+    if username and password:
+        return username, password, totp_secret
+
+    # Try ROBINHOOD_CONFIG first, then ./config.json
+    config_candidates = []
+    if os.environ.get("ROBINHOOD_CONFIG"):
+        config_candidates.append(os.environ["ROBINHOOD_CONFIG"])
+    config_candidates.append("config.json")
+
+    for cfg_path in config_candidates:
+        try:
+            from pathlib import Path as _Path
+            p = _Path(cfg_path)
+            if not p.exists():
+                continue
+            import json as _json
+            with open(p) as f:
+                cfg = _json.load(f)
+            # Phoenix writes robinhood_credentials; local dev uses robinhood
+            rh_cfg = cfg.get("robinhood_credentials") or cfg.get("robinhood") or {}
+            if rh_cfg:
+                username = username or rh_cfg.get("username", "")
+                password = password or rh_cfg.get("password", "")
+                totp_secret = totp_secret or rh_cfg.get("totp_secret", "")
+                if username and password:
+                    log.info("Loaded Robinhood credentials from %s", cfg_path)
+                    return username, password, totp_secret
+        except Exception as exc:
+            log.warning("Failed to read %s: %s", cfg_path, exc)
+
+    return username, password, totp_secret
+
+
 def _ensure_login() -> None:
     global _rh_logged_in
     if PAPER_MODE:
@@ -183,25 +230,13 @@ def _ensure_login() -> None:
         return
     rh = _get_rh()
 
-    username = os.environ.get("RH_USERNAME", "")
-    password = os.environ.get("RH_PASSWORD", "")
-    totp_secret = os.environ.get("RH_TOTP_SECRET", "")
-
-    config_path = os.environ.get("ROBINHOOD_CONFIG", "")
-    if config_path and not username:
-        try:
-            import json as _json
-            with open(config_path) as f:
-                cfg = _json.load(f)
-            rh_cfg = cfg.get("robinhood", {})
-            username = rh_cfg.get("username", username)
-            password = rh_cfg.get("password", password)
-            totp_secret = rh_cfg.get("totp_secret", totp_secret)
-        except Exception as exc:
-            log.warning("Failed to read Robinhood config from %s: %s", config_path, exc)
+    username, password, totp_secret = _load_credentials()
 
     if not username or not password:
-        raise ValueError("RH_USERNAME and RH_PASSWORD env vars (or ROBINHOOD_CONFIG) are required")
+        raise ValueError(
+            "Robinhood credentials missing. Provide RH_USERNAME and RH_PASSWORD env vars, "
+            "or a config.json with `robinhood_credentials` in the current working directory."
+        )
     mfa_code = None
     if totp_secret:
         import pyotp

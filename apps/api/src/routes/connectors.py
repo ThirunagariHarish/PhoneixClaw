@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from apps.api.src.deps import DbSession
 from shared.db.models.connector import Connector, ConnectorAgent
@@ -170,14 +171,96 @@ async def create_connector(payload: ConnectorCreate, request: Request, session: 
         type=payload.type,
         config=payload.config,
         credentials_encrypted=encrypted_creds,
-        tags=payload.tags,
+        tags=payload.tags or [],
         user_id=user_id,
         status="disconnected",
     )
-    session.add(connector)
-    await session.commit()
-    await session.refresh(connector)
+    try:
+        session.add(connector)
+        await session.commit()
+        await session.refresh(connector)
+    except IntegrityError as exc:
+        await session.rollback()
+        orig = str(getattr(exc, "orig", exc))[:400]
+        logger.error("Connector IntegrityError: %s", orig)
+        # Detect the common cause — missing `tags` column from migration 014
+        if "tags" in orig.lower() or "column" in orig.lower():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Database schema out of date. A required column is missing. "
+                    "Run `alembic -c shared/db/migrations/alembic.ini upgrade head` "
+                    f"inside the API container. Details: {orig}"
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Database constraint violation: {orig}",
+        )
     return ConnectorResponse.from_model(connector)
+
+
+@router.post("/{connector_id}/test")
+async def test_connector(connector_id: str, session: DbSession):
+    """Test a connector's credentials (currently supports robinhood).
+
+    Returns {success: bool, ...details} so the dashboard can verify credentials
+    at connector-creation time rather than at agent-spawn time.
+    """
+    result = await session.execute(
+        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    if connector.type != "robinhood":
+        return {
+            "success": False,
+            "error": f"Test not yet implemented for connector type '{connector.type}'",
+        }
+
+    try:
+        from shared.crypto.credentials import decrypt_credentials
+        creds = decrypt_credentials(connector.credentials_encrypted) if connector.credentials_encrypted else {}
+    except Exception as exc:
+        return {"success": False, "error": f"Failed to decrypt credentials: {exc}"}
+
+    username = creds.get("username", "")
+    password = creds.get("password", "")
+    totp_secret = creds.get("totp_secret", "")
+
+    if not username or not password:
+        return {"success": False, "error": "Missing username or password in credentials"}
+
+    # Attempt login via robin_stocks (best-effort; may require TOTP)
+    try:
+        import robin_stocks.robinhood as rh  # type: ignore
+        import pyotp  # type: ignore
+        totp_code = pyotp.TOTP(totp_secret).now() if totp_secret else None
+        rh.login(username, password, mfa_code=totp_code, store_session=False)
+        try:
+            account = rh.profiles.load_account_profile()
+            buying_power = float(account.get("buying_power", 0))
+        except Exception:
+            buying_power = None
+        try:
+            rh.logout()
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "username": username,
+            "has_totp": bool(totp_secret),
+            "buying_power": buying_power,
+        }
+    except ImportError as exc:
+        return {
+            "success": False,
+            "error": f"robin_stocks or pyotp not installed in this environment: {exc}",
+        }
+    except Exception as exc:
+        return {"success": False, "error": f"Login failed: {str(exc)[:300]}"}
 
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)

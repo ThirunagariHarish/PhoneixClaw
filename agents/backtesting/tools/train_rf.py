@@ -45,15 +45,21 @@ def main():
         "recall": round(float(recall_score(y_test, y_pred, zero_division=0)), 4),
         "f1_score": round(float(f1_score(y_test, y_pred, zero_division=0)), 4),
         "auc_roc": round(float(roc_auc_score(y_test, y_prob)), 4) if len(set(y_test)) > 1 else 0.5,
-        "profit_factor": 1.0,
-        "sharpe_ratio": 0.0,
-        "max_drawdown_pct": 0.0,
         "artifact_path": str(output_dir / "rf_model.pkl"),
         "feature_importances": dict(zip(
             meta.get("feature_columns", []),
             model.feature_importances_.tolist()
         )),
     }
+
+    try:
+        from compute_trading_metrics import compute_trading_metrics
+        results.update(compute_trading_metrics(data_dir, y_prob, threshold=0.55))
+    except Exception as exc:
+        print(f"  [train_rf] trading metrics computation failed: {exc}")
+        results.setdefault("sharpe_ratio", 0.0)
+        results.setdefault("max_drawdown_pct", 0.0)
+        results.setdefault("profit_factor", 1.0)
 
     joblib.dump(model, output_dir / "rf_model.pkl")
     with open(output_dir / "rf_results.json", "w") as f:

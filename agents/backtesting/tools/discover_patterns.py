@@ -118,7 +118,7 @@ def _extract_tree_rules(df: pd.DataFrame, feature_cols: list[str], baseline_wr: 
         return []
 
     tree = DecisionTreeClassifier(
-        max_depth=4, min_samples_leaf=max(8, len(X) // 50),
+        max_depth=5, min_samples_leaf=max(6, len(X) // 80),
         class_weight="balanced", random_state=42,
     )
     tree.fit(X, y)
@@ -133,9 +133,9 @@ def _extract_tree_rules(df: pd.DataFrame, feature_cols: list[str], baseline_wr: 
             n_positive = int(tree_.value[node_id][0][1])
             wr = n_positive / n_samples if n_samples > 0 else 0
 
-            if n_samples >= 8 and len(conditions) >= 2:
+            if n_samples >= 6 and len(conditions) >= 1:
                 edge = wr - baseline_wr
-                if abs(edge) >= 0.05:
+                if abs(edge) >= 0.03:
                     cond_strs = [_fmt_condition(f, t, d) for f, t, d in conditions]
                     name = _generate_strategy_name(cond_strs, wr)
                     patterns.append({
@@ -163,14 +163,14 @@ def _extract_tree_rules(df: pd.DataFrame, feature_cols: list[str], baseline_wr: 
 def _mine_grouped_strategies(df: pd.DataFrame, baseline_wr: float) -> list[dict]:
     """Mine profitable patterns from grouped feature combinations."""
     patterns = []
-    min_bucket = max(8, len(df) // 50)
+    min_bucket = max(6, len(df) // 80)
 
     def _add_pattern(name, strategy_type, condition, subset):
         if len(subset) < min_bucket:
             return
         wr = float(subset["is_profitable"].mean())
         edge = wr - baseline_wr
-        if abs(edge) < 0.05:
+        if abs(edge) < 0.03:
             return
         avg_ret = float(subset["pnl_pct"].mean()) if "pnl_pct" in subset.columns else 0
         patterns.append({
@@ -279,6 +279,29 @@ def _mine_grouped_strategies(df: pd.DataFrame, baseline_wr: float) -> list[dict]
     return patterns
 
 
+def _load_llm_patterns() -> list[dict]:
+    """Load LLM-discovered patterns produced by llm_pattern_discovery.py.
+
+    Looks for `llm_discovered_patterns.json` in the current working directory
+    (the backtest output dir). Returns [] if not present or unreadable.
+    """
+    candidates = [
+        Path("llm_discovered_patterns.json"),
+        Path("output") / "llm_discovered_patterns.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                data = json.loads(p.read_text())
+                if isinstance(data, list):
+                    for item in data:
+                        item.setdefault("source", "llm_discovery")
+                    return data
+            except Exception:
+                continue
+    return []
+
+
 def discover_patterns(df: pd.DataFrame, n_patterns: int = 60) -> list[dict]:
     """Mine trading strategies using decision-tree rules and grouped aggregations."""
     if len(df) < 10 or "is_profitable" not in df.columns:
@@ -301,25 +324,59 @@ def discover_patterns(df: pd.DataFrame, n_patterns: int = 60) -> list[dict]:
     }]
 
     # Phase 1: Decision-tree rule extraction
-    exclude = {"trade_id", "is_profitable", "entry_message_raw", "exit_messages_raw",
-               "entry_time", "exit_time_first", "exit_time_final", "weighted_exit_price",
-               "entry_price", "exit_pct_25", "exit_pct_50", "exit_pct_75", "exit_pct_100",
-               "pnl_pct", "hold_duration_hours", "analyst", "channel", "ticker", "side",
-               "option_type", "expiry", "signal_type"}
-    feature_cols = [c for c in df.columns if c not in exclude and pd.api.types.is_numeric_dtype(df[c])]
+    # Exclude target + identity fields + LEAKY meta-features (analyst/ticker rolling stats).
+    # These meta-features describe the analyst's own past behavior, not market conditions,
+    # so they produce circular/useless patterns like "ticker_trade_count > 362 = win".
+    # They're still useful as INPUT to the live agent's inference, just not for pattern mining.
+    exclude = {
+        # Target + identity
+        "trade_id", "is_profitable", "entry_message_raw", "exit_messages_raw",
+        "entry_time", "exit_time_first", "exit_time_final", "weighted_exit_price",
+        "entry_price", "exit_pct_25", "exit_pct_50", "exit_pct_75", "exit_pct_100",
+        "pnl_pct", "hold_duration_hours", "analyst", "channel", "ticker", "side",
+        "option_type", "expiry", "signal_type",
+        # Leaky analyst-level meta-features
+        "analyst_win_rate_10", "analyst_win_rate_20",
+        "analyst_avg_pnl_10", "analyst_win_streak",
+        # Leaky ticker-level meta-features
+        "ticker_win_rate_5", "ticker_win_rate_10", "ticker_avg_pnl_5",
+        "ticker_trade_count", "streak_same_ticker",
+        "days_since_last_trade", "days_since_last_win",
+    }
+    # Also filter any column starting with known leaky prefixes (future-proof)
+    leaky_prefixes = ("analyst_", "ticker_win_rate", "ticker_avg_pnl",
+                      "ticker_trade_count", "streak_", "days_since_last")
+    feature_cols = [
+        c for c in df.columns
+        if c not in exclude
+        and not any(c.startswith(p) for p in leaky_prefixes)
+        and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
     if len(feature_cols) >= 5:
         tree_rules = _extract_tree_rules(df, feature_cols, baseline_wr)
+        for r in tree_rules:
+            r.setdefault("source", "decision_tree")
         patterns.extend(tree_rules)
 
     # Phase 2: Grouped strategy mining
     grouped = _mine_grouped_strategies(df, baseline_wr)
+    for g in grouped:
+        g.setdefault("source", "grouped_aggregation")
     patterns.extend(grouped)
 
-    # Score: edge weighted by log(sample_size)
+    # Phase 3: Merge LLM-discovered patterns if llm_pattern_discovery.py ran earlier
+    # (produced by the Claude-based discovery step in the pipeline).
+    patterns.extend(_load_llm_patterns())
+
+    # Score: edge weighted by log(sample_size), with +10% boost for LLM patterns
+    # (they're more interpretable and less likely to overfit specific thresholds).
     for p in patterns:
         edge = abs(p.get("edge_vs_baseline", 0))
-        p["score"] = edge * np.log1p(p["sample_size"])
+        score = edge * np.log1p(p["sample_size"])
+        if p.get("source") == "llm_discovery":
+            score *= 1.10
+        p["score"] = score
 
     # Deduplicate by name, keep highest score
     seen = {}

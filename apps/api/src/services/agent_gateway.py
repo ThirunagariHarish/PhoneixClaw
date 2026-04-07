@@ -386,13 +386,19 @@ class AgentGateway:
             ))
             await db.commit()
 
+        # Prefix with `export HOME=<work_dir>` so robin_stocks writes its session
+        # pickle into the persistent .tokens/ dir, surviving container restarts.
+        home_export = f"First, run: `export HOME={work_dir}` so any Robinhood session gets cached in the agent's working directory (.tokens/ subdir). "
+
         prompt = (
+            home_export +
             "You are now live. Read CLAUDE.md for your full instructions. "
             "Start the operation loop: run pre-market analysis, start the Discord listener, "
             "and begin monitoring for trade signals. Report all activity to Phoenix."
         )
         if resume:
             prompt = (
+                home_export +
                 "Resume your live trading session. Check your current positions in positions.json, "
                 "restart the Discord listener, and continue monitoring. "
                 "Report your resumed status to Phoenix."
@@ -537,10 +543,30 @@ class AgentGateway:
             "knowledge": manifest.get("knowledge", {}),
         }
 
-        # Inject Robinhood credentials if available
-        rh_creds = config_data.get("robinhood_credentials")
+        # Inject Robinhood credentials under BOTH keys for compatibility:
+        # - `robinhood_credentials`: Phoenix spawn format (what robinhood_mcp.py reads)
+        # - `robinhood`: local dev / alternate format
+        rh_creds = config_data.get("robinhood_credentials") or {}
         if rh_creds:
+            agent_config["robinhood_credentials"] = rh_creds
             agent_config["robinhood"] = rh_creds
+
+        # Force paper mode if credentials missing for a live agent
+        # (safety: prevents the agent from failing hard at trade time)
+        current_mode = agent_config.get("current_mode") or "conservative"
+        if current_mode not in ("paper",) and not (rh_creds.get("username") and rh_creds.get("password")):
+            logger.warning(
+                "Agent %s spawning without Robinhood credentials — forcing PAPER mode",
+                agent.id,
+            )
+            agent_config["current_mode"] = "paper"
+            agent_config["forced_paper_reason"] = "missing_robinhood_credentials"
+
+        # Persistent .tokens/ dir for robin_stocks session pickle
+        # Setting HOME=work_dir makes robin_stocks write ~/.tokens/robinhood.pickle here,
+        # so the session survives container restarts (only first login needs TOTP).
+        (work_dir / ".tokens").mkdir(exist_ok=True)
+        agent_config["_agent_home"] = str(work_dir)
 
         (work_dir / "config.json").write_text(json.dumps(agent_config, indent=2, default=str))
         self._render_claude_md(agent, manifest, work_dir)
@@ -1401,9 +1427,15 @@ Output directory: {output_dir}
 ### Evaluation and Analysis
 8. **Evaluate**: `python {tools_dir}/evaluate_models.py --models-dir {output_dir}/models --output {output_dir}/models/best_model.json`
 9. **Explainability**: `python {tools_dir}/build_explainability.py --model {output_dir}/models --data {output_dir} --output {output_dir}/explainability.json`
-10. **Pattern Discovery**: `python {tools_dir}/discover_patterns.py --data {output_dir} --output {output_dir}/patterns.json`
-11. **LLM Strategy Analysis**: `python {tools_dir}/analyze_patterns_llm.py --data {output_dir} --output {output_dir}/llm_patterns.json --config {config_path}`
-12. **Create Live Agent**: `python {tools_dir}/create_live_agent.py --config {config_path} --models {output_dir}/models --output {output_dir}/live_agent/`
+10. **LLM Pattern Discovery** (NEW): `python {tools_dir}/llm_pattern_discovery.py --data {output_dir} --explainability {output_dir}/explainability.json --output {output_dir}/llm_discovered_patterns.json`
+    - Two-stage: Sonnet generates 15 candidates from 80 sampled trades, Opus refines top candidates.
+    - Each candidate is validated against the full dataset before being kept.
+    - Leaky meta-features (analyst_*, ticker_win_rate, etc.) are forbidden in the prompt.
+11. **Pattern Discovery**: `python {tools_dir}/discover_patterns.py --data {output_dir} --output {output_dir}/patterns.json`
+    - Merges decision-tree rules + grouped aggregations + LLM patterns from step 10.
+    - IMPORTANT: run step 10 FIRST so discover_patterns.py can pick up llm_discovered_patterns.json.
+12. **LLM Strategy Analysis**: `python {tools_dir}/analyze_patterns_llm.py --data {output_dir} --output {output_dir}/llm_patterns.json --config {config_path}`
+13. **Create Live Agent**: `python {tools_dir}/create_live_agent.py --config {config_path} --models {output_dir}/models --output {output_dir}/live_agent/`
 
 ## Progress Reporting
 

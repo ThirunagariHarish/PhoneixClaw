@@ -189,11 +189,18 @@ def main():
         "recall": round(float(recall_score(y_test, y_pred, zero_division=0)), 4),
         "f1_score": round(float(f1_score(y_test, y_pred, zero_division=0)), 4),
         "auc_roc": round(float(roc_auc_score(y_test, y_prob)), 4) if len(set(y_test)) > 1 else 0.5,
-        "profit_factor": 1.0,
-        "sharpe_ratio": 0.0,
-        "max_drawdown_pct": 0.0,
         "artifact_path": str(output_dir / "tft_model.pt"),
     }
+    try:
+        from compute_trading_metrics import compute_trading_metrics
+        results.update(compute_trading_metrics(
+            data_dir, np.asarray(y_prob).reshape(-1), threshold=0.55
+        ))
+    except Exception as exc:
+        print(f"  [train_tft] trading metrics computation failed: {exc}")
+        results.setdefault("sharpe_ratio", 0.0)
+        results.setdefault("max_drawdown_pct", 0.0)
+        results.setdefault("profit_factor", 1.0)
     with open(output_dir / "tft_results.json", "w") as f:
         json.dump(results, f, indent=2)
     print(f"TFT: accuracy={results['accuracy']} auc={results['auc_roc']} f1={results['f1_score']}")

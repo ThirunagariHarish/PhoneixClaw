@@ -257,11 +257,23 @@ def main():
         "recall": round(report.get("1", {}).get("recall", 0), 4),
         "f1": round(report.get("1", {}).get("f1-score", 0), 4),
         "val_loss": round(best_val_loss, 4),
-        "profit_factor": 1.0,
-        "sharpe_ratio": 0.0,
-        "max_drawdown_pct": 0.0,
         "model_artifact": "tcn_model.pt",
     }
+    try:
+        from compute_trading_metrics import compute_trading_metrics
+        if len(test_proba) > 0:
+            results.update(compute_trading_metrics(
+                data_dir, np.asarray(test_proba).reshape(-1), threshold=0.55
+            ))
+        else:
+            results.setdefault("sharpe_ratio", 0.0)
+            results.setdefault("max_drawdown_pct", 0.0)
+            results.setdefault("profit_factor", 1.0)
+    except Exception as exc:
+        print(f"  [train_tcn] trading metrics computation failed: {exc}")
+        results.setdefault("sharpe_ratio", 0.0)
+        results.setdefault("max_drawdown_pct", 0.0)
+        results.setdefault("profit_factor", 1.0)
 
     with open(output_dir / "tcn_results.json", "w") as f:
         json.dump(results, f, indent=2)

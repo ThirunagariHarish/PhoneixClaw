@@ -71,10 +71,19 @@ Run: `python tools/evaluate_models.py --models-dir output/models/ --output outpu
 ### Step 7: Explainability
 Run: `python tools/build_explainability.py --model output/models/ --data output/ --output output/models/explainability.json`
 
-### Step 8: Pattern Discovery
+### Step 7b: LLM Pattern Discovery (NEW — runs BEFORE discover_patterns)
+Run: `python tools/llm_pattern_discovery.py --data output/ --explainability output/models/explainability.json --output output/llm_discovered_patterns.json`
+
+Two-stage LLM pipeline:
+- **Stage 1 (Sonnet):** samples 40 winners + 40 losers, sends to Claude with feature importance, gets 15 candidate pandas query strings
+- **Stage 2 (Opus):** refines the validated candidates with better names and rationales
+
+Each candidate is validated against the FULL dataset (sample_size >= 10, |edge| >= 3%). Leaky meta-features (analyst_*, ticker_win_rate, etc.) are explicitly forbidden in the prompt.
+
+### Step 8: Pattern Discovery (merges LLM + statistical)
 Run: `python tools/discover_patterns.py --data output/ --output output/models/patterns.json`
 
-Uses decision-tree rule extraction and grouped aggregation to discover multi-condition trading strategies (e.g. "RSI > 60 + Friday + Power Hour = 85% WR"). Generates strategy-style names and scores by edge over baseline.
+Uses decision-tree rule extraction + grouped aggregation AND merges the `llm_discovered_patterns.json` from Step 7b. Each pattern is tagged with its source (`decision_tree`, `grouped_aggregation`, or `llm_discovery`). LLM patterns get a 10% score boost for being more interpretable.
 
 ### Step 8b: LLM Strategy Analysis
 Run: `python tools/analyze_patterns_llm.py --data output/ --output output/llm_patterns.json --config config.json`

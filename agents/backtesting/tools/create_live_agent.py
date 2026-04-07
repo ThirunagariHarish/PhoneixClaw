@@ -198,6 +198,7 @@ def _build_final_metrics(
     total_trades = 0
     win_rate = analyst_profile.get("win_rate", 0)
     total_return = 0.0
+    enriched_df = None
     try:
         import pandas as pd
         enriched_path = _find(
@@ -205,12 +206,14 @@ def _build_final_metrics(
             output_dir / "enriched.parquet",
         )
         if enriched_path:
-            df = pd.read_parquet(enriched_path)
-            total_trades = len(df)
-            if "is_profitable" in df.columns:
-                win_rate = float(df["is_profitable"].mean())
-            if "pnl_pct" in df.columns:
-                total_return = round(float(df["pnl_pct"].sum()), 4)
+            enriched_df = pd.read_parquet(enriched_path)
+            total_trades = len(enriched_df)
+            if "is_profitable" in enriched_df.columns:
+                win_rate = float(enriched_df["is_profitable"].mean())
+            if "pnl_pct" in enriched_df.columns:
+                # Compounded return: (1+r1)(1+r2)...(1+rn) - 1 (vs naive sum)
+                returns = enriched_df["pnl_pct"].fillna(0) / 100.0
+                total_return = round(float(((1 + returns).prod() - 1) * 100.0), 4)
     except Exception:
         pass
 
@@ -223,6 +226,23 @@ def _build_final_metrics(
             sharpe_ratio = r.get("sharpe_ratio", 0.0)
             max_drawdown = r.get("max_drawdown_pct", 0.0)
             break
+
+    # Fallback: compute from equity curve of all trades if model-level values are zero
+    if (sharpe_ratio == 0.0 or max_drawdown == 0.0) and enriched_df is not None:
+        try:
+            import numpy as _np
+            returns = (enriched_df["pnl_pct"].fillna(0) / 100.0).values
+            if len(returns) > 1 and returns.std() > 0:
+                if sharpe_ratio == 0.0:
+                    # Annualized assuming ~252 trading days
+                    sharpe_ratio = float(returns.mean() / returns.std() * (252 ** 0.5))
+                equity = (1 + returns).cumprod()
+                peak = _np.maximum.accumulate(equity)
+                drawdown = (equity - peak) / peak
+                if max_drawdown == 0.0:
+                    max_drawdown = float(drawdown.min() * 100.0)
+        except Exception:
+            pass
 
     return {
         "channel": channel_name,
