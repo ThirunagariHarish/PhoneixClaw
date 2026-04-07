@@ -8,7 +8,7 @@ import os
 import sys
 
 
-CURRENT_MIGRATION = "013"
+CURRENT_MIGRATION = "09b0dd176f5d"
 
 V3_CLEANUP_SQL = [
     "ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_instance_id_fkey",
@@ -45,6 +45,34 @@ V4_ADD_COLUMNS_SQL = [
     "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS data JSONB NOT NULL DEFAULT '{}'",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_improvements JSONB NOT NULL DEFAULT '{}'",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_research_at TIMESTAMP WITH TIME ZONE",
+]
+
+# Migrations 014-09b0dd176f5d: columns added after initial V4 backfill
+V5_ADD_COLUMNS_SQL = [
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS source VARCHAR(50) NOT NULL DEFAULT 'manual'",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS channel_name VARCHAR(100)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS analyst_name VARCHAR(100)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_type VARCHAR(50)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_accuracy DOUBLE PRECISION",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS daily_pnl DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS total_pnl DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS total_trades INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS win_rate DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_signal_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_trade_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS manifest JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS current_mode VARCHAR(30) NOT NULL DEFAULT 'conservative'",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS rules_version INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS error_message TEXT",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS runtime_status VARCHAR(16)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS daily_token_budget_usd DOUBLE PRECISION",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS monthly_token_budget_usd DOUBLE PRECISION",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS tokens_used_today_usd DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS tokens_used_month_usd DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS budget_reset_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS auto_paused_reason VARCHAR(100)",
+    "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS trading_mode VARCHAR(20) NOT NULL DEFAULT 'live'",
 ]
 
 
@@ -108,6 +136,13 @@ async def create_all_tables():
             except Exception as e:
                 print(f"  (skipped: {e})")
         print("V4 new columns ensured (migrations 008-013).")
+
+        for sql in V5_ADD_COLUMNS_SQL:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                print(f"  (skipped: {e})")
+        print("V5 new columns ensured (migrations 014-09b0dd176f5d).")
 
     await engine.dispose()
     print("DB tables ready.")

@@ -1510,6 +1510,36 @@ export default function AgentsPage() {
               </div>
             )
           })()}
+
+          {/* Data / Other Agents Section — catches unusual_whales, social_sentiment, strategy, etc. */}
+          {(() => {
+            const knownTypes = new Set(['trading', 'trend', 'sentiment'])
+            const otherAgents = agents.filter((a) => !knownTypes.has(a.type))
+            if (otherAgents.length === 0) return null
+            return (
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="h-2 w-2 rounded-full bg-teal-500" />
+                  <h2 className="text-base font-semibold">Data & Signal Agents</h2>
+                  <span className="text-xs text-muted-foreground ml-1">({otherAgents.length})</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                  {otherAgents.map((agent) => (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      onSelect={() => agent.status !== 'BACKTESTING' && navigate(`/agents/${agent.id}`)}
+                      onPause={() => pauseMutation.mutate(agent.id)}
+                      onResume={() => resumeMutation.mutate(agent.id)}
+                      onReview={() => setReviewAgent(agent)}
+                      onPromote={() => promoteMutation.mutate(agent.id)}
+                      onDelete={() => deleteMutation.mutate(agent.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
