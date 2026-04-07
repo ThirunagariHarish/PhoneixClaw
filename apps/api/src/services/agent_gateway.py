@@ -682,13 +682,6 @@ class AgentGateway:
         config_data = agent.config or {}
         api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "https://cashflowus.com"))
 
-        bt = (await session.execute(
-            select(AgentBacktest)
-            .where(AgentBacktest.agent_id == agent.id, AgentBacktest.status == "COMPLETED")
-            .order_by(AgentBacktest.created_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
-
         agent_config = {
             "agent_id": str(agent.id),
             "agent_name": agent.name,

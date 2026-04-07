@@ -346,13 +346,16 @@ async def run_pipeline(config: dict):
                 except Exception as e:
                     log.error("Failed to report trade: %s", e)
 
-                # Output for execution by robinhood_mcp
-                print(json.dumps({
-                    "event": "trade_decision",
-                    "decision": "EXECUTE",
-                    **decision.get("execution", {}),
-                }))
-                sys.stdout.flush()
+                # Output for execution by robinhood_mcp — suppressed in paper mode
+                if config.get("paper_mode"):
+                    log.warning("[pipeline] Paper mode: EXECUTE suppressed — call log_paper_trade.py instead")
+                else:
+                    print(json.dumps({
+                        "event": "trade_decision",
+                        "decision": "EXECUTE",
+                        **decision.get("execution", {}),
+                    }))
+                    sys.stdout.flush()
             else:
                 log.info("REJECT: %s — %s",
                          decision.get("parsed_signal", {}).get("ticker"),

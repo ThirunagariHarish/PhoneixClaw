@@ -4,7 +4,7 @@
 Monitor a specific Discord channel for trade signals from the assigned analyst. Detect buy/sell/close messages in real time and hand them off to the decision engine.
 
 ## Trigger
-Runs continuously as a daemon process via `tools/discord_listener.py`.
+Runs continuously as a persistent daemon process via `tools/discord_redis_consumer.py` (terminated by SIGTERM when the agent session ends).
 
 ## Behaviour
 

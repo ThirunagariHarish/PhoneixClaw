@@ -2,7 +2,7 @@ Show recent Discord signals detected by the agent and their disposition.
 
 1. Read `signals.log` or `trades.log` for signal entries.
 
-2. Also check if `tools/discord_listener.py` has recent output or state files.
+2. Also check if `tools/discord_redis_consumer.py` has recent output or state files (check `stream_cursor.json` and `pending_signals.json`).
 
 3. For each recent signal (last 20), show:
    - Timestamp
@@ -29,4 +29,4 @@ Show recent Discord signals detected by the agent and their disposition.
    - Most common filter reason
 
 6. If no signal data is found, explain that the Discord listener may not be running
-   and suggest: `python3 tools/discord_listener.py`
+   and suggest: `python3 tools/discord_redis_consumer.py --config config.json --output pending_signals.json`

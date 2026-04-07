@@ -37,7 +37,7 @@
     "version": ""
   },
   "tools": [
-    "discord_listener",
+    "discord_redis_consumer",
     "inference",
     "enrich_single",
     "risk_check",

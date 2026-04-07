@@ -2022,6 +2022,7 @@ async def get_agent_sessions(agent_id: str, session: DbSession, limit: int = Que
             "last_heartbeat": s.last_heartbeat.isoformat() if s.last_heartbeat else None,
             "stopped_at": s.stopped_at.isoformat() if s.stopped_at else None,
             "error_message": s.error_message,
+            "trading_mode": s.trading_mode,
         }
         for s in sessions
     ]
