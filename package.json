@@ -7,5 +7,12 @@
     "build": "npm -w apps/dashboard run build",
     "test": "npm -w apps/dashboard run test",
     "lint": "npm -w apps/dashboard run lint"
+  },
+  "overrides": {
+    "picomatch": "^4.0.4",
+    "flatted": "^3.4.2",
+    "esbuild": "^0.25.0",
+    "lodash": "^4.17.21",
+    "vite": "^6.4.2"
   }
 }
