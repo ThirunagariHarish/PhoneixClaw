@@ -63,6 +63,7 @@ class AgentResponse(BaseModel):
     last_signal_at: str | None = None
     last_trade_at: str | None = None
     created_at: str
+    error_message: str | None = None
 
     @staticmethod
     def _derive_runtime_status(a: Agent) -> str:
@@ -107,6 +108,7 @@ class AgentResponse(BaseModel):
             last_signal_at=a.last_signal_at.isoformat() if a.last_signal_at else None,
             last_trade_at=a.last_trade_at.isoformat() if a.last_trade_at else None,
             created_at=a.created_at.isoformat() if a.created_at else "",
+            error_message=a.error_message,
         )
 
 

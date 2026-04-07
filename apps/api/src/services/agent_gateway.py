@@ -352,6 +352,19 @@ class AgentGateway:
 
             except Exception as exc:
                 last_error = str(exc)[:500]
+                # Fail-fast on cgroup OOM-kill (SIGKILL = exit code -9). Retrying
+                # is guaranteed to fail with the same OOM. Bump phoenix-api memory.
+                if "exit code -9" in last_error or "exit code: -9" in last_error:
+                    logger.error("Claude SDK OOM-killed (exit -9) for agent %s — not retrying. "
+                                 "Bump phoenix-api memory limit in docker-compose.coolify.yml.", agent_id)
+                    async for db in _get_session():
+                        await self._update_session(db, session_row_id, status="error",
+                                                   error="Claude CLI OOM-killed by cgroup (exit -9). Bump phoenix-api memory.")
+                        await _syslog(db, agent_id, backtest_id, "sdk_oom", 3,
+                                      "Claude CLI OOM-killed (SIGKILL/exit -9). Not retrying. Bump phoenix-api memory limit.")
+                        await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent",
+                                                   "Claude CLI OOM-killed (exit -9). Bump phoenix-api memory limit.")
+                    break
                 if attempt < max_attempts:
                     delay = 10 * (2 ** (attempt - 1))
                     logger.warning("Claude SDK attempt %d/%d failed for agent %s: %s — retrying in %ds",
@@ -472,8 +485,11 @@ class AgentGateway:
                 status="starting",
                 working_dir=str(work_dir),
                 config=config or {},
+                trading_mode="paper" if agent.status == "PAPER" else "live",
             ))
-            agent.status = "RUNNING"
+            if agent.status != "PAPER":
+                agent.status = "RUNNING"
+            # PAPER agents: status stays "PAPER"; only worker_status changes
             agent.worker_status = "STARTING"
             agent.updated_at = datetime.now(timezone.utc)
             await db.commit()
@@ -692,11 +708,20 @@ class AgentGateway:
             "knowledge": manifest.get("knowledge", {}),
         }
 
+        # Resolve primary connector_id for Redis stream key alignment (Story 2.1)
+        connector_ids = agent.config.get("connector_ids") or [] if agent.config else []
+        primary_connector_id = connector_ids[0] if connector_ids else ""
+        agent_config["connector_id"] = primary_connector_id
+
+        # Paper mode flag — paper agents never receive broker credentials
+        agent_config["paper_mode"] = agent.status == "PAPER"
+
         # Inject Robinhood credentials under BOTH keys for compatibility:
         # - `robinhood_credentials`: Phoenix spawn format (what robinhood_mcp.py reads)
         # - `robinhood`: local dev / alternate format
+        # Paper agents must NOT receive broker credentials (AC2.5.1 safety guard)
         rh_creds = config_data.get("robinhood_credentials") or {}
-        if rh_creds:
+        if rh_creds and not agent_config["paper_mode"]:
             agent_config["robinhood_credentials"] = rh_creds
             agent_config["robinhood"] = rh_creds
 
@@ -722,12 +747,23 @@ class AgentGateway:
         return work_dir
 
     def _render_claude_md(self, agent: Agent, manifest: dict, work_dir: Path) -> None:
-        """Render CLAUDE.md from the Jinja2 template."""
-        template_path = LIVE_TEMPLATE / "CLAUDE.md.jinja2"
+        """Render CLAUDE.md from the Jinja2 template (live or paper mode)."""
+        is_paper = agent.status == "PAPER"
+        template_name = "CLAUDE.md.paper.jinja2" if is_paper else "CLAUDE.md.jinja2"
+        template_path = LIVE_TEMPLATE / template_name
+
+        _paper_safety_banner = (
+            "# Live Trading Agent: {name}\n\n"
+            "## ⚠️ PAPER TRADING MODE — DO NOT EXECUTE REAL TRADES\n\n"
+            "Monitor Discord and log paper trades only."
+        )
+        _live_fallback = "# Live Trading Agent: {name}\n\nMonitor Discord and trade."
+
         if not template_path.exists():
-            (work_dir / "CLAUDE.md").write_text(
-                f"# Live Trading Agent: {agent.name}\n\nMonitor Discord and trade."
-            )
+            if is_paper:
+                (work_dir / "CLAUDE.md").write_text(_paper_safety_banner.format(name=agent.name))
+            else:
+                (work_dir / "CLAUDE.md").write_text(_live_fallback.format(name=agent.name))
             return
 
         try:
@@ -737,7 +773,7 @@ class AgentGateway:
                 loader=FileSystemLoader(str(LIVE_TEMPLATE)),
                 undefined=__import__("jinja2").Undefined,
             )
-            template = env.get_template("CLAUDE.md.jinja2")
+            template = env.get_template(template_name)
 
             characters = {
                 "balanced-intraday": "You are a balanced intraday trader. You take calculated risks based on model confidence and pattern matches. You cut losses quickly and let winners run with trailing stops.",
@@ -763,10 +799,11 @@ class AgentGateway:
             )
             (work_dir / "CLAUDE.md").write_text(rendered)
         except Exception as exc:
-            logger.warning("Failed to render CLAUDE.md for agent %s: %s", agent.id, exc)
-            (work_dir / "CLAUDE.md").write_text(
-                f"# Live Trading Agent: {agent.name}\n\nMonitor Discord and trade."
-            )
+            logger.warning("Failed to render CLAUDE.md for agent %s (template=%s): %s", agent.id, template_name, exc)
+            if is_paper:
+                (work_dir / "CLAUDE.md").write_text(_paper_safety_banner.format(name=agent.name))
+            else:
+                (work_dir / "CLAUDE.md").write_text(_live_fallback.format(name=agent.name))
 
     # ------------------------------------------------------------------
     # Lifecycle: stop, pause, resume, status
@@ -2069,6 +2106,7 @@ async def _mark_backtest_completed(db, agent_id: uuid.UUID, backtest_id: uuid.UU
     agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
     if agent:
         agent.status = "BACKTEST_COMPLETE"
+        agent.error_message = None
         agent.updated_at = now
         if bt:
             m = bt.metrics or {}
@@ -2100,7 +2138,8 @@ async def _mark_backtest_failed(
 
     agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
     if agent:
-        agent.status = "CREATED"
+        agent.status = "ERROR"
+        agent.error_message = error_msg
         agent.updated_at = now
 
     db.add(SystemLog(
