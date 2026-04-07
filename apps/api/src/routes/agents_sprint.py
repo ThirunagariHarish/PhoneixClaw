@@ -585,10 +585,31 @@ async def spawn_typed(body: SpawnTypedBody, session: DbSession = None):
             raise HTTPException(400, "Analyst agents are auto-created after a successful backtest")
         # Specialized types: unusual_whales / social_sentiment / strategy
         if hasattr(gateway, "create_specialized_agent"):
+            # Create the Agent DB record first — gateway.create_specialized_agent
+            # expects the record to already exist so it can read name/config.
+            from shared.db.engine import get_session as _get_session
+            from datetime import datetime, timezone as _tz
+            new_id = uuid.uuid4()
+            now = datetime.now(_tz.utc)
+            async for db in _get_session():
+                new_agent = Agent(
+                    id=new_id,
+                    name=body.name,
+                    type=kind,
+                    status="RUNNING",
+                    source="spawn-typed",
+                    config=body.config or {},
+                    manifest={},
+                    pending_improvements={},
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(new_agent)
+                await db.commit()
             agent_id = await gateway.create_specialized_agent(
-                agent_type=kind, name=body.name, config=body.config or {}
+                agent_id=new_id, agent_type=kind, config=body.config or {}
             )
-            return {"agent_id": str(agent_id), "type": kind, "status": "starting"}
+            return {"agent_id": str(new_id), "type": kind, "status": "starting"}
         raise HTTPException(400, f"Unknown agent type: {kind}")
     except HTTPException:
         raise

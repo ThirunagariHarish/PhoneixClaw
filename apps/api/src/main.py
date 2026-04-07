@@ -10,6 +10,14 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Load .env early so os.environ is populated for all SDK checks (e.g. ANTHROPIC_API_KEY).
+# This runs before any service module is imported, ensuring _can_use_claude_sdk() sees the key.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+except ImportError:
+    pass
+
 # Belt-and-braces PYTHONPATH fix: make sure the repo root is importable so
 # `from services.orchestrator...` works even if gunicorn was launched without
 # PYTHONPATH=/app. Without this, the API returns "No module named 'services'"

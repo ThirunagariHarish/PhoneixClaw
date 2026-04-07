@@ -266,8 +266,12 @@ async def test_connector(connector_id: str, session: DbSession):
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 async def get_connector(connector_id: str, session: DbSession):
     """Get a single connector by ID."""
+    try:
+        cid = uuid.UUID(connector_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Connector not found")
     result = await session.execute(
-        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+        select(Connector).where(Connector.id == cid)
     )
     connector = result.scalar_one_or_none()
     if not connector:
@@ -278,8 +282,12 @@ async def get_connector(connector_id: str, session: DbSession):
 @router.patch("/{connector_id}", response_model=ConnectorResponse)
 async def update_connector(connector_id: str, payload: ConnectorUpdate, session: DbSession):
     """Update connector configuration or credentials."""
+    try:
+        cid = uuid.UUID(connector_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Connector not found")
     result = await session.execute(
-        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+        select(Connector).where(Connector.id == cid)
     )
     connector = result.scalar_one_or_none()
     if not connector:
@@ -306,8 +314,12 @@ async def update_connector(connector_id: str, payload: ConnectorUpdate, session:
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connector(connector_id: str, session: DbSession):
     """Delete a connector and its agent mappings."""
+    try:
+        cid = uuid.UUID(connector_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Connector not found")
     result = await session.execute(
-        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+        select(Connector).where(Connector.id == cid)
     )
     connector = result.scalar_one_or_none()
     if not connector:
