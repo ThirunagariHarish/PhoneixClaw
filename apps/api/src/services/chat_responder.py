@@ -25,6 +25,8 @@ from pathlib import Path
 
 from sqlalchemy import select, desc
 
+from shared.context.builder import ENABLE_SMART_CONTEXT, ContextBuilderService
+
 logger = logging.getLogger(__name__)
 
 # Where per-message workdirs live
@@ -159,12 +161,15 @@ def _prepare_workdir(agent_id: uuid.UUID, ctx: dict, user_message: str) -> Path:
     return work_dir
 
 
-def _build_prompt(ctx: dict, user_message: str) -> str:
+def _build_prompt(ctx: dict, user_message: str, smart_context_str: str = "") -> str:
     agent = ctx.get("agent") or {}
+    smart_ctx_section = ""
+    if smart_context_str:
+        smart_ctx_section = f"\n\n## Smart Context (dynamic knowledge injection):\n{smart_context_str}\n"
     return f"""You are {agent.get('name', 'a Phoenix trading agent')} — stay in character.
 
 Your character: {agent.get('character', 'unknown')}
-
+{smart_ctx_section}
 Read the following files in the current working directory for context:
 - `agent_context.json` — your profile, rules, recent win rate and PnL
 - `chat_history.json` — the last 12 turns of conversation with the user
@@ -193,6 +198,35 @@ async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
 
         work_dir = _prepare_workdir(agent_id, ctx, user_message)
 
+        # -------------------------------------------------------------------
+        # Smart Context injection (opt-in via ENABLE_SMART_CONTEXT=true)
+        # Falls back gracefully — never blocks existing chat path.
+        # -------------------------------------------------------------------
+        smart_context_str = ""
+        if ENABLE_SMART_CONTEXT:
+            try:
+                from shared.db.engine import get_session  # noqa: PLC0415
+
+                async for sess in get_session():
+                    token_budget = int(
+                        (ctx.get("agent") or {}).get("manifest", {}).get("wiki_context_token_budget", 8000)
+                        if isinstance((ctx.get("agent") or {}).get("manifest"), dict)
+                        else 8000
+                    )
+                    builder = ContextBuilderService(sess)
+                    context_payload = await builder.build(
+                        agent_id=agent_id,
+                        session_type="chat",
+                        signal=None,
+                        token_budget=token_budget,
+                    )
+                    smart_context_str = context_payload.to_context_string()
+                    asyncio.create_task(builder.save_audit(context_payload))
+                    break
+            except Exception as exc:
+                logger.warning("[chat_responder] smart context builder failed, falling back: %s", exc)
+                smart_context_str = ""
+
         try:
             from claude_agent_sdk import query, ClaudeAgentOptions
         except ImportError as exc:
@@ -203,7 +237,7 @@ async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
             )
             return None
 
-        prompt = _build_prompt(ctx, user_message)
+        prompt = _build_prompt(ctx, user_message, smart_context_str=smart_context_str)
         # Environment variables the reply_chat.py tool will read
         env_patch = {
             "PHOENIX_API_URL": os.environ.get("PHOENIX_API_URL", "http://localhost:8011"),

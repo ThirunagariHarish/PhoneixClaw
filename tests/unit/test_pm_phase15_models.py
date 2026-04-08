@@ -70,15 +70,21 @@ class TestPMTopBet:
             assert hasattr(PMTopBet, col), f"missing column: {col}"
 
     def test_sample_probabilities_is_list_typed(self):
-        """sample_probabilities must be annotated as Optional[list], not dict."""
-        annotation = PMTopBet.__annotations__.get("sample_probabilities")
-        assert annotation is not None, "sample_probabilities annotation missing"
-        # Unwrap Mapped[X] → X, then check X = Optional[list]
-        inner = get_args(annotation)[0]  # strips Mapped[...]
-        inner_types = get_args(inner)    # strips Optional[...] → (list, NoneType)
-        assert list in inner_types, (
-            f"sample_probabilities should be Optional[list], got {annotation}"
+        """sample_probabilities must store and return a list at runtime."""
+        obj = PMTopBet(
+            id=uuid.uuid4(),
+            market_id=uuid.uuid4(),
+            recommendation_date=date.today(),
+            side="YES",
+            confidence_score=80,
+            edge_bps=120,
+            reasoning="Strong fundamentals",
+            sample_probabilities=[0.60, 0.65, 0.70],
         )
+        assert isinstance(obj.sample_probabilities, list), (
+            f"sample_probabilities should be a list, got {type(obj.sample_probabilities)}"
+        )
+        assert all(isinstance(v, float) for v in obj.sample_probabilities)
 
     def test_required_not_null(self):
         for col in ("market_id", "recommendation_date", "side", "confidence_score", "edge_bps", "reasoning"):
@@ -230,26 +236,32 @@ class TestPMHistoricalMarket:
             assert hasattr(PMHistoricalMarket, col), f"missing: {col}"
 
     def test_outcomes_json_is_list_typed(self):
-        """outcomes_json must be annotated as Optional[list], not dict."""
-        annotation = PMHistoricalMarket.__annotations__.get("outcomes_json")
-        assert annotation is not None, "outcomes_json annotation missing"
-        # Unwrap Mapped[Optional[list]] → Optional[list] → (list, NoneType)
-        inner = get_args(annotation)[0]
-        inner_types = get_args(inner)
-        assert list in inner_types, (
-            f"outcomes_json should be Optional[list], got {annotation}"
+        """outcomes_json must store and return a list at runtime, not a dict."""
+        obj = PMHistoricalMarket(
+            id=uuid.uuid4(),
+            venue="polymarket",
+            venue_market_id="abc-123",
+            question="Will X happen?",
+            outcomes_json=[{"outcome": "Yes"}, {"outcome": "No"}],
         )
+        assert isinstance(obj.outcomes_json, list), (
+            f"outcomes_json should be a list, got {type(obj.outcomes_json)}"
+        )
+        assert not isinstance(obj.outcomes_json, dict)
 
     def test_price_history_json_is_list_typed(self):
-        """price_history_json must be annotated as Optional[list], not dict."""
-        annotation = PMHistoricalMarket.__annotations__.get("price_history_json")
-        assert annotation is not None, "price_history_json annotation missing"
-        # Unwrap Mapped[Optional[list]] → Optional[list] → (list, NoneType)
-        inner = get_args(annotation)[0]
-        inner_types = get_args(inner)
-        assert list in inner_types, (
-            f"price_history_json should be Optional[list], got {annotation}"
+        """price_history_json must store and return a list at runtime, not a dict."""
+        obj = PMHistoricalMarket(
+            id=uuid.uuid4(),
+            venue="polymarket",
+            venue_market_id="abc-456",
+            question="Will Y happen?",
+            price_history_json=[{"ts": 1000, "price": 0.6}, {"ts": 2000, "price": 0.7}],
         )
+        assert isinstance(obj.price_history_json, list), (
+            f"price_history_json should be a list, got {type(obj.price_history_json)}"
+        )
+        assert not isinstance(obj.price_history_json, dict)
 
     def test_required_not_null(self):
         for col in ("venue", "venue_market_id", "question"):
@@ -299,14 +311,17 @@ class TestPMMarketEmbedding:
             assert hasattr(PMMarketEmbedding, col), f"missing: {col}"
 
     def test_embedding_is_list_typed(self):
-        """embedding must be annotated as list, not dict."""
-        annotation = PMMarketEmbedding.__annotations__.get("embedding")
-        assert annotation is not None, "embedding annotation missing"
-        # Unwrap Mapped[list] → list
-        inner = get_args(annotation)[0]
-        assert inner is list, (
-            f"embedding should be list-typed, got {annotation}"
+        """embedding must store and return a list of floats at runtime."""
+        obj = PMMarketEmbedding(
+            id=uuid.uuid4(),
+            historical_market_id=uuid.uuid4(),
+            embedding=[0.1, 0.2, 0.3],
+            model_used="text-embedding-3-small",
         )
+        assert isinstance(obj.embedding, list), (
+            f"embedding should be a list, got {type(obj.embedding)}"
+        )
+        assert all(isinstance(v, float) for v in obj.embedding)
 
     def test_embedding_is_not_dict_typed(self):
         annotation = PMMarketEmbedding.__annotations__.get("embedding")

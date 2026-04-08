@@ -38,6 +38,7 @@ import { AgentTerminal } from '@/components/AgentTerminal'
 import { AgentSkillsTab } from '@/components/AgentSkillsTab'
 import { AgentWikiTab } from '@/components/AgentWikiTab'
 import { ConsolidationPanel } from '@/components/ConsolidationPanel'
+import { ContextDebugger } from '@/components/ContextDebugger'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
@@ -429,6 +430,7 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
 
   return (
     <div>
+      <ContextDebugger agentId={id} />
       <Card className="flex flex-col" style={{ height: 'calc(100vh - 380px)', minHeight: '400px' }}>
         <CardHeader className="pb-2 shrink-0">
           <CardTitle className="text-sm font-medium flex items-center gap-2">

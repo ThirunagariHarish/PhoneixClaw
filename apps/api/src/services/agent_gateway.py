@@ -25,6 +25,7 @@ from shared.db.engine import get_session as _get_session
 from shared.db.models.agent import Agent, AgentBacktest
 from shared.db.models.agent_session import AgentSession
 from shared.db.models.system_log import SystemLog
+from shared.context.builder import ENABLE_SMART_CONTEXT, ContextBuilderService
 
 logger = logging.getLogger(__name__)
 
@@ -659,8 +660,33 @@ class AgentGateway:
         # pickle into the persistent .tokens/ dir, surviving container restarts.
         home_export = f"First, run: `export HOME={work_dir}` so any Robinhood session gets cached in the agent's working directory (.tokens/ subdir). "
 
+        # -------------------------------------------------------------------
+        # Smart Context injection (opt-in via ENABLE_SMART_CONTEXT=true)
+        # Falls back gracefully — never blocks the analyst from starting.
+        # -------------------------------------------------------------------
+        smart_context_prefix = ""
+        if ENABLE_SMART_CONTEXT:
+            try:
+                async for db in _get_session():
+                    builder = ContextBuilderService(db)
+                    ctx_payload = await builder.build(
+                        agent_id=agent_id,
+                        session_type="trading",
+                        signal=None,
+                    )
+                    ctx_str = ctx_payload.to_context_string()
+                    if ctx_str:
+                        smart_context_prefix = (
+                            f"## Smart Context (dynamic knowledge injection):\n{ctx_str}\n\n"
+                        )
+                    asyncio.create_task(builder.save_audit(ctx_payload))
+                    break
+            except Exception as _ctx_exc:
+                logger.warning("[agent_gateway] smart context failed for %s: %s", agent_id, _ctx_exc)
+
         prompt = (
             home_export +
+            smart_context_prefix +
             "You are now live. Read CLAUDE.md for your full instructions. "
             "Start the operation loop: run pre-market analysis, start the Discord listener, "
             "and begin monitoring for trade signals. Report all activity to Phoenix."
@@ -668,6 +694,7 @@ class AgentGateway:
         if resume:
             prompt = (
                 home_export +
+                smart_context_prefix +
                 "Resume your live trading session. Check your current positions in positions.json, "
                 "restart the Discord listener, and continue monitoring. "
                 "Report your resumed status to Phoenix."

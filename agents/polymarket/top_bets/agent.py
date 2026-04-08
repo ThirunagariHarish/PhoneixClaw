@@ -214,11 +214,12 @@ class TopBetsAgent:
                 async with self._session_factory() as db:
                     await self._log_activity(
                         db,
-                        event_type="error",
-                        message=f"Cycle error: {exc}",
+                        event_type="cycle_error",
+                        message=str(exc),
                         metadata={"error": error, "markets_fetched": markets_fetched},
                         severity="error",
                     )
+                    await db.commit()
             except Exception:  # noqa: BLE001
                 logger.exception("TopBetsAgent: could not log cycle error to DB")
 

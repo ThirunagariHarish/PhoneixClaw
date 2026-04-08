@@ -124,7 +124,7 @@ for _mod_name in [
     "shared.db.models.watchlist",
 ]:
     sys.modules.setdefault(_mod_name, MagicMock())
-sys.modules["shared.db.models.polymarket"] = _pm_stub
+sys.modules.setdefault("shared.db.models.polymarket", _pm_stub)
 
 # Stub agents.polymarket.data PACKAGE so __init__.py doesn't run.
 sys.modules.setdefault("agents.polymarket.data", MagicMock())

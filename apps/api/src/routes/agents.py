@@ -2228,3 +2228,61 @@ async def run_improvement_backtest(
         backtest_run_at=updated.get("backtest_run_at", ""),
         thresholds_missed=updated.get("backtest_thresholds_missed", []),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Smart Context — context/latest endpoint
+# ---------------------------------------------------------------------------
+
+
+class ContextSessionResponse(BaseModel):
+    id: str
+    session_type: str
+    signal_symbol: str | None
+    token_budget: int
+    tokens_used: int
+    wiki_entries_injected: int
+    trades_injected: int
+    manifest_sections_injected: list[str]
+    quality_score: float | None
+    built_at: str
+
+
+@router.get("/{agent_id}/context/latest", response_model=ContextSessionResponse)
+async def get_latest_context_session(agent_id: str, session: DbSession):
+    """Return the most recent ContextSession for this agent.
+
+    Returns 404 if no context sessions exist yet (e.g. ENABLE_SMART_CONTEXT=false).
+    """
+    from shared.db.models.context_session import ContextSession  # noqa: PLC0415
+
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid agent_id")
+
+    stmt = (
+        select(ContextSession)
+        .where(ContextSession.agent_id == agent_uuid)
+        .order_by(desc(ContextSession.built_at))
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No context sessions found. Enable ENABLE_SMART_CONTEXT=true to start recording.",
+        )
+    return ContextSessionResponse(
+        id=str(row.id),
+        session_type=row.session_type,
+        signal_symbol=row.signal_symbol,
+        token_budget=row.token_budget,
+        tokens_used=row.tokens_used,
+        wiki_entries_injected=row.wiki_entries_injected,
+        trades_injected=row.trades_injected,
+        manifest_sections_injected=row.manifest_sections_injected or [],
+        quality_score=row.quality_score,
+        built_at=row.built_at.isoformat() if row.built_at else "",
+    )
