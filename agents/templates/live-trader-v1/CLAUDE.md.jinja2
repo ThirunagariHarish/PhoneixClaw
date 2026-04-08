@@ -76,6 +76,7 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 
 ### Reporting
 - `tools/report_to_phoenix.py` — reports activity and metrics to Phoenix dashboard
+- `python tools/write_wiki_entry.py --category <CAT> --title "<title>" --content "<text>" [--symbols TICK] [--tags tag1,tag2] [--confidence 0.8]` — Write a knowledge entry to your wiki. Use after EVERY closed trade and whenever you discover a pattern. Categories: MARKET_PATTERNS, SYMBOL_PROFILES, STRATEGY_LEARNINGS, MISTAKES, WINNING_CONDITIONS, SECTOR_NOTES, MACRO_CONTEXT, TRADE_OBSERVATION.
 
 ## Operation Loop
 
