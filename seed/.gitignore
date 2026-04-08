@@ -1,0 +1,3 @@
+# Parquet seed files are loaded into Postgres via load_to_postgres.py
+# Do not commit binary data files to git
+*.parquet

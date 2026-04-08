@@ -304,13 +304,57 @@ def _build_trade_row(trade_id: int, position: dict) -> Optional[dict]:
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
+_SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
+
+
+def _load_messages_from_postgres(db_url: str) -> list[dict]:
+    """Read raw_messages table from PostgreSQL and return list of message dicts."""
+    try:
+        import pandas as pd
+        from sqlalchemy import create_engine
+    except ImportError as exc:
+        raise RuntimeError("sqlalchemy and psycopg2-binary are required for --source postgres") from exc
+
+    print(f"Reading raw_messages from PostgreSQL ({db_url}) ...")
+    engine = create_engine(db_url)
+    df = pd.read_sql_table("raw_messages", engine)
+    print(f"  Loaded {len(df):,} rows from raw_messages")
+
+    messages = []
+    for _, row in df.iterrows():
+        ts = row.get("timestamp")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        messages.append({
+            "content": row.get("content", ""),
+            "author": row.get("author_name", "unknown"),
+            "timestamp": ts,
+            "message_id": str(row.get("snowflake", "")),
+        })
+    return messages
+
+
 def main():
     parser = argparse.ArgumentParser(description="Transform Discord messages into trade rows")
-    parser.add_argument("--config", required=True, help="Path to config.json")
+    parser.add_argument("--config", default=None, help="Path to config.json (not required when --source postgres)")
     parser.add_argument("--output", required=True, help="Output parquet path")
     parser.add_argument("--messages-file", help="Use pre-fetched messages JSON instead of Discord API")
+    parser.add_argument(
+        "--source",
+        choices=["discord", "postgres"],
+        default="discord",
+        help="Message source: 'discord' (default, uses config.json) or 'postgres' (reads raw_messages table)",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=_SEED_DB_URL,
+        help=f"PostgreSQL connection URL used when --source postgres (default: {_SEED_DB_URL})",
+    )
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists")
     args = parser.parse_args()
+
+    if args.source == "discord" and args.config is None:
+        parser.error("--config is required when --source discord")
 
     output_path = Path(args.output)
 
@@ -331,28 +375,35 @@ def main():
         except Exception:
             pass
 
-    with open(args.config) as f:
-        config = json.load(f)
+    # ── Source: PostgreSQL raw_messages table ──────────────────────────────
+    if args.source == "postgres":
+        channel_name = "postgres-seed"
+        raw_messages = _load_messages_from_postgres(args.db_url)
+        print(f"Loaded {len(raw_messages)} messages from PostgreSQL")
 
-    channel_name = config.get("channel_name", "unknown")
-
-    # Fetch or load messages
-    if args.messages_file:
-        with open(args.messages_file) as f:
-            raw_messages = json.load(f)
-        for m in raw_messages:
-            if isinstance(m["timestamp"], str):
-                m["timestamp"] = datetime.fromisoformat(m["timestamp"])
+    # ── Source: Discord API (default) ──────────────────────────────────────
     else:
-        import asyncio
-        raw_messages = asyncio.run(fetch_discord_history(
-            token=config["discord_token"],
-            channel_id=config["channel_id"],
-            lookback_days=config.get("lookback_days", 730),
-            auth_type=config.get("discord_auth_type", "bot_token"),
-        ))
+        with open(args.config) as f:
+            config = json.load(f)
 
-    print(f"Fetched {len(raw_messages)} messages from {channel_name}")
+        channel_name = config.get("channel_name", "unknown")
+
+        if args.messages_file:
+            with open(args.messages_file) as f:
+                raw_messages = json.load(f)
+            for m in raw_messages:
+                if isinstance(m["timestamp"], str):
+                    m["timestamp"] = datetime.fromisoformat(m["timestamp"])
+        else:
+            import asyncio
+            raw_messages = asyncio.run(fetch_discord_history(
+                token=config["discord_token"],
+                channel_id=config["channel_id"],
+                lookback_days=config.get("lookback_days", 730),
+                auth_type=config.get("discord_auth_type", "bot_token"),
+            ))
+
+        print(f"Fetched {len(raw_messages)} messages from {channel_name}")
 
     # Parse signals
     signals = []

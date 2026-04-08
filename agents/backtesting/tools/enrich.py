@@ -838,13 +838,70 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     return attrs
 
 
+_SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
+
+
+def _load_trades_from_postgres(db_url: str) -> pd.DataFrame:
+    """Read parsed_trades from PostgreSQL and normalise to the expected enrich schema."""
+    try:
+        from sqlalchemy import create_engine
+    except ImportError as exc:
+        raise RuntimeError("sqlalchemy and psycopg2-binary are required for --source postgres") from exc
+
+    print(f"Reading parsed_trades from PostgreSQL ({db_url}) ...")
+    engine = create_engine(db_url)
+    df = pd.read_sql_table("parsed_trades", engine)
+    print(f"  Loaded {len(df):,} rows from parsed_trades")
+
+    # Map seed schema → enrich expected schema
+    rename = {
+        "author_name": "analyst",
+        "exit_price": "weighted_exit_price",
+        "exit_time": "exit_time_final",
+        "channel_id": "channel",
+    }
+    df = df.rename(columns=rename)
+
+    # Derived columns that enrich & downstream steps may access
+    df["exit_time_first"] = df["exit_time_final"]
+    if "id" in df.columns:
+        df["trade_id"] = df["id"].apply(lambda x: f"T{int(x):05d}")
+    if "side" not in df.columns:
+        df["side"] = "long"
+    for col in ["exit_pct_25", "exit_pct_50", "exit_pct_75", "exit_pct_100",
+                "entry_message_raw", "exit_messages_raw", "target_price",
+                "stop_loss", "hold_duration_hours"]:
+        if col not in df.columns:
+            df[col] = None
+
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", default=None, help="Input parquet path (not required when --source postgres)")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--source",
+        choices=["parquet", "postgres"],
+        default="parquet",
+        help="Trade source: 'parquet' (default, reads --input file) or 'postgres' (reads parsed_trades table)",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=_SEED_DB_URL,
+        help=f"PostgreSQL connection URL used when --source postgres (default: {_SEED_DB_URL})",
+    )
     args = parser.parse_args()
 
-    df = pd.read_parquet(args.input)
+    if args.source == "parquet" and args.input is None:
+        parser.error("--input is required when --source parquet")
+
+    if args.source == "postgres":
+        df = _load_trades_from_postgres(args.db_url)
+    else:
+        df = pd.read_parquet(args.input)
+
     print(f"Enriching {len(df)} trades...")
 
     # Guard: if no trades, write an empty enriched parquet and exit

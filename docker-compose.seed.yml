@@ -1,0 +1,20 @@
+services:
+  seed-postgres:
+    image: postgres:16-alpine
+    container_name: phoenix-seed-db
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: seeduser
+      POSTGRES_PASSWORD: seedpass
+      POSTGRES_DB: phoenix_seed
+    volumes:
+      - seed-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seeduser -d phoenix_seed"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  seed-pgdata:
