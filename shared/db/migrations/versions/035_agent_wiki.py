@@ -134,6 +134,17 @@ def upgrade() -> None:
             "ix_agent_wiki_entry_versions_entry_id", "agent_wiki_entry_versions", ["entry_id"]
         )
 
+    # GIN indexes for array columns
+    if not _has_index("idx_wiki_symbols"):
+        op.execute("CREATE INDEX IF NOT EXISTS idx_wiki_symbols ON agent_wiki_entries USING GIN(symbols)")
+    if not _has_index("idx_wiki_tags"):
+        op.execute("CREATE INDEX IF NOT EXISTS idx_wiki_tags ON agent_wiki_entries USING GIN(tags)")
+    if not _has_index("idx_wiki_shared_partial"):
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wiki_shared_partial "
+            "ON agent_wiki_entries(is_shared) WHERE is_shared = true"
+        )
+
 
 def downgrade() -> None:
     if _has_table("agent_wiki_entry_versions"):

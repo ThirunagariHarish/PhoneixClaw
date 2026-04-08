@@ -555,6 +555,10 @@ async def stage_pending_improvements(agent_id: str, payload: dict, session: DbSe
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
     new_improvements = payload.get("improvements", [])
+    for item in new_improvements:
+        item.setdefault("backtest_passed", None)
+        item.setdefault("backtest_metrics", {})
+        item.setdefault("validation_status", "pending_validation")
     existing = agent.pending_improvements or {}
     existing_items = existing.get("items", []) if isinstance(existing, dict) else []
     existing_items.extend(new_improvements)
@@ -645,6 +649,80 @@ async def reject_improvement(agent_id: str, change_id: str, session: DbSession):
     agent.pending_improvements = {**pending, "items": new_items}
     await session.commit()
     return {"status": "rejected", "change_id": change_id, "agent_id": agent_id}
+
+
+class ImprovementValidatePayload(BaseModel):
+    backtest_metrics: dict[str, Any]
+
+
+@router.post("/{agent_id}/improvements/{improvement_id}/validate")
+async def validate_improvement(
+    agent_id: str,
+    improvement_id: str,
+    payload: ImprovementValidatePayload,
+    session: DbSession,
+) -> dict:
+    """Validate a pending improvement using backtest metrics.
+
+    Thresholds: Sharpe >= 0.8, Win Rate >= 0.53, Max Drawdown >= -0.15,
+    Profit Factor >= 1.3, Min Trades >= 15.
+    BORDERLINE = misses exactly ONE threshold by <10%.
+    Sets validation_status: approved | borderline | rejected.
+    """
+    result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    pending = agent.pending_improvements or {}
+    items: list[dict] = pending.get("items", []) if isinstance(pending, dict) else []
+    target = next((i for i in items if i.get("id") == improvement_id), None)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Improvement not found")
+
+    metrics = payload.backtest_metrics
+    thresholds = {
+        "sharpe": (metrics.get("sharpe", 0.0), 0.8, True),
+        "win_rate": (metrics.get("win_rate", 0.0), 0.53, True),
+        "max_drawdown": (metrics.get("max_drawdown", -999.0), -0.15, True),  # must be >= -0.15
+        "profit_factor": (metrics.get("profit_factor", 0.0), 1.3, True),
+        "trade_count": (metrics.get("trade_count", 0), 15, True),
+    }
+
+    missed = []
+    borderline_misses = []
+    for name, (value, threshold, gte) in thresholds.items():
+        passes = value >= threshold if gte else value <= threshold
+        if not passes:
+            missed.append(name)
+            if threshold != 0:
+                pct_miss = abs(value - threshold) / abs(threshold)
+            else:
+                pct_miss = abs(value - threshold)
+            if pct_miss < 0.10:
+                borderline_misses.append(name)
+
+    if not missed:
+        validation_status = "approved"
+    elif len(missed) == 1 and len(borderline_misses) == 1:
+        validation_status = "borderline"
+    else:
+        validation_status = "rejected"
+
+    target["backtest_passed"] = validation_status == "approved"
+    target["backtest_metrics"] = metrics
+    target["validation_status"] = validation_status
+
+    agent.pending_improvements = {**pending, "items": items}
+    await session.commit()
+
+    return {
+        "improvement_id": improvement_id,
+        "validation_status": validation_status,
+        "backtest_passed": target["backtest_passed"],
+        "backtest_metrics": metrics,
+        "thresholds_missed": missed,
+    }
 
 
 @router.get("/{agent_id}/runtime-info")

@@ -44,7 +44,7 @@ from shared.db.models.trade_signal import TradeSignal
 from shared.db.models.trading_account import TradingAccount
 from shared.db.models.user import User
 from shared.db.models.watchlist import Watchlist
-from shared.db.models.wiki import AgentWikiEntry, AgentWikiEntryVersion
+from shared.db.models.wiki import AgentWikiEntry, AgentWikiEntryVersion, WikiCategory
 
 __all__ = [
     "Base",
@@ -94,5 +94,6 @@ __all__ = [
     "PMModelEvaluation",
     "AgentWikiEntry",
     "AgentWikiEntryVersion",
+    "WikiCategory",
     "ConsolidationRun",
 ]

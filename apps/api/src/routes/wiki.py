@@ -24,7 +24,11 @@ from pydantic import BaseModel, Field, field_validator
 from apps.api.src.deps import DbSession
 from apps.api.src.repositories.wiki_repo import WikiRepository
 from shared.db.models.agent import Agent
-from shared.db.models.wiki import VALID_WIKI_CATEGORIES, AgentWikiEntry
+from shared.db.models.wiki import AgentWikiEntry, WikiCategory
+
+# Build a plain set of valid category strings from the WikiCategory enum so
+# that existing validators continue to work unchanged.
+VALID_WIKI_CATEGORIES: frozenset[str] = frozenset(c.value for c in WikiCategory)
 
 # ---------------------------------------------------------------------------
 # Routers
