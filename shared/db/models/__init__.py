@@ -12,6 +12,7 @@ from shared.db.models.api_key import ApiKeyEntry
 from shared.db.models.audit_log import AuditLog
 from shared.db.models.base import Base
 from shared.db.models.connector import Connector, ConnectorAgent
+from shared.db.models.consolidation import ConsolidationRun
 from shared.db.models.dev_incident import DevIncident
 from shared.db.models.error_log import ErrorLog
 from shared.db.models.learning_session import LearningSession
@@ -43,6 +44,7 @@ from shared.db.models.trade_signal import TradeSignal
 from shared.db.models.trading_account import TradingAccount
 from shared.db.models.user import User
 from shared.db.models.watchlist import Watchlist
+from shared.db.models.wiki import AgentWikiEntry, AgentWikiEntryVersion
 
 __all__ = [
     "Base",
@@ -90,4 +92,7 @@ __all__ = [
     "PMHistoricalMarket",
     "PMMarketEmbedding",
     "PMModelEvaluation",
+    "AgentWikiEntry",
+    "AgentWikiEntryVersion",
+    "ConsolidationRun",
 ]

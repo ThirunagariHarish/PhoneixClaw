@@ -5,6 +5,94 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-04-08 — Prediction Markets (Phase 15)
+
+A complete **Prediction Markets** feature built across 8 implementation sub-phases,
+introducing autonomous AI bet-scoring agents, a full LLM scorer chain, 20 new API
+endpoints, 7 new DB tables, two venue adapters (paper mode only), and a redesigned
+dashboard tab with real-time SSE chat and live agent logs.
+Cortex APPROVED on all 8 phases. Quill regression green.
+
+### Added
+
+- **Prediction Markets** tab (renamed from Polymarket) with Robinhood Predictions
+  as primary venue (paper mode; no real money at risk)
+- **TopBetsAgent** — 24/7 autonomous agent scoring prediction markets on a 60-second
+  cycle; Redis heartbeat; orchestrator-registered (`agents/polymarket/top_bets/`)
+- **AI Scorer Chain** — four-stage pipeline:
+  1. `ReferenceClassScorer` — historical base-rate lookup via embedding similarity
+  2. `CoTSampler` — N=5 parallel LLM chain-of-thought calls for self-consistency
+  3. `DebateScorer` — Bull vs Bear argument generation + LLM Judge adjudication
+  4. `LLMScorer` weighted blend + `TopBetScorer` confidence gating + `ModelEvaluator`
+- **VenueSelector** pill component + **TopBetsPanel** with per-bet confidence bars
+  and expandable AI-reasoning cards (`apps/dashboard/src/pages/polymarket/`)
+- **Chat tab** (8th dashboard tab) — SSE streaming chat with full prediction-market
+  context; messages persisted to `pm_chat_messages`
+- **Logs tab** (9th dashboard tab) — agent health monitoring, real-time activity
+  log, manual cycle-trigger button; backed by `pm_agent_activity_log`
+- **AutoResearchAgent** — daily nonce-gated agent: category identification +
+  research query generation; findings stored in `pm_strategy_research_log`
+- **20 new API endpoints** across 6 route modules:
+  `pm_top_bets`, `pm_chat` (SSE), `pm_agents`, `pm_research`, `pm_venues`,
+  `pm_pipeline`
+- **7 new DB tables** (Alembic migration 033):
+  `pm_top_bets`, `pm_chat_messages`, `pm_agent_activity_log`,
+  `pm_strategy_research_log`, `pm_historical_markets`, `pm_market_embeddings`,
+  `pm_model_evaluations`
+- **RobinhoodPredictionsVenue** + **PolymarketVenue** adapters — paper mode only;
+  `place_order(paper=False)` raises `ValueError` unconditionally in both adapters
+- **HistoricalIngestPipeline** + **EmbeddingStore** — SHA-256 hash deduplication
+  fallback (no pgvector dependency required)
+- **Docker service `pm-top-bets-agent`** — opt-in via `--profile agents`; does not
+  start with plain `docker compose up`; all credentials injected from env
+- **`TopBetsConfig`** dataclass for agent tuning; schema safety net via
+  `_ensure_prod_schema()` on startup
+- **`VenueRegistry`** — pluggable multi-venue dispatch layer
+- **.env.example** updated with `PM_TOP_BETS_*` and `PM_RESEARCH_ENABLED` keys
+
+### Changed
+
+- `apps/dashboard/src/pages/polymarket/index.tsx` — tab label renamed from
+  "Polymarket" to "Prediction Markets"; `JurisdictionBanner` styling updated to
+  blue/info tone; tab grid extended for Chat (8th) and Logs (9th) tabs
+- `services/orchestrator` — TopBetsAgent and AutoResearchAgent registered in the
+  orchestrator lifecycle
+
+### Database
+
+- **`033_pm_phase15`** (down_revision `032`) — creates all 7 prediction-markets
+  tables. Fully reversible via `alembic downgrade 032`. No destructive changes to
+  existing tables.
+
+### Known Limitations
+
+- **Paper mode only** — live trading on Robinhood Predictions and Polymarket is
+  blocked at the adapter layer; promotion to live trading deferred to a future phase.
+- **No pgvector** — embedding similarity uses in-process cosine distance with a
+  SHA-256 hash deduplication cache; pgvector ANN index deferred to Phase 16.
+- **Single-venue scoring** — TopBetsAgent scores one venue per cycle; cross-venue
+  arbitrage deferred.
+- `scan_options_flow` in the Analyst Agent tool suite remains a placeholder
+  (carried from v0.5.0).
+
+### Rollback
+
+```bash
+# 1. Downgrade DB migration (drops all 7 pm_phase15 tables)
+alembic downgrade 032
+
+# 2. Stop the agent Docker service (if running)
+docker compose --profile agents stop pm-top-bets-agent
+
+# 3. Revert to previous image / git tag
+git checkout v0.5.0
+
+# 4. Rebuild and restart
+docker compose up -d --build
+```
+
+---
+
 ## [0.5.0] — 2026-04-07 — Analyst Agent (Phase 1)
 
 Introduces the **Analyst Agent** — a new agent type with 6 configurable analyst

@@ -18,7 +18,6 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -173,8 +172,8 @@ class IntelligentExecutor:
 
             # Submit via retry ladder so T8 reason-routing still applies
             try:
-                from services.execution.src.retry_ladder import RetryLadder
                 from services.execution.src.executor import _persist_order_attempt
+                from services.execution.src.retry_ladder import RetryLadder
                 ladder = RetryLadder(broker=self.broker,
                                      persist_attempt=_persist_order_attempt)
                 ladder_res = await ladder.submit(intent, p_fill_60s=plan.fill_prob_60s)

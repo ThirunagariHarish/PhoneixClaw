@@ -4,8 +4,7 @@ Market calendar utilities for US equity markets.
 Simple rule-based implementation; use shared.market.calendar for full exchange support.
 """
 
-from datetime import date, datetime, time, timedelta, timezone
-
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 US_EASTERN = ZoneInfo("America/New_York")

@@ -1,7 +1,6 @@
 """
 Backtest runner service entrypoint.
 """
-import os
 from fastapi import FastAPI
 from prometheus_client import generate_latest
 from starlette.responses import Response

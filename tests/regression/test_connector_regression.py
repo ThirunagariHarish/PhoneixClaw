@@ -4,7 +4,6 @@ Regression tests for connector CRUD, credentials, and linking. M1.9.
 
 import base64
 import uuid
-from unittest.mock import MagicMock, patch
 
 import pytest
 

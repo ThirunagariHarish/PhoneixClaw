@@ -238,7 +238,6 @@ class LiveTradingPipeline:
 
         # Step 5: Risk chain validation
         if self.risk_chain:
-            from services.execution.src.risk_chain import RiskChain
             risk_result = self.risk_chain.evaluate(intent.to_dict())
             if not risk_result.approved:
                 intent.status = "RISK_REJECTED"

@@ -7,10 +7,10 @@ would have been profitable. This feeds the next retraining cycle.
 """
 
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID

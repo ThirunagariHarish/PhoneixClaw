@@ -19,6 +19,7 @@ async def _persist_order_attempt(row: dict) -> None:
     """
     try:
         from sqlalchemy import text
+
         from shared.db.engine import get_session
         async for session in get_session():
             await session.execute(
@@ -62,9 +63,7 @@ class BrokerExecutor:
         # P13: IntelligentExecutor layer (NBBO + pre-trade snapshot + cancel-replace)
         if self._use_intelligent and self.broker and intent.get("symbol"):
             try:
-                from services.execution.src.intelligent_executor import (
-                    IntelligentExecutor, ExecutionPlan
-                )
+                from services.execution.src.intelligent_executor import ExecutionPlan, IntelligentExecutor
                 plan = ExecutionPlan(
                     symbol=intent.get("symbol", ""),
                     side=intent.get("side", "buy"),

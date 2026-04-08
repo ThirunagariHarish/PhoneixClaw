@@ -3,7 +3,7 @@ Regression tests for Redis Streams event bus. M1.12, ArchitecturePlan §5.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

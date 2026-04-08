@@ -2,7 +2,6 @@
 E2E tests for login flow. M1.4.
 """
 
-import pytest
 from playwright.sync_api import Page, expect
 
 

@@ -1,11 +1,11 @@
 """Tests for agents/analyst/tools/score_trade_setup.py"""
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from agents.analyst.tools.score_trade_setup import score_trade_setup
 from agents.analyst.personas.library import PERSONA_LIBRARY
+from agents.analyst.tools.score_trade_setup import score_trade_setup
 
 
 def make_bullish():

@@ -3,13 +3,11 @@ Regression tests for trade execution pipeline. M1.12.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from services.execution.src.risk_chain import (
-    AgentLevelRisk,
-    ExecutionLevelRisk,
     GlobalLevelRisk,
     RiskCheckChain,
 )

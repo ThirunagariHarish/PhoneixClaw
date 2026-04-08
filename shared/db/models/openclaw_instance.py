@@ -3,10 +3,10 @@ DEPRECATED — V3 removed the VPS layer (migration 007_v3_remove_vps_add_workers
 This model is kept only for Alembic migration history. Do not use in new code.
 """
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID

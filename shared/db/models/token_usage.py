@@ -1,10 +1,10 @@
 """Daily token usage tracking for Claude Code instances."""
 
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy import Date, DateTime, Float, Integer, String
 from sqlalchemy.dialects.postgresql import UUID

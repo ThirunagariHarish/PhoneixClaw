@@ -17,13 +17,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.models.agent import Agent, AgentBacktest
-from shared.db.models.connector import Connector, ConnectorAgent
-from shared.db.models.channel_message import ChannelMessage
 from shared.db.models.backtest_trade import BacktestTrade
+from shared.db.models.channel_message import ChannelMessage
+from shared.db.models.connector import ConnectorAgent
 from shared.nlp.ticker_extractor import TickerExtractor
 
 logger = logging.getLogger(__name__)

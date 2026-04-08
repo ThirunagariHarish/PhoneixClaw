@@ -14,7 +14,6 @@ from datetime import datetime
 
 from .base import parse_rss_datetime
 
-
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 
 

@@ -5,15 +5,14 @@ Pairs buy/sell signals chronologically to compute entry/exit/P&L for each trade.
 
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.db.models.channel_message import ChannelMessage
 from shared.db.models.backtest_trade import BacktestTrade
-from shared.nlp.signal_parser import parse_signal, pair_trades, MessageSignal
+from shared.db.models.channel_message import ChannelMessage
+from shared.nlp.signal_parser import MessageSignal, pair_trades, parse_signal
 
 logger = logging.getLogger(__name__)
 

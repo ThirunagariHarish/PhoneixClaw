@@ -21,9 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper factories — lightweight stand-ins for ORM objects
 # ---------------------------------------------------------------------------
@@ -311,7 +308,8 @@ class TestCreateAnalystPaperStatus:
         gateway = gw.AgentGateway()
 
         # Stub budget check (always OK)
-        import sys, types as _types
+        import sys
+        import types as _types
         budget_stub = _types.ModuleType("apps.api.src.services.budget_enforcer")
         budget_stub.check_budget = AsyncMock(return_value={"ok": True})
         sys.modules["apps.api.src.services.budget_enforcer"] = budget_stub

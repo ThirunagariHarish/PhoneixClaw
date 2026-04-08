@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.models.channel_message import ChannelMessage
+
 from .base_adapter import BaseMessageAdapter
 from .discord_adapter import DiscordAdapter
 from .reddit_adapter import RedditAdapter

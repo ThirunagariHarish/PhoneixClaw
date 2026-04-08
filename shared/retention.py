@@ -17,6 +17,7 @@ warnings.warn(
 
 try:
     from sqlalchemy import delete, func, select
+
     from shared.db.engine import async_session as AsyncSessionLocal
     # V1 models no longer exist — stubs for type reference only
     NotificationLog = None

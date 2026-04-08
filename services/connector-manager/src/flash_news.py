@@ -3,7 +3,6 @@ Flash News Processor — sub-second headline classification using SLMs.
 Subscribes to news feeds, matches against historical price reactions, publishes alerts.
 """
 
-import asyncio
 import json
 import logging
 import os

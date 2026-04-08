@@ -3,6 +3,16 @@ Orchestrator service entrypoint — routes events from Redis streams
 to the appropriate handlers.
 
 M2.1: Central orchestration layer.
+
+Phase 15.8 additions
+--------------------
+- Reads ``PM_TOP_BETS_ENABLED`` (default: ``"true"``) and ``PM_TOP_BETS_VENUE``
+  (default: ``"robinhood_predictions"``) env vars.
+- When enabled, constructs a :class:`~agents.polymarket.top_bets.agent.TopBetsAgent`
+  wrapped in a :class:`~services.orchestrator.src.pm_agent_runtime.PMAgentRuntime`
+  and starts it as a background asyncio task alongside the stream-poll loop.
+- Registers the runtime with ``register_pm_runtime`` so the existing
+  kill-switch fan-out handler can trip/rearm the agent.
 """
 
 import asyncio
@@ -112,13 +122,65 @@ async def lifespan(app: FastAPI):
     r = await _get_redis()
     poll_task = asyncio.create_task(_poll_streams(r))
     logger.info("Orchestrator stream polling started")
+
+    # ------------------------------------------------------------------
+    # Phase 15.8: Start TopBetsAgent if enabled
+    # ------------------------------------------------------------------
+    _top_bets_task: asyncio.Task | None = None
+    _pm_runtime = None
+
+    _pm_enabled = os.getenv("PM_TOP_BETS_ENABLED", "true").lower() == "true"
+    if _pm_enabled:
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from agents.polymarket.top_bets.agent import TopBetsAgent
+            from services.orchestrator.src.pm_agent_runtime import build_runtime
+
+            _db_url = os.getenv(
+                "DATABASE_URL",
+                "postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoenixtrader",
+            )
+            _engine = create_async_engine(_db_url, echo=False, pool_pre_ping=True)
+            _session_factory = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+            _venue = os.getenv("PM_TOP_BETS_VENUE", "robinhood_predictions")
+            _top_bets_agent = TopBetsAgent(
+                db_session_factory=_session_factory,
+                redis_url=REDIS_URL,
+                venue_name=_venue,
+            )
+            _pm_runtime = build_runtime(agent=_top_bets_agent, redis_client=r)
+            register_pm_runtime(_pm_runtime)
+            _top_bets_task = asyncio.create_task(_pm_runtime.run())
+            logger.info("pm_top_bets agent started (venue=%s)", _venue)
+        except Exception:  # noqa: BLE001
+            logger.exception("pm_top_bets agent failed to start — orchestrator continues without it")
+    else:
+        logger.info("pm_top_bets agent disabled (PM_TOP_BETS_ENABLED != true)")
+
     yield
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
     _shutdown_event.set()
     poll_task.cancel()
     try:
         await poll_task
     except asyncio.CancelledError:
         pass
+
+    if _pm_runtime is not None:
+        _pm_runtime.stop()
+    if _top_bets_task is not None:
+        _top_bets_task.cancel()
+        try:
+            await _top_bets_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
     await r.aclose()
     logger.info("Orchestrator shutdown complete")
 

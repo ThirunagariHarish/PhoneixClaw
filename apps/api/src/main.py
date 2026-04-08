@@ -86,6 +86,7 @@ from apps.api.src.routes import pm_research as pm_research_routes
 from apps.api.src.routes import pm_venues as pm_venues_routes
 from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
 from apps.api.src.routes import wiki as wiki_routes
+from apps.api.src.routes import consolidation as consolidation_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -282,6 +283,25 @@ async def _ensure_prod_schema() -> None:
         # pm_chat_messages safety (Phase 15.6 — SSE partial flag)
         ("pm_chat_messages.is_partial",
          "ALTER TABLE pm_chat_messages ADD COLUMN IF NOT EXISTS is_partial BOOLEAN DEFAULT false"),
+        # Phase 3 safety net: consolidation_runs table (migration 036)
+        ("table consolidation_runs",
+         "CREATE TABLE IF NOT EXISTS consolidation_runs ("
+         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+         "agent_id UUID, "
+         "run_type VARCHAR(20) NOT NULL DEFAULT 'nightly', "
+         "status VARCHAR(20) NOT NULL DEFAULT 'pending', "
+         "scheduled_for TIMESTAMPTZ, "
+         "started_at TIMESTAMPTZ, "
+         "completed_at TIMESTAMPTZ, "
+         "trades_analyzed INTEGER NOT NULL DEFAULT 0, "
+         "wiki_entries_written INTEGER NOT NULL DEFAULT 0, "
+         "wiki_entries_updated INTEGER NOT NULL DEFAULT 0, "
+         "wiki_entries_pruned INTEGER NOT NULL DEFAULT 0, "
+         "patterns_found INTEGER NOT NULL DEFAULT 0, "
+         "rules_proposed INTEGER NOT NULL DEFAULT 0, "
+         "consolidation_report TEXT, "
+         "error_message TEXT, "
+         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"),
     ]
 
     engine = get_engine()
@@ -704,6 +724,7 @@ app.include_router(pm_venues_routes.router)
 app.include_router(pm_pipeline_routes.router)
 app.include_router(wiki_routes.router)
 app.include_router(wiki_routes.brain_router)
+app.include_router(consolidation_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

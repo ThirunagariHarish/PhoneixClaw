@@ -1,6 +1,7 @@
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch
 
 from services.global_monitor.src.circuit_breaker import (
     CircuitBreaker,

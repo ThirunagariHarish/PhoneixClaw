@@ -4,7 +4,7 @@ Load test for Phoenix v2 API using Locust.
 M3.13: Performance and load testing.
 """
 
-from locust import HttpUser, task, between
+from locust import HttpUser, between, task
 
 
 class PhoenixUser(HttpUser):

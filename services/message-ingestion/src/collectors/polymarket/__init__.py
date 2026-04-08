@@ -14,11 +14,11 @@ no order routing, no consumer side.
 """
 
 from .base import BasePMNewsCollector, PMNewsItem
-from .publisher import PMNewsPublisher
-from .election import ElectionNewsCollector
-from .sports import SportsNewsCollector
-from .macro import MacroNewsCollector
 from .crypto import CryptoNewsCollector
+from .election import ElectionNewsCollector
+from .macro import MacroNewsCollector
+from .publisher import PMNewsPublisher
+from .sports import SportsNewsCollector
 
 __all__ = [
     "BasePMNewsCollector",

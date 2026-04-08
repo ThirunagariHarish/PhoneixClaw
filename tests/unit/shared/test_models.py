@@ -19,7 +19,6 @@ from shared.db.models import (
     User,
 )
 
-
 _EXPECTED_TABLES = {
     User: "users",
     Agent: "agents",

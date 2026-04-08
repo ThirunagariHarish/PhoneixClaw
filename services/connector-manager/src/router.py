@@ -6,7 +6,6 @@ Reference: PRD Section 4 (Signal Flow), ArchitecturePlan §5.
 """
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from services.connector_manager.src.base import ConnectorMessage

@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.models.agent import Agent, AgentBacktest, AgentLog
 
-
 # ---------------------------------------------------------------------------
 # Thresholds — all rules must satisfy these to be eligible for activation
 # ---------------------------------------------------------------------------

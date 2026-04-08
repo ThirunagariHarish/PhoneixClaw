@@ -4,11 +4,11 @@ Alembic env for Phoenix v2 shared/db. Run: alembic -c shared/db/migrations/alemb
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from alembic import context
 from shared.db.engine import get_database_url
 from shared.db.models.agent import Agent  # noqa: F401 — register table
 from shared.db.models.base import Base

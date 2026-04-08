@@ -11,11 +11,11 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from .portfolio_math import (
-    rolling_sharpe,
-    max_drawdown,
     current_drawdown,
-    win_rate,
+    max_drawdown,
     profit_factor,
+    rolling_sharpe,
+    win_rate,
 )
 
 registry = CollectorRegistry()

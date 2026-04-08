@@ -7,6 +7,7 @@ Reference: ImplementationPlan.md Section 5 M1.2.
 """
 
 import os
+
 import pytest
 
 # Skip entire module if not running infra (e.g. no Docker)

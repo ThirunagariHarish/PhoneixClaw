@@ -1,10 +1,11 @@
 """Tests for agents/analyst/personas/library.py"""
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import pytest
+
 from agents.analyst.personas.library import PERSONA_LIBRARY, get_persona
 
 EXPECTED_PERSONAS = [
@@ -43,7 +44,6 @@ def test_confidence_threshold_in_valid_range():
 
 
 def test_stop_loss_pct_values():
-    from agents.analyst.personas.base import PersonaConfig
     for persona in PERSONA_LIBRARY.values():
         pct = persona.stop_loss_pct()
         assert pct > 0

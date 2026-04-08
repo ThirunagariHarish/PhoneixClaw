@@ -7,7 +7,6 @@ M2.8: Automation scheduling.
 
 import re
 
-
 _WEEKDAY_MAP = {
     "monday": "1", "tuesday": "2", "wednesday": "3", "thursday": "4",
     "friday": "5", "saturday": "6", "sunday": "0",

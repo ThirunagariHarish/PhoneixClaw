@@ -6,10 +6,8 @@ M2.11: Real-time WebSocket gateway.
 """
 
 import asyncio
-import json
 import logging
 import os
-from typing import Any
 
 import redis.asyncio as redis
 

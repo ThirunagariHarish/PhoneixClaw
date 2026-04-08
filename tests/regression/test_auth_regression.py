@@ -4,7 +4,6 @@ Regression tests for JWT auth, RBAC, and MFA. M1.3.
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 import pytest
 from jose import jwt

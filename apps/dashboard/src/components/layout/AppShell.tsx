@@ -25,7 +25,7 @@ import {
   LayoutDashboard, TrendingUp, BarChart3, Bot, Target, Plug, BookOpen,
   LineChart, Settings, Shield, ListTodo, Moon, Sun, LogOut, Zap,
   Activity, Fish, MessageCircle, ShieldCheck, Bell, PanelLeftClose, PanelLeft,
-  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network, Mail,
+  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network, Mail, Brain,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -54,6 +54,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/morning-briefing', icon: Zap, label: 'Morning Briefing' },
       { to: '/briefings', icon: Mail, label: 'Briefing History' },
       { to: '/autoresearch', icon: FlaskConical, label: 'AutoResearch' },
+      { to: '/brain/wiki', icon: Brain, label: 'Phoenix Brain' },
     ],
   },
   {
@@ -63,7 +64,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/daily-signals', icon: Zap, label: 'Daily Signals' },
       { to: '/zero-dte', icon: Activity, label: '0DTE SPX' },
       { to: '/positions', icon: TrendingUp, label: 'Positions' },
-      { to: '/polymarket', icon: Activity, label: 'Polymarket' },
+      { to: '/polymarket', icon: Activity, label: 'Prediction Markets' },
     ],
   },
   {

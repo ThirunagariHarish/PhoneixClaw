@@ -7,7 +7,6 @@ M2.7: Backtest runner sandbox.
 
 import json
 import logging
-import resource
 import subprocess
 import sys
 import tempfile

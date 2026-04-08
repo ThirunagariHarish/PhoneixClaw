@@ -3,10 +3,8 @@ Regression tests for skill catalog and sync. M1.7.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 SKILLS_ROOT = Path(__file__).resolve().parents[2] / "openclaw" / "skills"
 

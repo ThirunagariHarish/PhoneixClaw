@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from services.skill_sync.src.watcher import SkillChange, SkillWatcher
+from services.skill_sync.src.watcher import SkillWatcher
 
 
 class TestSkillWatcherHash:

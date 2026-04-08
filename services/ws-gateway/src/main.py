@@ -2,6 +2,7 @@
 WebSocket gateway entrypoint — runs create_gateway().
 """
 import asyncio
+
 from .gateway import create_gateway
 
 if __name__ == "__main__":

@@ -332,6 +332,51 @@ async def _job_trade_feedback() -> None:
         logger.exception("[scheduler] Trade feedback agent spawn failed")
 
 
+async def _job_consolidation_run() -> None:
+    """Phase 3: Nightly consolidation pipeline ("Agent Sleep") at 18:15 ET.
+
+    Checks that today is a trading day, then runs ConsolidationService for
+    every agent with manifest->>'consolidation_enabled' = 'true'.
+    """
+    from datetime import date as _date
+
+    from shared.config.market_holidays import is_trading_day
+
+    if not is_trading_day(_date.today()):
+        logger.info("[scheduler] consolidation_run skipped — not a trading day")
+        return
+
+    try:
+        from shared.db.engine import get_session
+        from apps.api.src.repositories.consolidation_repo import ConsolidationRepository
+        from apps.api.src.services.consolidation_service import ConsolidationService
+
+        async for session in get_session():
+            repo = ConsolidationRepository(session)
+            agent_ids = await repo.list_agents_due_for_consolidation()
+            logger.info("[scheduler] consolidation_run: %d agents eligible", len(agent_ids))
+
+            for agent_id in agent_ids:
+                try:
+                    run = await repo.create_run(agent_id=agent_id, run_type="nightly")
+                    await session.commit()
+                    svc = ConsolidationService(session)
+                    completed = await svc.run_consolidation(
+                        agent_id=agent_id, run_id=run.id, run_type="nightly"
+                    )
+                    logger.info(
+                        "[scheduler] consolidation_run agent=%s status=%s patterns=%d",
+                        agent_id,
+                        completed.status,
+                        completed.patterns_found,
+                    )
+                except Exception:
+                    logger.exception("[scheduler] consolidation_run failed for agent=%s", agent_id)
+            break
+    except Exception:
+        logger.exception("[scheduler] consolidation_run job failed")
+
+
 async def _job_heartbeat_check() -> None:
     """Mark stale agent sessions (last_heartbeat > 15 min) as error."""
     try:
@@ -444,6 +489,16 @@ def start_scheduler() -> "AsyncIOScheduler | None":
         trigger=CronTrigger(hour=3, minute=30, timezone=_ET_TZ),
         id="trade_feedback",
         name="Trade Outcome Feedback (T11)",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 18:15 ET weekdays — nightly consolidation ("Agent Sleep")
+    _scheduler.add_job(
+        _job_consolidation_run,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=18, minute=15, timezone=_ET_TZ),
+        id="consolidation_run",
+        name="Nightly Consolidation (Agent Sleep)",
         replace_existing=True,
         misfire_grace_time=3600,
     )

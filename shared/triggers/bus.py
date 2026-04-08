@@ -32,7 +32,7 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import AsyncIterator
 

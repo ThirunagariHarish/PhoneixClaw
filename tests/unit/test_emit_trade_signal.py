@@ -1,7 +1,7 @@
 """Tests for agents/analyst/tools/emit_trade_signal.py"""
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -33,7 +33,6 @@ def test_emit_returns_empty_string_on_db_failure():
 
 def test_emit_returns_empty_string_when_no_db_url():
     """When DATABASE_URL is unset and no db_url provided, must return empty string."""
-    import importlib
     import agents.analyst.tools.emit_trade_signal as _mod
 
     original = os.environ.pop("DATABASE_URL", None)

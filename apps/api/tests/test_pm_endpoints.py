@@ -528,8 +528,8 @@ def test_chat_history_isolated_by_user(store):
         yield fake_a
 
     app.dependency_overrides[get_session] = _override_a
-    with TestClient(app, raise_server_exceptions=False) as client_a:
-        resp_a = client_a.get("/api/v2/pm/chat/history", headers=headers_a)
+    client_a = TestClient(app, raise_server_exceptions=False)
+    resp_a = client_a.get("/api/v2/pm/chat/history", headers=headers_a)
     assert resp_a.status_code == 200
     assert len(resp_a.json()) >= 1
 
@@ -538,8 +538,8 @@ def test_chat_history_isolated_by_user(store):
         yield fake_b
 
     app.dependency_overrides[get_session] = _override_b
-    with TestClient(app, raise_server_exceptions=False) as client_b:
-        resp_b = client_b.get("/api/v2/pm/chat/history", headers=headers_b)
+    client_b = TestClient(app, raise_server_exceptions=False)
+    resp_b = client_b.get("/api/v2/pm/chat/history", headers=headers_b)
     app.dependency_overrides.pop(get_session, None)
 
     assert resp_b.status_code == 200

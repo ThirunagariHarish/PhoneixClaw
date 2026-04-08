@@ -41,6 +41,7 @@ import MorningBriefingPage from '@/pages/MorningBriefing'
 import BriefingHistoryPage from '@/pages/BriefingHistory'
 import AutoResearchPage from '@/pages/AutoResearch'
 import PolymarketPage from '@/pages/polymarket'
+import BrainWikiPage from '@/pages/BrainWikiPage'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -125,6 +126,7 @@ function AppRoutes() {
         <Route path="briefings" element={<BriefingHistoryPage />} />
         <Route path="autoresearch" element={<AutoResearchPage />} />
         <Route path="polymarket" element={<PolymarketPage />} />
+        <Route path="brain/wiki" element={<BrainWikiPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

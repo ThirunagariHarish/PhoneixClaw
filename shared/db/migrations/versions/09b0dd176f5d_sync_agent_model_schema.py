@@ -7,8 +7,8 @@ Create Date: 2026-04-07 13:20:57.634183
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = '09b0dd176f5d'
@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _has_column(table: str, column: str) -> bool:
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
     conn = op.get_bind()
     result = conn.execute(text(
         "SELECT 1 FROM information_schema.columns "

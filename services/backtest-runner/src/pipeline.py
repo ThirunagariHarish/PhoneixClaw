@@ -7,19 +7,19 @@ Replaces the mock backtest-complete endpoint with a real analysis pipeline.
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.models.agent import Agent, AgentBacktest
-from shared.db.models.connector import Connector, ConnectorAgent
-from shared.db.models.channel_message import ChannelMessage
 from shared.db.models.backtest_trade import BacktestTrade
+from shared.db.models.channel_message import ChannelMessage
+from shared.db.models.connector import Connector, ConnectorAgent
 
-from .trade_reconstructor import reconstruct_trades
 from .market_enricher import enrich_trades
 from .pattern_engine import analyze_patterns
+from .trade_reconstructor import reconstruct_trades
 
 logger = logging.getLogger(__name__)
 

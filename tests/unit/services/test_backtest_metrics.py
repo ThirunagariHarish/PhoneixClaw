@@ -1,4 +1,3 @@
-import math
 import statistics
 
 from services.backtest_runner.src.engine import BacktestMetrics

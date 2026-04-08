@@ -54,5 +54,15 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── Prediction Markets — TopBetsAgent dev override (Phase 15.8) ────────────
+  # Inherits the full service definition from docker-compose.yml.
+  # Only the env var override is specified here; the base service (profile,
+  # depends_on, restart, command) is inherited.
+  pm-top-bets-agent:
+    environment:
+      - PM_TOP_BETS_VENUE=robinhood_predictions
+      - PM_TOP_BETS_ENABLED=true
+      - PM_TOP_BETS_CYCLE_INTERVAL_S=60
+
 volumes:
   pgdata:

@@ -14,7 +14,6 @@ from typing import Iterable
 from .base import CATEGORY_CRYPTO, BasePMNewsCollector, PMNewsItem, make_item_id
 from .rss import parse_feed
 
-
 DEFAULT_CRYPTO_KEYWORDS = (
     "bitcoin",
     "btc",

@@ -2,7 +2,6 @@
 Deduplication helper using Redis for Phoenix v2.
 """
 
-from typing import Any
 
 import redis.asyncio as redis
 

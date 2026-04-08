@@ -31,7 +31,6 @@ from collectors.polymarket.publisher import PMNewsPublisher  # noqa: E402
 from collectors.polymarket.rss import parse_feed  # noqa: E402
 from collectors.polymarket.sports import SportsNewsCollector  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # fakes
 # ---------------------------------------------------------------------------

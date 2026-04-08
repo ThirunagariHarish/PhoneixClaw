@@ -92,6 +92,39 @@ class SmtpConfig:
 
 
 @dataclass
+class PredictionMarketsConfig:
+    """Configuration for the Prediction Markets feature (Phase 15).
+
+    All values default to safe, functional values so the platform starts
+    without any environment customisation.
+
+    Environment variables
+    ---------------------
+    PM_TOP_BETS_ENABLED
+        Whether the TopBetsAgent should start automatically (default: ``"true"``).
+    PM_TOP_BETS_VENUE
+        Venue registry key forwarded to the venue factory (default: ``"robinhood_predictions"``).
+    PM_TOP_BETS_CYCLE_INTERVAL_S
+        Seconds between scan cycles (default: ``"60"``).
+    PM_RESEARCH_ENABLED
+        Whether the auto-research runner is active (default: ``"true"``).
+    """
+
+    pm_top_bets_enabled: bool = field(
+        default_factory=lambda: os.getenv("PM_TOP_BETS_ENABLED", "true").lower() == "true"
+    )
+    pm_top_bets_venue: str = field(
+        default_factory=lambda: os.getenv("PM_TOP_BETS_VENUE", "robinhood_predictions")
+    )
+    pm_top_bets_cycle_interval_s: int = field(
+        default_factory=lambda: int(os.getenv("PM_TOP_BETS_CYCLE_INTERVAL_S", "60"))
+    )
+    pm_research_enabled: bool = field(
+        default_factory=lambda: os.getenv("PM_RESEARCH_ENABLED", "true").lower() == "true"
+    )
+
+
+@dataclass
 class AppConfig:
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -104,6 +137,7 @@ class AppConfig:
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     smtp: SmtpConfig = field(default_factory=SmtpConfig)
+    prediction_markets: PredictionMarketsConfig = field(default_factory=PredictionMarketsConfig)
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
 

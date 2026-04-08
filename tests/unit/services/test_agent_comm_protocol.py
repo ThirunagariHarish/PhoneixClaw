@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from services.agent_comm.src.protocol import (
     MessageEnvelope,

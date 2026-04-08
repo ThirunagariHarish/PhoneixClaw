@@ -3,14 +3,13 @@ Regression tests for agent lifecycle and state machine. M2.4.
 """
 
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 
 from services.orchestrator.src.state_machine import (
+    TRANSITIONS,
     AgentState,
     AgentStateMachine,
-    TRANSITIONS,
     TransitionError,
 )
 

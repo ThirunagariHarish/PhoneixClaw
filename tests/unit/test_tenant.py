@@ -7,8 +7,7 @@ Uses lightweight in-memory models to avoid PostgreSQL JSONB/SQLite incompatibili
 import uuid
 
 import pytest
-from sqlalchemy import Column, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

@@ -1,10 +1,10 @@
 """Agent metrics snapshots for dashboard charts."""
 
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.dialects.postgresql import UUID

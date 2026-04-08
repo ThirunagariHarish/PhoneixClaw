@@ -4,7 +4,6 @@ Tests the full flow: connector tags, agent creation, backtesting pipeline,
 signal parsing, pattern engine, and live pipeline.
 """
 
-import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -114,7 +113,7 @@ def test_signal_parser_close():
 
 def test_trade_pairing():
     """pair_trades should match buy and sell signals for the same ticker."""
-    from shared.nlp.signal_parser import pair_trades, MessageSignal, ParsedSignal
+    from shared.nlp.signal_parser import MessageSignal, ParsedSignal, pair_trades
     signals = [
         MessageSignal(
             message_id="1", author="trader", content="BUY $AAPL",

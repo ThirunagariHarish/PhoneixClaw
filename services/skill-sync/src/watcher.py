@@ -11,7 +11,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

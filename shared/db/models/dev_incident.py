@@ -6,10 +6,10 @@ Reference: PRD Section 3.11, ArchitecturePlan Section 4.
 """
 
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID

@@ -2,7 +2,6 @@
 E2E tests for mobile responsive layout. M1.13.
 """
 
-import pytest
 from playwright.sync_api import Page, expect
 
 

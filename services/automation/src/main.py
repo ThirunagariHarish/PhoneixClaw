@@ -3,6 +3,7 @@ Automation scheduler entrypoint — runs the scheduler loop.
 """
 import asyncio
 import logging
+
 from .scheduler import AutomationScheduler
 
 logging.basicConfig(level=logging.INFO)

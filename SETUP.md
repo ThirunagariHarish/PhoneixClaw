@@ -457,7 +457,49 @@ make docker-down
 
 ---
 
-## 11. Load Testing
+## 11. Prediction Markets Agent
+
+The **TopBetsAgent** is a 24/7 autonomous scanner that surfaces high-confidence prediction-market bets from Robinhood Predictions (primary venue). All trades in Phase 15 are **paper mode only** — no real money is ever committed.
+
+### Start the agent (standalone)
+
+```bash
+# From repo root (infrastructure must already be running)
+PYTHONPATH=. python -m agents.polymarket.top_bets.runner
+```
+
+### Start via Docker (agents profile)
+
+The agent is included in the `agents` Docker Compose profile so it does **not** start with the default `docker compose up`. To include it:
+
+```bash
+docker compose --profile agents up -d
+```
+
+Or run it alone:
+
+```bash
+docker compose --profile agents up pm-top-bets-agent
+```
+
+### Key environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PM_TOP_BETS_ENABLED` | `true` | Enable/disable the agent entirely |
+| `PM_TOP_BETS_VENUE` | `robinhood_predictions` | Venue registry key |
+| `PM_TOP_BETS_CYCLE_INTERVAL_S` | `60` | Seconds between scan cycles |
+| `PM_RESEARCH_ENABLED` | `true` | Enable nightly auto-research runner |
+
+These are all optional — sensible defaults allow the agent to run without any additional configuration.
+
+### Paper mode note
+
+> **All trades in Phase 15 are paper-only.** The "Place Bet" action in the dashboard creates a paper order record and does **not** submit any order to Robinhood or any other broker. Live execution is planned for Phase 16.
+
+---
+
+## 12. Load Testing
 
 ### Install Locust:
 
@@ -484,7 +526,7 @@ Locust automatically registers test users and runs requests against all API endp
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### "Connection refused" on port 5432/9092/6379
 

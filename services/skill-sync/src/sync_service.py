@@ -5,9 +5,7 @@ M2.2: Skill distribution across all instances.
 Reference: PRD Section 12.7, ArchitecturePlan §6.
 """
 
-import asyncio
 import hashlib
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path

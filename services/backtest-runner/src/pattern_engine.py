@@ -6,9 +6,8 @@ Outputs a set of PatternRules stored as JSONB on AgentBacktest.metrics.
 """
 
 import logging
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional
 
 from shared.db.models.backtest_trade import BacktestTrade
 

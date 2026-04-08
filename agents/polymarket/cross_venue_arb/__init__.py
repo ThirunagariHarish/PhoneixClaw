@@ -15,8 +15,8 @@ See `docs/architecture/polymarket-tab.md` Phase 9.
 from .config import CrossVenueArbConfig, load_config
 from .detector import (
     CrossVenueArbDetector,
-    CrossVenueOpportunity,
     CrossVenueDisabledError,
+    CrossVenueOpportunity,
 )
 
 __all__ = [

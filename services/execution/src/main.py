@@ -11,8 +11,8 @@ from prometheus_client import generate_latest
 from starlette.responses import Response
 
 from .consumer import TradeIntentConsumer
-from .risk_chain import RiskCheckChain
 from .executor import BrokerExecutor
+from .risk_chain import RiskCheckChain
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

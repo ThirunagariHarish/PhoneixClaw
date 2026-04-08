@@ -3,7 +3,7 @@ Playwright fixtures for Phoenix v2 E2E tests.
 """
 
 import pytest
-from playwright.sync_api import Page, BrowserContext
+from playwright.sync_api import Page
 
 
 @pytest.fixture(scope="session")

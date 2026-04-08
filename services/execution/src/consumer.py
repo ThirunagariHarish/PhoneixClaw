@@ -8,7 +8,6 @@ Reference: PRD Section 8, ArchitecturePlan §5.
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)

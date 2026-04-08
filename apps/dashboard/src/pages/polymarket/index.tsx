@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   ShieldAlert,
-  AlertTriangle,
+  Info,
   Activity,
   Pause,
   Play,
@@ -32,6 +32,10 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { VenueSelectorPills, type VenueId } from './VenueSelectorPills'
+import { TopBetsPanel } from './TopBetsPanel'
+import { ChatTab } from './ChatTab'
+import { LogsTab } from './LogsTab'
 
 // ---------------------------------------------------------------------------
 // Types (mirror Phase 10 response shapes — kept loose on purpose)
@@ -256,16 +260,16 @@ function JurisdictionBanner() {
 
   return (
     <>
-      <div className="flex items-start gap-3 rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4">
-        <AlertTriangle className="h-5 w-5 shrink-0 text-yellow-400" />
+      <div className="flex items-start gap-3 rounded-xl border border-blue-500/40 bg-blue-500/10 p-4">
+        <Info className="h-5 w-5 shrink-0 text-blue-400" />
         <div className="flex-1">
-          <p className="text-sm font-semibold text-yellow-200">
-            Jurisdiction attestation required
+          <p className="text-sm font-semibold text-blue-200">
+            Prediction Markets — informational notice
           </p>
-          <p className="mt-1 text-xs text-yellow-100/80">
-            Polymarket is geo-blocked in the United States. Live trading is physically blocked
-            until you record a current jurisdiction attestation. You are solely responsible for
-            compliance with applicable law (see LEGAL.md).
+          <p className="mt-1 text-xs text-blue-100/80">
+            Prediction Markets are available in the US via Robinhood (primary) and Polymarket
+            (secondary). All trades in this tab are paper mode only. Record a jurisdiction
+            attestation to confirm you understand the applicable terms.
           </p>
         </div>
         <Button size="sm" onClick={() => setOpen(true)}>
@@ -452,6 +456,7 @@ function MarketsTab() {
   const category = searchParams.get('category') ?? ''
   const minVolume = searchParams.get('min_volume') ?? ''
   const tradeableOnly = searchParams.get('tradeable_only') === '1'
+  const [selectedVenue, setSelectedVenue] = useState<VenueId>('all')
 
   const updateParam = (key: string, value: string | boolean) => {
     const next = new URLSearchParams(searchParams)
@@ -488,6 +493,19 @@ function MarketsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Venue selector + Top Bets Panel */}
+      <div className="space-y-3">
+        <VenueSelectorPills selected={selectedVenue} onChange={setSelectedVenue} />
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <Activity className="h-4 w-4 text-purple-400" />
+            Top Bets
+          </h3>
+          <TopBetsPanel venue={selectedVenue} />
+        </div>
+      </div>
+
+      {/* Existing market list */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
         <div className="space-y-1">
           <Label htmlFor="cat">Category</Label>
@@ -1058,10 +1076,10 @@ export default function PolymarketPage() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold">
             <Activity className="h-6 w-6 text-purple-500" />
-            Polymarket
+            Prediction Markets
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Prediction-market scanner, strategies, orders, positions, and promotion gate.
+            Prediction-market scanner, strategies, orders, positions, promotion gate, chat, and logs.
           </p>
         </div>
         <KillSwitchButton />
@@ -1078,6 +1096,8 @@ export default function PolymarketPage() {
           <TabsTrigger value="promotion">Promotion</TabsTrigger>
           <TabsTrigger value="briefing">Briefing</TabsTrigger>
           <TabsTrigger value="risk">Risk</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
         <TabsContent value="markets">
           <MarketsTab />
@@ -1099,6 +1119,12 @@ export default function PolymarketPage() {
         </TabsContent>
         <TabsContent value="risk">
           <RiskTab />
+        </TabsContent>
+        <TabsContent value="chat">
+          <ChatTab />
+        </TabsContent>
+        <TabsContent value="logs">
+          <LogsTab />
         </TabsContent>
       </Tabs>
     </div>

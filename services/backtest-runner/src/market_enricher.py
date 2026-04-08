@@ -7,7 +7,7 @@ Alpha Vantage when connectors are configured.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Optional
 
 from shared.db.models.backtest_trade import BacktestTrade

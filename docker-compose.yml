@@ -384,6 +384,27 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Prediction Markets — TopBetsAgent (Phase 15.8) ─────────────────────────
+  # Included in the "agents" profile so it does NOT start with plain
+  # `docker compose up`.  Start explicitly with:
+  #   docker compose --profile agents up pm-top-bets-agent
+  pm-top-bets-agent:
+    build: .
+    command: python -m agents.polymarket.top_bets.runner
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PM_TOP_BETS_VENUE=${PM_TOP_BETS_VENUE:-robinhood_predictions}
+      - PM_TOP_BETS_ENABLED=${PM_TOP_BETS_ENABLED:-true}
+      - PM_TOP_BETS_CYCLE_INTERVAL_S=${PM_TOP_BETS_CYCLE_INTERVAL_S:-60}
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    profiles:
+      - agents
+
 volumes:
   pgdata:
   miniodata:

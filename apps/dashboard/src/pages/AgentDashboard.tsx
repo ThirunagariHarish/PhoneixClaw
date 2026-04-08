@@ -36,6 +36,8 @@ import { AgentMessagesTab } from '@/components/AgentMessagesTab'
 import { AgentScheduleTab } from '@/components/AgentScheduleTab'
 import { AgentTerminal } from '@/components/AgentTerminal'
 import { AgentSkillsTab } from '@/components/AgentSkillsTab'
+import { AgentWikiTab } from '@/components/AgentWikiTab'
+import { ConsolidationPanel } from '@/components/ConsolidationPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
@@ -85,6 +87,26 @@ interface ManifestData {
 interface Rule {
   name: string; condition: string; weight: number
   source?: string; enabled?: boolean; description?: string
+}
+
+interface PendingImprovement {
+  id: string
+  type?: string
+  description?: string
+  backtest_status?: 'pending' | 'running' | 'passed' | 'failed' | 'borderline'
+  backtest_passed?: boolean
+  backtest_metrics?: {
+    sharpe?: number; win_rate?: number; max_drawdown?: number
+    profit_factor?: number; trade_count?: number
+  }
+  backtest_run_at?: string
+  backtest_thresholds_missed?: string[]
+}
+
+interface PendingImprovementsData {
+  agent_id: string
+  items: PendingImprovement[]
+  last_staged_at?: string
 }
 
 interface ModelResult {
@@ -650,6 +672,149 @@ function LogsTab({ id }: { id: string }) {
 }
 
 /* ================================================================
+   PENDING IMPROVEMENTS SECTION (Phase 0: Verifiable Alpha CI)
+   ================================================================ */
+
+function PendingImprovementsSection({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient()
+
+  const { data: pendingData, isLoading } = useQuery<PendingImprovementsData>({
+    queryKey: ['pending-improvements', agentId],
+    queryFn: async () => {
+      try {
+        return (await api.get(`/api/v2/agents/${agentId}/pending-improvements`)).data
+      } catch {
+        return { agent_id: agentId, items: [] }
+      }
+    },
+    refetchInterval: 15_000,
+  })
+
+  const backtestMut = useMutation({
+    mutationFn: async (improvementId: string) => {
+      return (
+        await api.post(
+          `/api/v2/agents/${agentId}/improvements/${improvementId}/run-backtest`,
+        )
+      ).data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-improvements', agentId] })
+      toast.success('Backtest CI started')
+    },
+    onError: () => toast.error('Failed to start backtest CI'),
+  })
+
+  const activateMut = useMutation({
+    mutationFn: async (changeId: string) => {
+      return (
+        await api.post(
+          `/api/v2/agents/${agentId}/pending-improvements/${changeId}/approve`,
+        )
+      ).data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-improvements', agentId] })
+      toast.success('Rule activated')
+    },
+    onError: () => toast.error('Failed to activate rule'),
+  })
+
+  const items = pendingData?.items ?? []
+  if (isLoading) return <div className="text-xs text-muted-foreground p-2 animate-pulse">Loading pending improvements…</div>
+  if (items.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Pending Improvements ({items.length})</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          {items.map((item) => {
+            const status = item.backtest_status
+            const canActivate = item.backtest_passed === true
+            const isRunning = backtestMut.isPending
+
+            let statusBadge: JSX.Element
+            if (status === 'passed') {
+              statusBadge = <Badge variant="default" className="text-[10px] bg-emerald-600 hover:bg-emerald-600">✓ Validated</Badge>
+            } else if (status === 'borderline') {
+              statusBadge = <Badge variant="outline" className="text-[10px] text-yellow-600 border-yellow-600">⚠ Borderline — Review Required</Badge>
+            } else if (status === 'failed') {
+              statusBadge = <Badge variant="destructive" className="text-[10px]">✗ Failed Validation</Badge>
+            } else if (status === 'running') {
+              statusBadge = <Badge variant="outline" className="text-[10px] text-muted-foreground">⏳ Running…</Badge>
+            } else {
+              statusBadge = <Badge variant="outline" className="text-[10px] text-orange-500 border-orange-500">⚠ Pending Validation</Badge>
+            }
+
+            const showRunButton = status !== 'passed' && status !== 'running'
+            const showActivateButton = canActivate
+            const activateDisabled = !canActivate
+
+            return (
+              <div key={item.id} className="flex items-start gap-3 rounded-lg border p-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium">{item.description ?? item.type ?? item.id}</p>
+                  {item.backtest_metrics && status && status !== 'running' && (
+                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                      Sharpe {item.backtest_metrics.sharpe?.toFixed(2) ?? '—'} ·{' '}
+                      WR {item.backtest_metrics.win_rate != null ? `${(item.backtest_metrics.win_rate * 100).toFixed(1)}%` : '—'} ·{' '}
+                      DD {item.backtest_metrics.max_drawdown != null ? `${(item.backtest_metrics.max_drawdown * 100).toFixed(1)}%` : '—'} ·{' '}
+                      {item.backtest_metrics.trade_count ?? 0} trades
+                    </p>
+                  )}
+                  {item.backtest_thresholds_missed && item.backtest_thresholds_missed.length > 0 && (
+                    <p className="text-[10px] text-red-500 mt-0.5">
+                      Failed: {item.backtest_thresholds_missed.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                  {statusBadge}
+                  {showRunButton && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-[10px] h-6 px-2"
+                      onClick={() => backtestMut.mutate(item.id)}
+                      disabled={isRunning}
+                    >
+                      Run Backtest CI
+                    </Button>
+                  )}
+                  {showActivateButton ? (
+                    <Button
+                      size="sm"
+                      className="text-[10px] h-6 px-2"
+                      onClick={() => activateMut.mutate(item.id)}
+                      disabled={activateMut.isPending}
+                    >
+                      Activate Rule
+                    </Button>
+                  ) : (
+                    <span title="Rule failed backtest CI — cannot activate">
+                      <Button
+                        size="sm"
+                        className="text-[10px] h-6 px-2"
+                        disabled={activateDisabled}
+                      >
+                        Activate Rule
+                      </Button>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ================================================================
    RULES TAB
    ================================================================ */
 function RulesTab({ id }: { id: string }) {
@@ -776,6 +941,9 @@ function RulesTab({ id }: { id: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Phase 0: Verifiable Alpha CI — pending improvements with backtest gate */}
+      <PendingImprovementsSection agentId={id} />
     </div>
   )
 }
@@ -1373,7 +1541,7 @@ function RuntimeTab({ id }: { id: string }) {
 function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
   return (
     <Tabs defaultValue="portfolio">
-      <TabsList className="grid w-full grid-cols-10 max-w-4xl">
+      <TabsList className="grid w-full grid-cols-11 max-w-4xl">
         <TabsTrigger value="portfolio" className="text-xs"><TrendingUp className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Portfolio</TabsTrigger>
         <TabsTrigger value="trades" className="text-xs"><List className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Trades</TabsTrigger>
         <TabsTrigger value="chat" className="text-xs"><MessageSquare className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Chat</TabsTrigger>
@@ -1384,6 +1552,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
         <TabsTrigger value="rules" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Rules</TabsTrigger>
         <TabsTrigger value="runtime" className="text-xs"><Terminal className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Runtime</TabsTrigger>
         <TabsTrigger value="skills" className="text-xs"><Wrench className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Skills</TabsTrigger>
+        <TabsTrigger value="wiki" className="text-xs"><BookOpen className="h-3.5 w-3.5 mr-1 hidden sm:inline" />Wiki</TabsTrigger>
       </TabsList>
 
       <TabsContent value="portfolio" className="mt-4">
@@ -1412,6 +1581,10 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
       </TabsContent>
       <TabsContent value="skills" className="mt-4">
         <AgentSkillsTab agentId={id} agent={agent} />
+      </TabsContent>
+      <TabsContent value="wiki" className="mt-4">
+        <AgentWikiTab agentId={id} />
+        <ConsolidationPanel agentId={id} />
       </TabsContent>
     </Tabs>
   )

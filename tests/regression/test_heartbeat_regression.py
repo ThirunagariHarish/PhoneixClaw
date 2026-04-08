@@ -2,7 +2,6 @@
 Regression tests for heartbeat ingestion and instance management. M1.8.
 """
 
-import pytest
 
 
 class TestHeartbeatRegression:

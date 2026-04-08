@@ -1,10 +1,10 @@
 """Live trade records from running agents."""
 
 from __future__ import annotations
-from typing import Optional
 
 import uuid
 from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy import Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID

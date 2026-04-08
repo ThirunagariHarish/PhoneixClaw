@@ -9,7 +9,6 @@ from typing import Any
 
 from services.connector_manager.src.base import BaseConnector, ConnectorType
 
-
 _REGISTRY: dict[ConnectorType, type[BaseConnector]] = {}
 
 
