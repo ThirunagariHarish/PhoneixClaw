@@ -673,6 +673,29 @@ class AgentGateway:
                 "Report your resumed status to Phoenix."
             )
 
+        # Smart Context Builder (feature-flagged)
+        if os.environ.get("ENABLE_SMART_CONTEXT", "false").lower() == "true":
+            try:
+                from shared.context.builder import ContextBuilderService
+                async for db in _get_session():
+                    builder = ContextBuilderService(db)
+                    ctx = await builder.build(
+                        agent_id=agent_id,
+                        session_type="trading",
+                    )
+                    context_str = ctx.to_context_string()
+                    if context_str:
+                        prompt = context_str + "\n\n" + prompt
+                    logger.info(
+                        "[context_builder] Built context: %d tokens, %d wiki entries",
+                        ctx.total_tokens_estimated,
+                        ctx.wiki_entries_injected,
+                    )
+                    # Best-effort audit save
+                    await builder.save_audit(ctx)
+            except Exception as _ce:
+                logger.debug("[context_builder] non-fatal: %s", _ce)
+
         options = ClaudeAgentOptions(
             cwd=str(work_dir),
             permission_mode="dontAsk",

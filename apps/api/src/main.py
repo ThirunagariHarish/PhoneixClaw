@@ -302,6 +302,28 @@ async def _ensure_prod_schema() -> None:
          "consolidation_report TEXT, "
          "error_message TEXT, "
          "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"),
+        # Phase 5: indexes for consolidation_runs (idempotent; migration 036 covers fresh installs)
+        ("index idx_consolidation_agent_id",
+         "CREATE INDEX IF NOT EXISTS idx_consolidation_agent_id ON consolidation_runs(agent_id)"),
+        ("index idx_consolidation_status",
+         "CREATE INDEX IF NOT EXISTS idx_consolidation_status ON consolidation_runs(status)"),
+        # Phase 6: Smart Context Builder — context_sessions table (migration 037)
+        ("table context_sessions",
+         "CREATE TABLE IF NOT EXISTS context_sessions ("
+         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+         "agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE, "
+         "session_id UUID, "
+         "session_type VARCHAR(20) DEFAULT 'trading', "
+         "signal_symbol VARCHAR(20), "
+         "token_budget INT DEFAULT 8000, "
+         "tokens_used INT DEFAULT 0, "
+         "wiki_entries_injected INT DEFAULT 0, "
+         "trades_injected INT DEFAULT 0, "
+         "manifest_sections_injected VARCHAR[] DEFAULT '{}', "
+         "quality_score FLOAT DEFAULT 0.0, "
+         "built_at TIMESTAMPTZ DEFAULT now())"),
+        ("index idx_ctx_sessions_agent",
+         "CREATE INDEX IF NOT EXISTS idx_ctx_sessions_agent ON context_sessions(agent_id)"),
     ]
 
     engine = get_engine()
