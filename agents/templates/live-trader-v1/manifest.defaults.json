@@ -47,7 +47,9 @@
     "position_monitor",
     "pre_market_analyzer",
     "decision_engine",
-    "report_to_phoenix"
+    "report_to_phoenix",
+    "write_wiki_entry",
+    "nightly_consolidation"
   ],
   "skills": [
     "discord_monitor.md",

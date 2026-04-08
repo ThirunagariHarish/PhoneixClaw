@@ -243,26 +243,41 @@ async def _ensure_prod_schema() -> None:
                 closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """),
-        # Agent Knowledge Wiki tables (migration 035)
-        ("agent_wiki_entries.confidence_score",
+        # Agent Knowledge Wiki tables (migration 035) — full schema
+        ("agent_wiki_entries.full_schema",
          "CREATE TABLE IF NOT EXISTS agent_wiki_entries ("
          "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
-         "agent_id UUID, "
-         "category VARCHAR(50), "
-         "title VARCHAR(255), "
-         "content TEXT, "
+         "agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE, "
+         "user_id UUID REFERENCES users(id) ON DELETE SET NULL, "
+         "category VARCHAR(50) NOT NULL, "
+         "subcategory VARCHAR(100), "
+         "title VARCHAR(255) NOT NULL, "
+         "content TEXT NOT NULL, "
+         "tags VARCHAR[] DEFAULT '{}', "
+         "symbols VARCHAR[] DEFAULT '{}', "
+         "confidence_score FLOAT DEFAULT 0.5, "
+         "trade_ref_ids VARCHAR[] DEFAULT '{}', "
+         "created_by VARCHAR(10) DEFAULT 'agent', "
          "is_active BOOLEAN DEFAULT true, "
          "is_shared BOOLEAN DEFAULT false, "
-         "confidence_score FLOAT DEFAULT 0.5, "
+         "version INTEGER DEFAULT 1, "
          "created_at TIMESTAMPTZ DEFAULT now(), "
          "updated_at TIMESTAMPTZ DEFAULT now())"),
-        ("agent_wiki_entry_versions.entry_id",
+        ("agent_wiki_entry_versions.full_schema",
          "CREATE TABLE IF NOT EXISTS agent_wiki_entry_versions ("
          "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
-         "entry_id UUID, "
-         "version INTEGER, "
-         "content TEXT, "
-         "updated_at TIMESTAMPTZ DEFAULT now())"),
+         "entry_id UUID NOT NULL REFERENCES agent_wiki_entries(id) ON DELETE CASCADE, "
+         "version INTEGER NOT NULL, "
+         "content TEXT NOT NULL, "
+         "updated_by VARCHAR(10) DEFAULT 'agent', "
+         "updated_at TIMESTAMPTZ DEFAULT now(), "
+         "change_reason VARCHAR(500))"),
+        ("index idx_wiki_agent_id",
+         "CREATE INDEX IF NOT EXISTS idx_wiki_agent_id ON agent_wiki_entries(agent_id)"),
+        ("index idx_wiki_category",
+         "CREATE INDEX IF NOT EXISTS idx_wiki_category ON agent_wiki_entries(category)"),
+        ("index idx_wiki_versions_entry",
+         "CREATE INDEX IF NOT EXISTS idx_wiki_versions_entry ON agent_wiki_entry_versions(entry_id)"),
         # ------------------------------------------------------------------
         # Phase 15.8 safety net: pm_top_bets columns added in Phase 15.3–15.5
         # Each is idempotent; missing columns after a partial migration are

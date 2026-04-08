@@ -1,11 +1,11 @@
 """
-ConsolidationRun model — tracks nightly consolidation pipeline runs (Phase 3).
+ConsolidationRun model — tracks nightly consolidation pipeline runs (Phase 5).
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
@@ -41,4 +41,8 @@ class ConsolidationRun(Base):
     rules_proposed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     consolidation_report: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
