@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from shared.db.engine import get_session as _get_session
 from shared.db.models.agent import Agent, AgentBacktest
@@ -45,6 +45,15 @@ TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-a
 ANALYST_TEMPLATE = "analyst-agent"
 DATA_DIR = REPO_ROOT / "data"
 
+# Reserved system-agent UUIDs — must match the seed list in apps/api/src/main.py and
+# scripts/docker_migrate.py.  Defined once here so a typo anywhere causes a NameError
+# rather than a silent FK violation.
+_SUPERVISOR_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_MORNING_BRIEFING_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+_EOD_ANALYSIS_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000003")
+_DAILY_SUMMARY_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000004")
+_TRADE_FEEDBACK_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000005")
+
 _running_tasks: dict[str, asyncio.Task] = {}
 
 
@@ -63,49 +72,54 @@ _session_ids: dict[str, str] = {}
 def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = True) -> None:
     """Write .claude/settings.json with Robinhood MCP server wired in.
 
-    Creates (or overwrites) `<work_dir>/.claude/settings.json` with the full
-    permissions block, hooks, and — when credentials are supplied — the
-    robinhood MCP server entry with credentials injected directly as env vars.
+    Always registers the robinhood MCP entry so that both paper and live agents
+    can call Robinhood tools. In paper mode (PAPER_MODE=true) the MCP server
+    simulates all orders without touching the real Robinhood API.
 
     Args:
         work_dir:   Agent working directory (e.g. data/live_agents/<id>/).
         rh_creds:   Dict with keys ``username``, ``password``, ``totp_secret``.
-                    Pass an empty dict to omit the MCP entry entirely.
+                    Pass an empty dict for paper-only agents.
         paper_mode: When True sets PAPER_MODE=true in the MCP server env.
     """
+    import sys as _sys
+
     claude_dir = work_dir / ".claude"
     claude_dir.mkdir(exist_ok=True)
+
+    mcp_env: dict[str, str] = {
+        "ROBINHOOD_CONFIG": "config.json",
+        "PAPER_MODE": "true" if paper_mode else "false",
+    }
+    if rh_creds:
+        mcp_env["RH_USERNAME"] = rh_creds.get("username", "")
+        mcp_env["RH_PASSWORD"] = rh_creds.get("password", "")
+        mcp_env["RH_TOTP_SECRET"] = rh_creds.get("totp_secret", "")
 
     settings: dict = {
         "permissions": {
             "allow": [
                 "Bash(python *)", "Bash(python3 *)", "Bash(pip *)",
-                "Bash(pip3 *)", "Bash(curl *)", "Read", "Write", "Edit", "Grep", "Glob"
+                "Bash(pip3 *)", "Bash(curl *)", "Read", "Write", "Edit", "Grep", "Glob",
+                "mcp__robinhood__*",
             ],
             "deny": [
                 "Bash(rm -rf /)", "Bash(rm -rf ~)", "Bash(git push --force *)",
                 "Bash(shutdown *)", "Bash(reboot *)"
             ]
         },
-        "mcpServers": {},
+        "mcpServers": {
+            "robinhood": {
+                "command": _sys.executable,
+                "args": ["tools/robinhood_mcp.py"],
+                "env": mcp_env,
+            }
+        },
         "hooks": {
             "SessionStart": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_start 2>/dev/null || true"}]}],
             "Stop": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_stop 2>/dev/null || true"}]}]
         }
     }
-
-    if rh_creds:
-        settings["mcpServers"]["robinhood"] = {
-            "command": "python3",
-            "args": ["tools/robinhood_mcp.py"],
-            "env": {
-                "ROBINHOOD_CONFIG": "config.json",
-                "RH_USERNAME": rh_creds.get("username", ""),
-                "RH_PASSWORD": rh_creds.get("password", ""),
-                "RH_TOTP_SECRET": rh_creds.get("totp_secret", ""),
-                "PAPER_MODE": "true" if paper_mode else "false",
-            }
-        }
 
     settings_path = claude_dir / "settings.json"
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -141,6 +155,37 @@ def get_concurrency_status() -> dict:
             "in_use": MAX_CONCURRENT_POSITION_AGENTS - _position_agent_sem._value,
         },
     }
+
+
+async def _ensure_system_agent(db, agent_id: uuid.UUID, name: str) -> None:
+    """Get-or-create a system agent row so the FK agent_sessions.agent_id → agents.id is satisfied.
+
+    Called directly before every AgentSession INSERT that uses a reserved system UUID.
+    This makes session creation self-healing even when the startup seed failed
+    (e.g. DB not ready at boot, schema drift, or the agents table was wiped).
+
+    Uses INSERT … ON CONFLICT DO NOTHING so it is safe to call on every invocation
+    (idempotent, no SELECT round-trip needed, concurrent-safe).
+    """
+    await db.execute(
+        text("""
+            INSERT INTO agents (id, name, type, status, config,
+                               worker_status, source,
+                               manifest, pending_improvements,
+                               current_mode, rules_version,
+                               daily_pnl, total_pnl, total_trades,
+                               win_rate, tokens_used_today_usd,
+                               tokens_used_month_usd)
+            VALUES (:id, :name, 'system', 'CREATED', '{}',
+                    'STOPPED', 'system',
+                    '{}', '{}',
+                    'conservative', 1,
+                    0, 0, 0,
+                    0, 0, 0)
+            ON CONFLICT (id) DO NOTHING
+        """),
+        {"id": str(agent_id), "name": name},
+    )
 
 
 class AgentGateway:
@@ -1334,8 +1379,12 @@ class AgentGateway:
 
         # Create AgentSession entry (no parent agent — supervisor is system-level)
         session_row_id = uuid.uuid4()
-        sup_agent_uuid = uuid.UUID("00000000-0000-0000-0000-000000000001")  # Reserved supervisor UUID
+        sup_agent_uuid = _SUPERVISOR_AGENT_UUID
         async for db in _get_session():
+            # Ensure the parent agents row exists before the FK-constrained INSERT.
+            # Guards against the startup seed failing silently (DB not ready, schema
+            # drift, or the agents table being wiped in dev).
+            await _ensure_system_agent(db, sup_agent_uuid, "Supervisor Agent")
             db.add(AgentSession(
                 id=session_row_id,
                 agent_id=sup_agent_uuid,
@@ -1345,6 +1394,7 @@ class AgentGateway:
                 working_dir=str(work_dir),
                 config=sup_config,
             ))
+            # belt-and-suspenders: get_session() also auto-commits on exit
             await db.commit()
 
         # Spawn the Claude session
@@ -1449,9 +1499,13 @@ class AgentGateway:
         (work_dir / "config.json").write_text(json.dumps(mb_config, indent=2, default=str))
 
         # Reserved UUID for the morning briefing singleton agent
-        mb_agent_uuid = uuid.UUID("00000000-0000-0000-0000-000000000002")
+        mb_agent_uuid = _MORNING_BRIEFING_AGENT_UUID
         session_row_id = uuid.uuid4()
         async for db in _get_session():
+            # Ensure the parent agents row exists before the FK-constrained INSERT.
+            # Guards against the startup seed failing silently (DB not ready, schema
+            # drift, or the agents table being wiped in dev).
+            await _ensure_system_agent(db, mb_agent_uuid, "Morning Briefing Agent")
             db.add(AgentSession(
                 id=session_row_id,
                 agent_id=mb_agent_uuid,
@@ -1461,6 +1515,7 @@ class AgentGateway:
                 working_dir=str(work_dir),
                 config=mb_config,
             ))
+            # belt-and-suspenders: get_session() also auto-commits on exit
             await db.commit()
 
         task = asyncio.create_task(
@@ -1579,6 +1634,10 @@ class AgentGateway:
         # Create AgentSession row so the dashboard can see the run
         session_row_id = uuid.uuid4()
         async for db in _get_session():
+            # Ensure the parent agents row exists before the FK-constrained INSERT.
+            # Guards against the startup seed failing silently (DB not ready, schema
+            # drift, or the agents table being wiped in dev). Covers UUIDs 3, 4, 5.
+            await _ensure_system_agent(db, reserved_uuid, agent_type.replace("_", " ").title() + " Agent")
             db.add(AgentSession(
                 id=session_row_id,
                 agent_id=reserved_uuid,
@@ -1588,6 +1647,7 @@ class AgentGateway:
                 working_dir=str(work_dir),
                 config=agent_config,
             ))
+            # belt-and-suspenders: get_session() also auto-commits on exit
             await db.commit()
 
         task = asyncio.create_task(
@@ -1680,7 +1740,7 @@ class AgentGateway:
             template_dir=DAILY_SUMMARY_TEMPLATE,
             subdir="daily-summary",
             agent_type="daily_summary",
-            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000004"),
+            reserved_uuid=_DAILY_SUMMARY_AGENT_UUID,
             prompt=(
                 "You are the Phoenix Daily Summary Agent. Read CLAUDE.md and "
                 "run all 3 phases in order: collect today's PnL, compile the "
@@ -1695,7 +1755,7 @@ class AgentGateway:
             template_dir=EOD_ANALYSIS_TEMPLATE,
             subdir="eod-analysis",
             agent_type="eod_analysis",
-            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000003"),
+            reserved_uuid=_EOD_ANALYSIS_AGENT_UUID,
             prompt=(
                 "You are the Phoenix EOD Analysis Agent. Read CLAUDE.md and "
                 "run all 5 phases in order: collect day trades, enrich "
@@ -1711,7 +1771,7 @@ class AgentGateway:
             template_dir=TRADE_FEEDBACK_TEMPLATE,
             subdir="trade-feedback",
             agent_type="trade_feedback",
-            reserved_uuid=uuid.UUID("00000000-0000-0000-0000-000000000005"),
+            reserved_uuid=_TRADE_FEEDBACK_AGENT_UUID,
             prompt=(
                 "You are the Phoenix Trade Feedback Agent. Read CLAUDE.md and "
                 "run all 3 phases: query outcomes, compute bias multipliers, "

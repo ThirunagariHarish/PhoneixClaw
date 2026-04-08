@@ -11,6 +11,7 @@ Tests covered:
   1.3  _prepare_analyst_directory — paper agent has NO robinhood_credentials in config.json
   1.4  create_analyst — PAPER agent status stays "PAPER"; live becomes "RUNNING"
   1.4  create_analyst — AgentSession.trading_mode = "paper" for PAPER agent
+  FK  _ensure_system_agent — creates row when missing; skips INSERT when row exists
 """
 
 from __future__ import annotations
@@ -413,4 +414,158 @@ class TestAgentResponseErrorMessage:
 
         assert "error_message" in AgentResponse.model_fields, (
             "AgentResponse must declare error_message as a Pydantic field"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FK  _ensure_system_agent — get-or-create for reserved system agent rows
+# ---------------------------------------------------------------------------
+
+class TestEnsureSystemAgent:
+    """Tests for the _ensure_system_agent() helper that prevents the FK violation:
+    agent_sessions.agent_id → agents.id when the startup seed failed.
+    """
+
+    _MB_UUID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+    def _make_db(self) -> AsyncMock:
+        """Return a mock async DB session for _ensure_system_agent tests."""
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock())
+        return db
+
+    async def test_ensure_always_issues_one_execute_call(self):
+        """_ensure_system_agent must always issue exactly one execute() call.
+
+        ON CONFLICT DO NOTHING is the idempotency mechanism — no separate SELECT
+        is needed. This holds whether or not the row already exists.
+        """
+        from apps.api.src.services.agent_gateway import _ensure_system_agent
+
+        db = self._make_db()
+        await _ensure_system_agent(db, self._MB_UUID, "Morning Briefing Agent")
+
+        assert db.execute.call_count == 1, (
+            f"Expected 1 execute() call (INSERT … ON CONFLICT DO NOTHING), got {db.execute.call_count}"
+        )
+
+    async def test_ensure_passes_correct_uuid_to_insert(self):
+        """The INSERT must include the exact UUID passed in."""
+        from apps.api.src.services.agent_gateway import _ensure_system_agent
+
+        db = self._make_db()
+        await _ensure_system_agent(db, self._MB_UUID, "Morning Briefing Agent")
+
+        # Only one execute() call (the INSERT); inspect its params
+        insert_call = db.execute.call_args_list[0]
+        params = insert_call.args[1] if len(insert_call.args) > 1 else insert_call.kwargs.get("params", {})
+        assert str(self._MB_UUID) in str(params), (
+            f"INSERT params should contain the UUID {self._MB_UUID}; got {params!r}"
+        )
+
+    async def test_ensure_passes_correct_name_to_insert(self):
+        """The INSERT must include the agent name passed in."""
+        from apps.api.src.services.agent_gateway import _ensure_system_agent
+
+        db = self._make_db()
+        await _ensure_system_agent(db, self._MB_UUID, "Morning Briefing Agent")
+
+        insert_call = db.execute.call_args_list[0]
+        params = insert_call.args[1] if len(insert_call.args) > 1 else insert_call.kwargs.get("params", {})
+        assert "Morning Briefing Agent" in str(params), (
+            f"INSERT params should contain the agent name; got {params!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# M2  _spawn_one_shot_agent — ensure FK guard is called for UUIDs 3/4/5
+# ---------------------------------------------------------------------------
+
+class TestSpawnOneShotAgentFKGuard:
+    """Verifies that _spawn_one_shot_agent calls _ensure_system_agent before
+    inserting the AgentSession row — covering EOD Analysis, Daily Summary, and
+    Trade Feedback agents (UUIDs 3, 4, 5).
+    """
+
+    _EOD_UUID = uuid.UUID("00000000-0000-0000-0000-000000000003")
+
+    async def test_spawn_one_shot_calls_ensure_system_agent(self, tmp_path: Path):
+        """_spawn_one_shot_agent must invoke _ensure_system_agent before db.add(AgentSession)."""
+        import apps.api.src.services.agent_gateway as gw
+        from unittest.mock import patch as _patch
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock())
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+
+        ensure_calls: list = []
+
+        async def _fake_ensure(db_arg, agent_id, name):
+            ensure_calls.append((agent_id, name))
+
+        async def _async_db_gen_local(db_inner):
+            yield db_inner
+
+        with (
+            _patch.object(gw, "_get_session", return_value=_async_db_gen_local(db)),
+            _patch.object(gw, "_ensure_system_agent", side_effect=_fake_ensure),
+            _patch.object(gw, "DATA_DIR", tmp_path),
+            _patch("asyncio.create_task", return_value=MagicMock()),
+        ):
+            (tmp_path / "tmpl").mkdir(exist_ok=True)
+            gateway = gw.AgentGateway()
+            await gateway._spawn_one_shot_agent(
+                template_dir=tmp_path / "tmpl",
+                subdir="eod-analysis",
+                agent_type="eod_analysis",
+                reserved_uuid=self._EOD_UUID,
+                prompt="test prompt",
+                config={},
+            )
+
+        assert len(ensure_calls) == 1, (
+            f"Expected _ensure_system_agent to be called once, got {len(ensure_calls)} calls"
+        )
+        assert ensure_calls[0][0] == self._EOD_UUID, (
+            f"Expected UUID {self._EOD_UUID}, got {ensure_calls[0][0]}"
+        )
+
+    async def test_spawn_one_shot_ensure_called_before_db_add(self, tmp_path: Path):
+        """_ensure_system_agent must be called BEFORE db.add(AgentSession) — FK order matters."""
+        import apps.api.src.services.agent_gateway as gw
+        from unittest.mock import patch as _patch
+
+        call_order: list[str] = []
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock())
+        db.add = MagicMock(side_effect=lambda _: call_order.append("db.add"))
+        db.commit = AsyncMock()
+
+        async def _fake_ensure(db_arg, agent_id, name):
+            call_order.append("ensure")
+
+        async def _async_db_gen_local(db_inner):
+            yield db_inner
+
+        with (
+            _patch.object(gw, "_get_session", return_value=_async_db_gen_local(db)),
+            _patch.object(gw, "_ensure_system_agent", side_effect=_fake_ensure),
+            _patch.object(gw, "DATA_DIR", tmp_path),
+            _patch("asyncio.create_task", return_value=MagicMock()),
+        ):
+            (tmp_path / "tmpl").mkdir(exist_ok=True)
+            gateway = gw.AgentGateway()
+            await gateway._spawn_one_shot_agent(
+                template_dir=tmp_path / "tmpl",
+                subdir="eod-analysis",
+                agent_type="eod_analysis",
+                reserved_uuid=self._EOD_UUID,
+                prompt="test prompt",
+                config={},
+            )
+
+        assert call_order == ["ensure", "db.add"], (
+            f"_ensure_system_agent must run before db.add; got order: {call_order}"
         )
