@@ -839,6 +839,9 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
 
 
 _SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
+# Override via env var: export SEED_DB_URL="postgresql://seeduser:<pw>@localhost:5434/phoenix_seed"
+import os as _os
+_SEED_DB_URL = _os.environ.get("SEED_DB_URL", _SEED_DB_URL)
 
 
 def _load_trades_from_postgres(db_url: str) -> pd.DataFrame:

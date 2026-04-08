@@ -2,10 +2,11 @@
 """Load seed parquet files into PostgreSQL.
 
 Usage:
-    python seed/load_to_postgres.py [--db-url postgresql://seeduser:seedpass@localhost:5434/phoenix_seed]
+    python seed/load_to_postgres.py [--db-url postgresql://seeduser:<pw>@localhost:5434/phoenix_seed]
 
 Requires: psycopg2-binary
     pip install psycopg2-binary
+    # or: pip install -e ".[seed]"
 """
 
 from __future__ import annotations

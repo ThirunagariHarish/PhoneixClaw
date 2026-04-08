@@ -3,10 +3,14 @@ services:
     image: postgres:16-alpine
     container_name: phoenix-seed-db
     ports:
-      - "5434:5432"
+      # Binds only to localhost — not exposed to the internet.
+      # Use SSH tunnel to connect remotely (recommended).
+      # To allow direct access from a trusted IP, change to "0.0.0.0:5434:5432"
+      # and add a firewall rule: ufw allow from <YOUR_IP> to any port 5434
+      - "127.0.0.1:5434:5432"
     environment:
       POSTGRES_USER: seeduser
-      POSTGRES_PASSWORD: seedpass
+      POSTGRES_PASSWORD: ${SEED_DB_PASSWORD:-seedpass}
       POSTGRES_DB: phoenix_seed
     volumes:
       - seed-pgdata:/var/lib/postgresql/data
