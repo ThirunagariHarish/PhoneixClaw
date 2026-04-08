@@ -399,17 +399,24 @@ async def _heal_stuck_backtests(log=None) -> None:
         _log.warning("[backtest_heal] non-fatal error: %s", exc)
 
 
-async def _heal_live_agent_claude_settings(_log) -> None:
+async def _heal_live_agent_claude_settings(_log, data_dir: "Path | None" = None) -> None:
     """Heal existing live agent directories missing .claude/settings.json.
 
     Scans data/live_agents/*/ directories. For each that has
     tools/robinhood_mcp.py but no .claude/settings.json, reads config.json
     and writes the settings file with credentials injected.
-    """
-    import json as _json
-    from pathlib import Path as _Path
 
-    data_dir = _Path(__file__).parent.parent.parent / "data"
+    Args:
+        _log:     Logger instance.
+        data_dir: Override the repo ``data/`` directory (used in tests).
+                  Defaults to ``<repo_root>/data`` resolved from this file's path.
+    """
+    from apps.api.src.services.agent_gateway import _write_claude_settings as _write_settings
+
+    if data_dir is None:
+        # main.py lives at apps/api/src/main.py → parents[3] == repo root
+        data_dir = Path(__file__).resolve().parents[3] / "data"
+
     live_agents_dir = data_dir / "live_agents"
     if not live_agents_dir.exists():
         return
@@ -433,7 +440,7 @@ async def _heal_live_agent_claude_settings(_log) -> None:
             continue
 
         try:
-            config = _json.loads(config_path.read_text())
+            config = json.loads(config_path.read_text())
         except Exception as exc:
             _log.warning("[heal_mcp] Failed to read config for %s: %s", agent_dir.name, exc)
             continue
@@ -441,51 +448,7 @@ async def _heal_live_agent_claude_settings(_log) -> None:
         rh_creds = config.get("robinhood_credentials") or config.get("robinhood") or {}
         paper_mode = config.get("paper_mode", True)
 
-        # Build settings
-        settings: dict = {
-            "permissions": {
-                "allow": [
-                    "Bash(python *)", "Bash(python3 *)", "Bash(pip *)",
-                    "Bash(pip3 *)", "Bash(curl *)", "Read", "Write", "Edit", "Grep", "Glob"
-                ],
-                "deny": [
-                    "Bash(rm -rf /)", "Bash(rm -rf ~)", "Bash(git push --force *)",
-                    "Bash(shutdown *)", "Bash(reboot *)"
-                ]
-            },
-            "mcpServers": {},
-            "hooks": {
-                "SessionStart": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_start 2>/dev/null || true"}]}],
-                "Stop": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_stop 2>/dev/null || true"}]}]
-            }
-        }
-
-        if rh_creds:
-            settings["mcpServers"]["robinhood"] = {
-                "command": "python3",
-                "args": ["tools/robinhood_mcp.py"],
-                "env": {
-                    "ROBINHOOD_CONFIG": "config.json",
-                    "RH_USERNAME": rh_creds.get("username", ""),
-                    "RH_PASSWORD": rh_creds.get("password", ""),
-                    "RH_TOTP_SECRET": rh_creds.get("totp_secret", ""),
-                    "PAPER_MODE": "true" if paper_mode else "false",
-                }
-            }
-        else:
-            # Wire with config.json only (no direct credential injection)
-            settings["mcpServers"]["robinhood"] = {
-                "command": "python3",
-                "args": ["tools/robinhood_mcp.py"],
-                "env": {
-                    "ROBINHOOD_CONFIG": "config.json",
-                    "PAPER_MODE": "true",
-                }
-            }
-
-        claude_dir = agent_dir / ".claude"
-        claude_dir.mkdir(exist_ok=True)
-        claude_settings.write_text(_json.dumps(settings, indent=2))
+        _write_settings(agent_dir, rh_creds, paper_mode=bool(paper_mode))
         _log.info("[heal_mcp] Wrote .claude/settings.json for agent %s", agent_dir.name)
         healed += 1
 

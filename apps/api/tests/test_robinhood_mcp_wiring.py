@@ -78,11 +78,16 @@ def test_write_claude_settings_permissions(tmp_path):
 
 
 def test_heal_creates_settings_for_existing_agent(tmp_path):
-    """_heal_live_agent_claude_settings creates settings.json for agents missing it."""
-    import asyncio
-    import logging
+    """_heal_live_agent_claude_settings writes settings.json for agents missing it.
 
-    # Set up a fake live_agents directory structure
+    After M2 the healer delegates to _write_claude_settings, so this test
+    exercises that function directly with the exact scenario the healer handles.
+    Direct import of main._heal_live_agent_claude_settings is blocked in Python
+    3.9 because middleware/auth.py uses the 3.10+ ``dict | None`` union syntax.
+    """
+    import stat
+
+    # Set up a fake live_agents directory structure under tmp_path
     agent_dir = tmp_path / "live_agents" / "test-agent-123"
     (agent_dir / "tools").mkdir(parents=True)
     (agent_dir / "tools" / "robinhood_mcp.py").write_text("# fake mcp")
@@ -97,30 +102,27 @@ def test_heal_creates_settings_for_existing_agent(tmp_path):
     }
     (agent_dir / "config.json").write_text(json.dumps(config))
 
-    # Import and patch DATA_DIR in the heal function
-    # We test the logic directly by running the heal inline
-    settings: dict = {
-        "permissions": {"allow": ["Bash(python *)"], "deny": []},
-        "mcpServers": {},
-        "hooks": {}
-    }
-    rh_creds = config["robinhood_credentials"]
-    settings["mcpServers"]["robinhood"] = {
-        "command": "python3",
-        "args": ["tools/robinhood_mcp.py"],
-        "env": {
-            "ROBINHOOD_CONFIG": "config.json",
-            "RH_USERNAME": rh_creds["username"],
-            "RH_PASSWORD": rh_creds["password"],
-            "RH_TOTP_SECRET": rh_creds["totp_secret"],
-            "PAPER_MODE": "true",
-        }
-    }
-    claude_dir = agent_dir / ".claude"
-    claude_dir.mkdir()
-    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+    # Reproduce the healer's logic: read config, extract creds, call the delegate
+    from apps.api.src.services.agent_gateway import _write_claude_settings
 
-    # Verify the result
-    written = json.loads((agent_dir / ".claude" / "settings.json").read_text())
-    assert written["mcpServers"]["robinhood"]["env"]["RH_USERNAME"] == "heal@test.com"
-    assert written["mcpServers"]["robinhood"]["env"]["PAPER_MODE"] == "true"
+    agent_config = json.loads((agent_dir / "config.json").read_text())
+    rh_creds = agent_config.get("robinhood_credentials") or agent_config.get("robinhood") or {}
+    paper_mode = agent_config.get("paper_mode", True)
+
+    _write_claude_settings(agent_dir, rh_creds, paper_mode=bool(paper_mode))
+
+    settings_path = agent_dir / ".claude" / "settings.json"
+    assert settings_path.exists(), ".claude/settings.json should be written"
+
+    written = json.loads(settings_path.read_text())
+    assert "robinhood" in written["mcpServers"], "robinhood MCP entry must be present"
+
+    env = written["mcpServers"]["robinhood"]["env"]
+    assert env["RH_USERNAME"] == "heal@test.com"
+    assert env["RH_PASSWORD"] == "healpw"
+    assert env["RH_TOTP_SECRET"] == "HEALTOTP"
+    assert env["PAPER_MODE"] == "true"
+
+    # M1: verify the file is owner-only readable (0o600)
+    mode = stat.S_IMODE(settings_path.stat().st_mode)
+    assert mode == 0o600, f"Expected 0o600 (owner-only), got {oct(mode)}"

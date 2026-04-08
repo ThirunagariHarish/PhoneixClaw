@@ -108,6 +108,7 @@ def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = Tr
 
     settings_path = claude_dir / "settings.json"
     settings_path.write_text(json.dumps(settings, indent=2))
+    settings_path.chmod(0o600)  # owner-only: file contains plaintext credentials
 
 
 # Phase H5: Concurrency limits to prevent OOM from too many subprocesses
@@ -1090,7 +1091,8 @@ class AgentGateway:
             }
             (work_dir / "config.json").write_text(json.dumps(position_config, indent=2, default=str))
             rh_creds = position_config.get("robinhood_credentials", {})
-            _write_claude_settings(work_dir, rh_creds, paper_mode=True)
+            paper_mode = position_config.get("paper_mode", True)
+            _write_claude_settings(work_dir, rh_creds, paper_mode=paper_mode)
 
             # Find the parent's active live session to link sub-agent
             parent_session = (await db.execute(
