@@ -5,6 +5,14 @@
  *
  * Layout (3-pane):
  *   [Category sidebar] | [Entry list] | [Entry detail]
+ *
+ * Features:
+ *   - Category sidebar with counts
+ *   - Entry list with confidence badge + bar, created_by badge, relative time
+ *   - Edit / Delete / New Entry dialogs
+ *   - Phoenix Brain toggle (cross-agent shared entries)
+ *   - Export as Markdown or JSON
+ *   - Debounced search (300ms)
  */
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -25,8 +33,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
-  BookOpen, Brain, Edit2, Trash2, Plus, Download,
+  Brain, Edit2, Trash2, Plus, Download,
   Share2, ChevronRight, Search, Clock, Tag, TrendingUp,
+  Bot, User,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -46,7 +55,7 @@ interface WikiEntry {
   symbols: string[]
   confidence_score: number
   trade_ref_ids: string[]
-  created_by: string
+  created_by: 'agent' | 'user'
   is_active: boolean
   is_shared: boolean
   version: number
@@ -61,6 +70,11 @@ interface WikiListResponse {
   per_page: number
 }
 
+interface BrainWikiResponse {
+  entries: WikiEntry[]
+  total: number
+}
+
 interface WikiVersion {
   version: number
   title: string
@@ -72,6 +86,8 @@ interface WikiVersion {
 
 interface AgentWikiTabProps {
   agentId: string
+  /** Optional agent metadata — reserved for future contextual rendering */
+  agent?: unknown
 }
 
 /* ─────────────────────────────────────────────
@@ -79,44 +95,86 @@ interface AgentWikiTabProps {
 ───────────────────────────────────────────── */
 
 const ALL_CATEGORIES = [
+  'MARKET_PATTERNS',
+  'SYMBOL_PROFILES',
+  'STRATEGY_LEARNINGS',
+  'MISTAKES',
+  'WINNING_CONDITIONS',
+  'SECTOR_NOTES',
+  'MACRO_CONTEXT',
   'TRADE_OBSERVATION',
-  'MARKET_PATTERN',
-  'STRATEGY_LEARNING',
-  'RISK_NOTE',
-  'SECTOR_INSIGHT',
-  'INDICATOR_NOTE',
-  'EARNINGS_PLAYBOOK',
-  'GENERAL',
 ] as const
 
-const CATEGORY_LABELS: Record<string, string> = {
-  TRADE_OBSERVATION: 'Trade Observations',
-  MARKET_PATTERN: 'Market Patterns',
-  STRATEGY_LEARNING: 'Strategy Learnings',
-  RISK_NOTE: 'Risk Notes',
-  SECTOR_INSIGHT: 'Sector Insights',
-  INDICATOR_NOTE: 'Indicator Notes',
-  EARNINGS_PLAYBOOK: 'Earnings Playbook',
-  GENERAL: 'General',
+type WikiCategory = (typeof ALL_CATEGORIES)[number]
+
+interface CategoryMeta {
+  icon: string
+  color: string
+  label: string
 }
 
+const CATEGORY_META: Record<WikiCategory, CategoryMeta> = {
+  MARKET_PATTERNS:    { icon: '📈', color: 'text-blue-400',   label: 'Market Patterns' },
+  SYMBOL_PROFILES:    { icon: '🏷️', color: 'text-purple-400', label: 'Symbol Profiles' },
+  STRATEGY_LEARNINGS: { icon: '🎯', color: 'text-green-400',  label: 'Strategy' },
+  MISTAKES:           { icon: '❌', color: 'text-red-400',    label: 'Mistakes' },
+  WINNING_CONDITIONS: { icon: '🏆', color: 'text-yellow-400', label: 'Winning Conditions' },
+  SECTOR_NOTES:       { icon: '🏭', color: 'text-orange-400', label: 'Sector Notes' },
+  MACRO_CONTEXT:      { icon: '🌐', color: 'text-cyan-400',   label: 'Macro Context' },
+  TRADE_OBSERVATION:  { icon: '🔭', color: 'text-gray-400',   label: 'Trade Observations' },
+}
+
+/** Fallback for entries with unknown category values */
+const getCategoryMeta = (cat: string): CategoryMeta =>
+  (CATEGORY_META as Record<string, CategoryMeta>)[cat] ?? {
+    icon: '📝',
+    color: 'text-muted-foreground',
+    label: cat,
+  }
+
 /* ─────────────────────────────────────────────
-   Confidence badge helper
+   Helpers
 ───────────────────────────────────────────── */
+
+const confidenceColor = (score: number): string =>
+  score >= 0.7
+    ? 'bg-green-500/20 text-green-400 border-green-500/30'
+    : score >= 0.4
+      ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+      : 'bg-red-500/20 text-red-400 border-red-500/30'
+
+const confidenceBarColor = (score: number): string =>
+  score >= 0.7 ? 'bg-green-500' : score >= 0.4 ? 'bg-yellow-500' : 'bg-red-500'
 
 function ConfidenceBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100)
-  const color =
-    score > 0.7
-      ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
-      : score >= 0.4
-        ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30'
-        : 'bg-rose-500/20 text-rose-700 dark:text-rose-400 border-rose-500/30'
   return (
-    <Badge variant="outline" className={cn('text-[10px] font-semibold border', color)}>
+    <Badge variant="outline" className={cn('text-[10px] font-semibold border', confidenceColor(score))}>
       {pct}% conf
     </Badge>
   )
+}
+
+function ConfidenceBar({ score }: { score: number }) {
+  return (
+    <div className="w-full bg-muted rounded h-1 overflow-hidden">
+      <div
+        className={cn('h-1 rounded transition-all', confidenceBarColor(score))}
+        style={{ width: `${Math.round(score * 100)}%` }}
+      />
+    </div>
+  )
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const now = Date.now()
+  const then = new Date(dateStr).getTime()
+  const diff = Math.floor((now - then) / 1000)
+  if (diff < 60) return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
+  return new Date(dateStr).toLocaleDateString()
 }
 
 /* ─────────────────────────────────────────────
@@ -261,24 +319,26 @@ function WikiEntryModal({ open, onClose, agentId, existing }: WikiEntryModalProp
                 <SelectContent>
                   {ALL_CATEGORIES.map((cat) => (
                     <SelectItem key={cat} value={cat}>
-                      {CATEGORY_LABELS[cat] ?? cat}
+                      {getCategoryMeta(cat).icon} {getCategoryMeta(cat).label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Confidence Score (0–1)</Label>
-              <Input
-                type="number"
+              <Label>Confidence Score — {Math.round(form.confidence_score * 100)}%</Label>
+              <input
+                type="range"
                 min={0}
                 max={1}
                 step={0.05}
                 value={form.confidence_score}
                 onChange={(e) =>
-                  setForm((f) => ({ ...f, confidence_score: parseFloat(e.target.value) || 0 }))
+                  setForm((f) => ({ ...f, confidence_score: parseFloat(e.target.value) }))
                 }
+                className="w-full accent-primary"
               />
+              <ConfidenceBar score={form.confidence_score} />
             </div>
           </div>
           <div className="space-y-1">
@@ -400,8 +460,10 @@ function EntryDetail({ entry, agentId, onEdit, onDelete, isDeleting }: EntryDeta
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="secondary" className="text-[10px]">{entry.category}</Badge>
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <span className={cn('text-[10px] font-medium', getCategoryMeta(entry.category).color)}>
+            {getCategoryMeta(entry.category).icon} {getCategoryMeta(entry.category).label}
+          </span>
           <ConfidenceBadge score={entry.confidence_score} />
           {entry.is_shared && (
             <Badge variant="outline" className="text-[10px] border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400">
@@ -409,7 +471,15 @@ function EntryDetail({ entry, agentId, onEdit, onDelete, isDeleting }: EntryDeta
             </Badge>
           )}
           <Badge variant="outline" className="text-[10px]">v{entry.version}</Badge>
+          <Badge
+            variant="outline"
+            className={cn('text-[10px] gap-0.5', entry.created_by === 'user' ? 'border-violet-500/40 bg-violet-500/10 text-violet-400' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400')}
+          >
+            {entry.created_by === 'user' ? <User className="h-2.5 w-2.5" /> : <Bot className="h-2.5 w-2.5" />}
+            {entry.created_by === 'user' ? 'User' : 'Agent'}
+          </Badge>
         </div>
+        <ConfidenceBar score={entry.confidence_score} />
       </div>
 
       {/* Content */}
@@ -447,9 +517,9 @@ function EntryDetail({ entry, agentId, onEdit, onDelete, isDeleting }: EntryDeta
             <Clock className="h-3 w-3" />Metadata
           </p>
           <div className="text-xs text-muted-foreground space-y-0.5">
-            <p>Created by: <span className="text-foreground">{entry.created_by || 'agent'}</span></p>
-            <p>Created: <span className="text-foreground">{new Date(entry.created_at).toLocaleString()}</span></p>
-            <p>Updated: <span className="text-foreground">{new Date(entry.updated_at).toLocaleString()}</span></p>
+            <p>Created by: <span className="text-foreground">{entry.created_by === 'user' ? '👤 User' : '🤖 Agent'}</span></p>
+            <p>Created: <span className="text-foreground">{new Date(entry.created_at).toLocaleString()} ({formatRelativeTime(entry.created_at)})</span></p>
+            <p>Updated: <span className="text-foreground">{new Date(entry.updated_at).toLocaleString()} ({formatRelativeTime(entry.updated_at)})</span></p>
           </div>
         </div>
 
@@ -467,7 +537,7 @@ function EntryDetail({ entry, agentId, onEdit, onDelete, isDeleting }: EntryDeta
                 <div key={v.version} className="rounded border p-2 text-xs space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-medium">v{v.version}</span>
-                    <span className="text-muted-foreground">{new Date(v.updated_at).toLocaleDateString()}</span>
+                    <span className="text-muted-foreground">{formatRelativeTime(v.updated_at)}</span>
                   </div>
                   {v.change_reason && <p className="text-muted-foreground italic">{v.change_reason}</p>}
                 </div>
@@ -484,7 +554,14 @@ function EntryDetail({ entry, agentId, onEdit, onDelete, isDeleting }: EntryDeta
    Entry card (list item)
 ───────────────────────────────────────────── */
 
-function EntryCard({ entry, selected, onClick }: { entry: WikiEntry; selected: boolean; onClick: () => void }) {
+interface EntryCardProps {
+  entry: WikiEntry
+  selected: boolean
+  onClick: () => void
+  isBrain?: boolean
+}
+
+function EntryCard({ entry, selected, onClick, isBrain = false }: EntryCardProps) {
   return (
     <button
       className={cn(
@@ -494,15 +571,35 @@ function EntryCard({ entry, selected, onClick }: { entry: WikiEntry; selected: b
       onClick={onClick}
     >
       <div className="flex items-start gap-2">
+        <span className="text-base shrink-0 mt-0.5">{getCategoryMeta(entry.category).icon}</span>
         <p className="text-sm font-medium leading-snug flex-1 line-clamp-2">{entry.title}</p>
         {selected && <ChevronRight className="h-4 w-4 text-primary shrink-0 mt-0.5" />}
       </div>
-      <div className="flex flex-wrap gap-1">
-        <Badge variant="secondary" className="text-[10px]">{entry.category}</Badge>
+      {entry.content && (
+        <p className="text-[11px] text-muted-foreground line-clamp-2 pl-6">
+          {entry.content.slice(0, 100)}{entry.content.length > 100 ? '…' : ''}
+        </p>
+      )}
+      <ConfidenceBar score={entry.confidence_score} />
+      <div className="flex flex-wrap gap-1 items-center">
         <ConfidenceBadge score={entry.confidence_score} />
-        {entry.is_shared && (
+        {isBrain && (
+          <Badge variant="outline" className="text-[10px] border-violet-500/40 bg-violet-500/10 text-violet-400 gap-0.5">
+            <Brain className="h-2.5 w-2.5" />Brain
+          </Badge>
+        )}
+        {entry.is_shared && !isBrain && (
           <Badge variant="outline" className="text-[10px] border-sky-500/40 bg-sky-500/10 text-sky-600">
             Shared
+          </Badge>
+        )}
+        {entry.created_by === 'user' ? (
+          <Badge variant="outline" className="text-[10px] border-violet-500/40 bg-violet-500/10 text-violet-400 gap-0.5">
+            <User className="h-2.5 w-2.5" />User
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] border-emerald-500/40 bg-emerald-500/10 text-emerald-400 gap-0.5">
+            <Bot className="h-2.5 w-2.5" />Agent
           </Badge>
         )}
       </div>
@@ -523,7 +620,7 @@ function EntryCard({ entry, selected, onClick }: { entry: WikiEntry; selected: b
           ))}
         </div>
       )}
-      <p className="text-[10px] text-muted-foreground">{new Date(entry.updated_at).toLocaleDateString()}</p>
+      <p className="text-[10px] text-muted-foreground">{formatRelativeTime(entry.updated_at)}</p>
     </button>
   )
 }
@@ -541,6 +638,7 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
   const [page] = useState(1)
   const [showModal, setShowModal] = useState(false)
   const [editEntry, setEditEntry] = useState<WikiEntry | null>(null)
+  const [brainMode, setBrainMode] = useState(false)
 
   // Debounce search
   const handleSearchChange = useCallback((value: string) => {
@@ -549,7 +647,7 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
     return () => clearTimeout(timer)
   }, [])
 
-  // Build query params
+  // Build query params for agent wiki
   const queryParams = useMemo(() => {
     const params: Record<string, string | number> = { page, per_page: 20 }
     if (selectedCategory) params.category = selectedCategory
@@ -557,18 +655,38 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
     return params
   }, [selectedCategory, debouncedSearch, page])
 
-  const { data, isLoading } = useQuery<WikiListResponse>({
+  // Agent-scoped wiki entries
+  const { data: agentData, isLoading: agentLoading } = useQuery<WikiListResponse>({
     queryKey: ['wiki', agentId, selectedCategory, debouncedSearch, page],
     queryFn: async () => {
       const resp = await api.get(`/api/v2/agents/${agentId}/wiki`, { params: queryParams })
       return resp.data as WikiListResponse
     },
+    enabled: !brainMode,
   })
 
-  const entries = data?.entries ?? []
-  const total = data?.total ?? 0
+  // Brain (cross-agent shared) wiki entries
+  const brainParams = useMemo(() => {
+    const params: Record<string, string> = {}
+    if (selectedCategory) params.category = selectedCategory
+    if (debouncedSearch) params.search = debouncedSearch
+    return params
+  }, [selectedCategory, debouncedSearch])
 
-  // Category counts from the current list (approximate — full list not paginated here)
+  const { data: brainData, isLoading: brainLoading } = useQuery<BrainWikiResponse>({
+    queryKey: ['brain-wiki', selectedCategory, debouncedSearch],
+    queryFn: async () => {
+      const resp = await api.get('/api/v2/brain/wiki', { params: brainParams })
+      return resp.data as BrainWikiResponse
+    },
+    enabled: brainMode,
+  })
+
+  const isLoading = brainMode ? brainLoading : agentLoading
+  const entries: WikiEntry[] = brainMode ? (brainData?.entries ?? []) : (agentData?.entries ?? [])
+  const total = brainMode ? (brainData?.total ?? 0) : (agentData?.total ?? 0)
+
+  // Category counts from the current visible list
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {}
     entries.forEach((e) => {
@@ -591,7 +709,7 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
     const url = `${import.meta.env.VITE_API_URL ?? ''}/api/v2/agents/${agentId}/wiki/export?format=${format}`
     const a = document.createElement('a')
     a.href = url
-    a.download = `wiki-${agentId}.${format === 'json' ? 'json' : 'md'}`
+    a.download = `agent-wiki-${agentId}.${format === 'json' ? 'json' : 'md'}`
     a.click()
   }
 
@@ -612,15 +730,33 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search entries..."
+            placeholder="Search wiki entries..."
             value={search}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9 h-8 text-sm"
           />
         </div>
-        <Button size="sm" className="h-8 gap-1" onClick={() => { setEditEntry(null); setShowModal(true) }}>
-          <Plus className="h-3.5 w-3.5" />Add Entry
-        </Button>
+
+        {/* Phoenix Brain toggle */}
+        <button
+          onClick={() => { setBrainMode((b) => !b); setSelectedEntry(null) }}
+          className={cn(
+            'flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-medium border transition-colors',
+            brainMode
+              ? 'bg-violet-500/20 text-violet-400 border-violet-500/40 hover:bg-violet-500/30'
+              : 'bg-transparent text-muted-foreground border-input hover:bg-accent',
+          )}
+        >
+          <Brain className="h-3.5 w-3.5" />
+          {brainMode ? '🧠 Brain ON' : 'Phoenix Brain'}
+        </button>
+
+        {!brainMode && (
+          <Button size="sm" className="h-8 gap-1" onClick={() => { setEditEntry(null); setShowModal(true) }}>
+            <Plus className="h-3.5 w-3.5" />New Entry
+          </Button>
+        )}
+
         {/* Export dropdown */}
         <div className="relative group">
           <Button size="sm" variant="outline" className="h-8 gap-1">
@@ -629,19 +765,27 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
           <div className="absolute right-0 top-full mt-1 z-10 hidden group-hover:block bg-popover border rounded shadow-md min-w-36">
             <button
               className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-              onClick={() => handleExport('json')}
+              onClick={() => handleExport('markdown')}
             >
-              Export JSON
+              Export Markdown (.md)
             </button>
             <button
               className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-              onClick={() => handleExport('markdown')}
+              onClick={() => handleExport('json')}
             >
-              Export Markdown
+              Export JSON (.json)
             </button>
           </div>
         </div>
       </div>
+
+      {/* Brain mode info banner */}
+      {brainMode && (
+        <div className="flex items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs text-violet-400">
+          <Brain className="h-3.5 w-3.5 shrink-0" />
+          <span>Showing <strong>Phoenix Brain</strong> — shared knowledge entries visible to all agents. Read-only.</span>
+        </div>
+      )}
 
       {/* 3-pane layout */}
       <div className="grid grid-cols-[160px_1fr_2fr] gap-3 min-h-[600px]">
@@ -661,28 +805,33 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
               <span>All</span>
               <Badge variant="secondary" className="text-[10px]">{total}</Badge>
             </button>
-            {ALL_CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                className={cn(
-                  'w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-accent/50 transition-colors',
-                  selectedCategory === cat && 'bg-accent/30 font-medium',
-                )}
-                onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
-              >
-                <span className="truncate pr-1">{CATEGORY_LABELS[cat] ?? cat}</span>
-                {categoryCounts[cat] != null && (
-                  <Badge variant="secondary" className="text-[10px] shrink-0">{categoryCounts[cat]}</Badge>
-                )}
-              </button>
-            ))}
+            {ALL_CATEGORIES.map((cat) => {
+              const meta = getCategoryMeta(cat)
+              return (
+                <button
+                  key={cat}
+                  className={cn(
+                    'w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 hover:bg-accent/50 transition-colors',
+                    selectedCategory === cat && 'bg-accent/30 font-medium',
+                  )}
+                  onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
+                >
+                  <span>{meta.icon}</span>
+                  <span className={cn('truncate flex-1', meta.color)}>{meta.label}</span>
+                  {categoryCounts[cat] != null && (
+                    <Badge variant="secondary" className="text-[10px] shrink-0">{categoryCounts[cat]}</Badge>
+                  )}
+                </button>
+              )
+            })}
           </CardContent>
         </Card>
 
         {/* Entry list */}
         <Card className="overflow-hidden">
           <CardHeader className="py-2 px-3 border-b">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+              {brainMode && <Brain className="h-3 w-3 text-violet-400" />}
               Entries {total > 0 && <span className="normal-case font-normal">({total})</span>}
             </CardTitle>
           </CardHeader>
@@ -691,10 +840,12 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
               <EntrySkeleton />
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16 px-4 text-center">
-                <BookOpen className="h-10 w-10 text-muted-foreground/30" />
+                <Brain className="h-10 w-10 text-muted-foreground/30" />
                 <p className="text-sm text-muted-foreground font-medium">No wiki entries yet.</p>
                 <p className="text-xs text-muted-foreground/70">
-                  The agent will start building knowledge as it trades.
+                  {brainMode
+                    ? 'No shared Brain entries found. Entries shared by agents appear here.'
+                    : 'Your agent will start building knowledge after its first live trades.'}
                 </p>
               </div>
             ) : (
@@ -705,6 +856,7 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
                     entry={entry}
                     selected={selectedEntry?.id === entry.id}
                     onClick={() => setSelectedEntry(entry)}
+                    isBrain={brainMode}
                   />
                 ))}
               </div>
@@ -726,18 +878,30 @@ export function AgentWikiTab({ agentId }: AgentWikiTabProps) {
             <CardContent className="flex flex-col items-center justify-center gap-3 h-full min-h-[400px] text-center">
               <Brain className="h-12 w-12 text-muted-foreground/20" />
               <p className="text-sm text-muted-foreground">Select an entry to view details</p>
+              {!brainMode && entries.length === 0 && !isLoading && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 gap-1"
+                  onClick={() => setShowModal(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />Add First Entry
+                </Button>
+              )}
             </CardContent>
           )}
         </Card>
       </div>
 
-      {/* Add / Edit modal */}
-      <WikiEntryModal
-        open={showModal}
-        onClose={handleModalClose}
-        agentId={agentId}
-        existing={editEntry}
-      />
+      {/* Add / Edit modal — only available in agent mode */}
+      {!brainMode && (
+        <WikiEntryModal
+          open={showModal}
+          onClose={handleModalClose}
+          agentId={agentId}
+          existing={editEntry}
+        />
+      )}
     </div>
   )
 }

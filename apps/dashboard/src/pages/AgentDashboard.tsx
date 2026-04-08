@@ -1583,7 +1583,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
         <AgentSkillsTab agentId={id} agent={agent} />
       </TabsContent>
       <TabsContent value="wiki" className="mt-4">
-        <AgentWikiTab agentId={id} />
+        <AgentWikiTab agentId={id} agent={agent} />
         <ConsolidationPanel agentId={id} />
       </TabsContent>
     </Tabs>
