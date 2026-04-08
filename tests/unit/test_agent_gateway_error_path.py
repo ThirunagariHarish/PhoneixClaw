@@ -491,8 +491,9 @@ class TestSpawnOneShotAgentFKGuard:
 
     async def test_spawn_one_shot_calls_ensure_system_agent(self, tmp_path: Path):
         """_spawn_one_shot_agent must invoke _ensure_system_agent before db.add(AgentSession)."""
-        import apps.api.src.services.agent_gateway as gw
         from unittest.mock import patch as _patch
+
+        import apps.api.src.services.agent_gateway as gw
 
         db = AsyncMock()
         db.execute = AsyncMock(return_value=MagicMock())
@@ -533,8 +534,9 @@ class TestSpawnOneShotAgentFKGuard:
 
     async def test_spawn_one_shot_ensure_called_before_db_add(self, tmp_path: Path):
         """_ensure_system_agent must be called BEFORE db.add(AgentSession) — FK order matters."""
-        import apps.api.src.services.agent_gateway as gw
         from unittest.mock import patch as _patch
+
+        import apps.api.src.services.agent_gateway as gw
 
         call_order: list[str] = []
 

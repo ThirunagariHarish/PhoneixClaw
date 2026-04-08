@@ -15,17 +15,18 @@ import logging
 import os
 import pwd
 import shutil
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select, text
 
+from shared.context.builder import ENABLE_SMART_CONTEXT, ContextBuilderService
 from shared.db.engine import get_session as _get_session
 from shared.db.models.agent import Agent, AgentBacktest
 from shared.db.models.agent_session import AgentSession
 from shared.db.models.system_log import SystemLog
-from shared.context.builder import ENABLE_SMART_CONTEXT, ContextBuilderService
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,13 @@ _MORNING_BRIEFING_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 _EOD_ANALYSIS_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000003")
 _DAILY_SUMMARY_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000004")
 _TRADE_FEEDBACK_AGENT_UUID = uuid.UUID("00000000-0000-0000-0000-000000000005")
+
+# Canonical names — must match the seed list in main.py and scripts/docker_migrate.py.
+_SYSTEM_AGENT_NAMES: dict[str, str] = {
+    "eod_analysis": "EOD Analysis Agent",
+    "daily_summary": "Daily Summary Agent",
+    "trade_feedback": "Trade Feedback Agent",
+}
 
 _running_tasks: dict[str, asyncio.Task] = {}
 
@@ -82,8 +90,6 @@ def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = Tr
                     Pass an empty dict for paper-only agents.
         paper_mode: When True sets PAPER_MODE=true in the MCP server env.
     """
-    import sys as _sys
-
     claude_dir = work_dir / ".claude"
     claude_dir.mkdir(exist_ok=True)
 
@@ -110,7 +116,7 @@ def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = Tr
         },
         "mcpServers": {
             "robinhood": {
-                "command": _sys.executable,
+                "command": sys.executable,
                 "args": ["tools/robinhood_mcp.py"],
                 "env": mcp_env,
             }
@@ -175,13 +181,15 @@ async def _ensure_system_agent(db, agent_id: uuid.UUID, name: str) -> None:
                                current_mode, rules_version,
                                daily_pnl, total_pnl, total_trades,
                                win_rate, tokens_used_today_usd,
-                               tokens_used_month_usd)
+                               tokens_used_month_usd,
+                               created_at, updated_at)
             VALUES (:id, :name, 'system', 'CREATED', '{}',
                     'STOPPED', 'system',
                     '{}', '{}',
                     'conservative', 1,
                     0, 0, 0,
-                    0, 0, 0)
+                    0, 0, 0,
+                    NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
         """),
         {"id": str(agent_id), "name": name},
@@ -391,7 +399,7 @@ class AgentGateway:
 
         for attempt in range(1, max_attempts + 1):
             try:
-                from claude_agent_sdk import query, ClaudeAgentOptions
+                from claude_agent_sdk import ClaudeAgentOptions, query
 
                 prompt = _build_backtest_prompt(agent_id, config, work_dir)
                 options = ClaudeAgentOptions(
@@ -675,7 +683,7 @@ class AgentGateway:
         agent_key = str(agent_id)
 
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk not installed — cannot start live agent")
             async for db in _get_session():
@@ -1070,7 +1078,7 @@ class AgentGateway:
     ) -> None:
         """Run the analyst agent script via Claude Code."""
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk not installed — cannot start analyst persona agent")
             async for db in _get_session():
@@ -1241,7 +1249,7 @@ class AgentGateway:
         task_key = f"{parent_agent_id}:{position_id}"
 
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk not installed — cannot start position agent")
             async for db in _get_session():
@@ -1409,7 +1417,7 @@ class AgentGateway:
     async def _run_supervisor(self, work_dir: Path, session_row_id: uuid.UUID, task_key: str) -> None:
         """Run the supervisor as a Claude Code session."""
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk unavailable for supervisor")
             _running_tasks.pop(task_key, None)
@@ -1530,7 +1538,7 @@ class AgentGateway:
                                      task_key: str) -> None:
         """Run the morning briefing as a one-shot Claude Code session."""
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk unavailable for morning briefing")
             _running_tasks.pop(task_key, None)
@@ -1637,7 +1645,7 @@ class AgentGateway:
             # Ensure the parent agents row exists before the FK-constrained INSERT.
             # Guards against the startup seed failing silently (DB not ready, schema
             # drift, or the agents table being wiped in dev). Covers UUIDs 3, 4, 5.
-            await _ensure_system_agent(db, reserved_uuid, agent_type.replace("_", " ").title() + " Agent")
+            await _ensure_system_agent(db, reserved_uuid, _SYSTEM_AGENT_NAMES.get(agent_type, agent_type.replace("_", " ").title() + " Agent"))
             db.add(AgentSession(
                 id=session_row_id,
                 agent_id=reserved_uuid,
@@ -1668,7 +1676,7 @@ class AgentGateway:
         """Run a one-shot Claude Code session. Shared by daily_summary, eod,
         trade_feedback. 30-min hard timeout matches the backtester."""
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk unavailable for %s", agent_type)
             _running_tasks.pop(task_key, None)
@@ -1882,7 +1890,7 @@ class AgentGateway:
                                 session_row_id: uuid.UUID) -> None:
         """Run a specialized agent (UW, social, strategy) as a Claude Code session."""
         try:
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
             logger.error("claude-agent-sdk unavailable")
             return
@@ -2056,7 +2064,7 @@ class AgentGateway:
             break
 
         try:
-            from shared.triggers import get_bus, Trigger, TriggerType
+            from shared.triggers import Trigger, TriggerType, get_bus
             tt = TriggerType(trigger_type) if not isinstance(trigger_type, TriggerType) else trigger_type
             await get_bus().publish(
                 Trigger(agent_id=str(agent_id), type=tt, payload=payload or {}),

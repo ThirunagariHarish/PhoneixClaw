@@ -5,6 +5,138 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.3] - 2026-04-08 — Live Portfolio Context & MCP Tools in Agent Chat
+
+**Patch release.** Chat sessions for live agents (status `RUNNING` / `APPROVED`) now
+receive real-time Robinhood portfolio data injected into `agent_context.json` and a
+curated set of read-only Robinhood MCP tools, so agents can answer questions about
+current positions and account balance without saying "I have no Robinhood connection."
+Also fixes `_ensure_system_agent` to include `created_at`/`updated_at` columns in the
+idempotent INSERT, preventing `NOT NULL` constraint failures on strict DB schemas, and
+canonicalises system-agent display names via a new `_SYSTEM_AGENT_NAMES` dict.
+One commit; 8 new tests added; all existing tests green. Cortex APPROVED.
+
+### Added
+
+- **`apps/api/src/services/chat_responder.py`** — Live portfolio context injection for
+  live agents: `RobinhoodContextFetcher` is called at the start of every chat turn for
+  agents with status `RUNNING` or `APPROVED`; the result (positions, account value,
+  buying power, cash) is merged into `agent_context.json` under the `live_portfolio`
+  key. On fetch failure, an `{"error": "…"}` stub is written so the agent acknowledges
+  the connection attempt rather than claiming no data exists.
+- **`apps/api/src/services/chat_responder.py`** — Read-only Robinhood MCP tools wired
+  into live-agent chat sessions: `_write_claude_settings()` is called from
+  `_prepare_workdir()` when live credentials are present, and `robinhood_mcp.py` is
+  copied into `tools/`. Eight read-only tools exposed:
+  `robinhood_login`, `get_positions`, `get_account`, `get_quote`,
+  `get_account_snapshot`, `get_nbbo`, `get_watchlist`, `get_order_status`.
+  Order-placement tools are intentionally excluded.
+- **`apps/api/src/services/chat_responder.py`** — `_build_prompt()` gains
+  `has_live_portfolio` and `has_mcp_tools` flags that inject instructional sections
+  into the system prompt, directing the agent to use live data and MCP tools when
+  available.
+
+### Fixed
+
+- **`apps/api/src/services/agent_gateway.py`** — `_ensure_system_agent` INSERT now
+  includes `created_at` and `updated_at` columns (`NOW(), NOW()`), preventing
+  `NOT NULL` constraint violations on databases where those columns carry no
+  server-side default.
+- **`apps/api/src/services/agent_gateway.py`** — New `_SYSTEM_AGENT_NAMES` dict maps
+  `agent_type` keys to their canonical display names (e.g. `"eod_analysis"` →
+  `"EOD Analysis Agent"`), replacing the fragile `.replace("_", " ").title()` fallback.
+  Names now match the seed list in `main.py` exactly.
+- **`apps/api/src/services/agent_gateway.py`** — `sys` import promoted to module
+  level (was deferred as `import sys as _sys` inside `_write_claude_settings`); all
+  `claude_agent_sdk` and `shared.triggers` imports sorted alphabetically (ruff I001).
+
+### Tests
+
+- **`apps/api/tests/test_robinhood_mcp_wiring.py`** — 8 new tests:
+  `test_write_claude_settings_allows_mcp_tools`, `test_write_claude_settings_uses_sys_executable`,
+  `test_write_claude_settings_paper_mode_no_credentials_in_env`,
+  `test_write_claude_settings_live_mode_has_credentials_in_env`,
+  `test_heal_missing_settings_paper_agent_gets_mcp_entry`, and three additional
+  assertions on existing helpers. **Behaviour change:** paper-mode agents now always
+  receive an MCP entry (`PAPER_MODE=true`, no real credentials);
+  `test_write_claude_settings_without_credentials` updated accordingly.
+- **`tests/unit/test_agent_gateway_error_path.py`** — Import order corrected (ruff I001).
+
+### Rollback
+
+No database migrations in this release. To roll back:
+
+```bash
+# 1. Return to the commit immediately before this release (last clean v1.15.2 state)
+git checkout 2ac7ad1
+
+# 2. Rebuild and restart the API service
+docker compose up -d --build phoenix-api
+```
+
+> **Note:** Rolling back disables live portfolio context injection and MCP tools in
+> chat. Agents will fall back to static context only and will no longer report live
+> positions or account data during chat sessions.
+
+---
+
+## [1.15.2] - 2026-04-07 — Agent-Gateway FK Guard for System Agents
+
+**Patch bug fix.** Clicking "Morning Briefing" in the dashboard raised a
+`ForeignKeyViolationError` whenever the startup seed had not created the reserved
+system-agent rows (DB not ready at boot, schema drift, or dev wipe). The fix adds a
+self-healing `_ensure_system_agent()` helper that guarantees the row exists immediately
+before every `AgentSession` INSERT — with no dependency on seed-time success.
+One commit (`2ac7ad1`); 5 new tests passing; 791/791 existing unit tests green. No regressions.
+
+### Fixed
+
+- **`apps/api/src/services/agent_gateway.py`** — New `_ensure_system_agent(db, agent_id, name)`
+  helper executes an idempotent `INSERT … ON CONFLICT (id) DO NOTHING` in the **same**
+  DB session, immediately before every `AgentSession` INSERT that uses a reserved UUID.
+  Applied to all five system-agent creation paths:
+  - `create_supervisor_agent()` — UUID `_SUPERVISOR_AGENT_UUID` (slot 1)
+  - `create_morning_briefing_agent()` — UUID `_MORNING_BRIEFING_AGENT_UUID` (slot 2) ← reported crash site
+  - `_spawn_one_shot_agent()` — UUIDs `_EOD_ANALYSIS_AGENT_UUID` / `_DAILY_SUMMARY_AGENT_UUID` /
+    `_TRADE_FEEDBACK_AGENT_UUID` (slots 3–5, same structural flaw pre-emptively patched)
+- **`apps/api/src/services/agent_gateway.py`** — Five hardcoded UUID strings promoted to
+  named module-level constants (`_SUPERVISOR_AGENT_UUID` … `_TRADE_FEEDBACK_AGENT_UUID`);
+  a future typo now raises `NameError` at import time rather than a silent FK violation at
+  runtime. `sqlalchemy.text` import moved to module level (was deferred).
+- **`tests/unit/test_agent_gateway_error_path.py`** — NEW: 5 unit tests in
+  `TestEnsureSystemAgent` and `TestSpawnOneShotAgentFKGuard`:
+  - `_ensure_system_agent` issues exactly one `execute()` call with the correct UUID and
+    agent name in the `INSERT ON CONFLICT` params.
+  - `_spawn_one_shot_agent` calls `_ensure_system_agent` **before** `db.add(AgentSession)`.
+  - Execution order verified: guard runs prior to the FK-constrained INSERT.
+  All 5 new tests pass.
+
+### Root Cause
+
+`create_morning_briefing_agent()` (and the other four system-agent paths) assumed that
+`_seed_system_agents()` in `main.py` had already populated the five reserved rows on
+startup. That seed swallows all exceptions — if it failed for any reason the app
+continued silently, leaving `agents` rows absent. The next dashboard click triggered
+`agent_sessions_agent_id_fkey` FK violation on `agent_id = 00000000-0000-0000-0000-000000000002`.
+
+### Rollback
+
+No database migrations in this release. To roll back:
+
+```bash
+# 1. Revert to the previous release tag
+git checkout v1.15.1
+
+# 2. Rebuild and restart the API service
+docker compose up -d --build phoenix-api
+```
+
+> **Note:** Rolling back re-exposes the FK violation for any environment where
+> `_seed_system_agents` did not run successfully at boot. Ensure the seed completes
+> cleanly before reverting, or manually INSERT the five system-agent rows.
+
+---
+
 ## [1.15.1] - 2026-04-08 — Robinhood MCP Server Wiring Fix
 
 **High-severity bug fix.** Live agents were provisioned without a `.claude/settings.json`
