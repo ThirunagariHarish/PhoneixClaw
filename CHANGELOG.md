@@ -5,6 +5,63 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] - 2026-04-08 — Robinhood MCP Server Wiring Fix
+
+**High-severity bug fix.** Live agents were provisioned without a `.claude/settings.json`
+file, meaning the Claude SDK had no awareness of the Robinhood MCP server. As a result,
+agents could neither add symbols to the watchlist nor execute trades via MCP.
+Two commits; 6/6 acceptance criteria PASS; 0 regressions. Cortex APPROVED. Quill green.
+
+### Fixed
+
+- **`apps/api/src/services/agent_gateway.py`** — New `_write_claude_settings()` helper
+  that writes `.claude/settings.json` into every agent working directory, listing the
+  Robinhood MCP server with credentials injected as environment variable references.
+  File is `chmod 0o600` (owner-read/write only). Helper is called after `config.json`
+  write in `_prepare_analyst_directory()`, `create_position_agent()`, and
+  `create_specialized_agent()`.
+- **`apps/api/src/main.py`** — New `_heal_live_agent_claude_settings()` startup healer
+  that iterates all existing live agent directories and back-fills any missing
+  `.claude/settings.json` on service start. Wired into `lifespan()` before agent
+  recovery so previously-provisioned agents are corrected automatically on next deploy.
+  Healer delegates to `_write_claude_settings()` (no logic duplication).
+- **`apps/api/tests/test_robinhood_mcp_wiring.py`** — NEW: 6 unit tests covering
+  settings-file creation, correct path construction, env-var credential injection,
+  `chmod 0o600` enforcement, healer back-fill logic, and position-agent `paper_mode`
+  inheritance. All 6 passing.
+
+### Code-Review Fixups (commit `bcb6d69`)
+
+- **B1** — Corrected path hops in startup healer (was navigating one level too deep).
+- **M1** — `chmod` tightened from `0o644` → `0o600`.
+- **M2** — Healer delegates to `_write_claude_settings()` instead of duplicating the
+  JSON-assembly logic inline.
+- **M3** — Integration test upgraded from mock-only to a real end-to-end fixture.
+- **S1** — `create_position_agent()` now correctly propagates `paper_mode` to the
+  spawned agent subprocess.
+
+### Rollback
+
+No database migrations in this release. To roll back:
+
+```bash
+# 1. Revert to the previous release tag
+git checkout v1.15.0
+
+# 2. Rebuild and restart the API service
+docker compose up -d --build phoenix-api
+
+# 3. Existing .claude/settings.json files written by the healer are inert on the
+#    older codebase — they can be left in place or removed manually:
+#    find agents/ -name "settings.json" -path "*/.claude/*" -delete
+```
+
+> **Note:** Rolling back means live agents will again lack MCP awareness until the
+> fix is re-applied. Plan a maintenance window or route trade execution via the
+> REST fallback during the rollback window.
+
+---
+
 ## [1.15.0] - 2026-04-08 — Prediction Markets (Phase 15)
 
 A complete **Prediction Markets** feature built across 8 implementation sub-phases,
