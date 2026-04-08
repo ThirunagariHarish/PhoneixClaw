@@ -85,6 +85,7 @@ from apps.api.src.routes import pm_agents as pm_agents_routes
 from apps.api.src.routes import pm_research as pm_research_routes
 from apps.api.src.routes import pm_venues as pm_venues_routes
 from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
+from apps.api.src.routes import wiki as wiki_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -241,6 +242,46 @@ async def _ensure_prod_schema() -> None:
                 closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """),
+        # Agent Knowledge Wiki tables (migration 035)
+        ("agent_wiki_entries.confidence_score",
+         "CREATE TABLE IF NOT EXISTS agent_wiki_entries ("
+         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+         "agent_id UUID, "
+         "category VARCHAR(50), "
+         "title VARCHAR(255), "
+         "content TEXT, "
+         "is_active BOOLEAN DEFAULT true, "
+         "is_shared BOOLEAN DEFAULT false, "
+         "confidence_score FLOAT DEFAULT 0.5, "
+         "created_at TIMESTAMPTZ DEFAULT now(), "
+         "updated_at TIMESTAMPTZ DEFAULT now())"),
+        ("agent_wiki_entry_versions.entry_id",
+         "CREATE TABLE IF NOT EXISTS agent_wiki_entry_versions ("
+         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+         "entry_id UUID, "
+         "version INTEGER, "
+         "content TEXT, "
+         "updated_at TIMESTAMPTZ DEFAULT now())"),
+        # ------------------------------------------------------------------
+        # Phase 15.8 safety net: pm_top_bets columns added in Phase 15.3–15.5
+        # Each is idempotent; missing columns after a partial migration are
+        # self-healed here so the TopBetsAgent never crashes on startup.
+        # ------------------------------------------------------------------
+        ("pm_top_bets.bull_argument",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS bull_argument TEXT"),
+        ("pm_top_bets.bear_argument",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS bear_argument TEXT"),
+        ("pm_top_bets.sample_probabilities",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS sample_probabilities JSONB"),
+        ("pm_top_bets.reference_class",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS reference_class VARCHAR(100)"),
+        ("pm_top_bets.base_rate_yes",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS base_rate_yes FLOAT"),
+        ("pm_top_bets.confidence_score",
+         "ALTER TABLE pm_top_bets ADD COLUMN IF NOT EXISTS confidence_score FLOAT"),
+        # pm_chat_messages safety (Phase 15.6 — SSE partial flag)
+        ("pm_chat_messages.is_partial",
+         "ALTER TABLE pm_chat_messages ADD COLUMN IF NOT EXISTS is_partial BOOLEAN DEFAULT false"),
     ]
 
     engine = get_engine()
@@ -336,6 +377,100 @@ async def _heal_stuck_backtests(log=None) -> None:
             _log.info("[backtest_heal] done — reset %d stuck backtest(s)", len(stuck))
     except Exception as exc:
         _log.warning("[backtest_heal] non-fatal error: %s", exc)
+
+
+async def _heal_live_agent_claude_settings(_log) -> None:
+    """Heal existing live agent directories missing .claude/settings.json.
+
+    Scans data/live_agents/*/ directories. For each that has
+    tools/robinhood_mcp.py but no .claude/settings.json, reads config.json
+    and writes the settings file with credentials injected.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    data_dir = _Path(__file__).parent.parent.parent / "data"
+    live_agents_dir = data_dir / "live_agents"
+    if not live_agents_dir.exists():
+        return
+
+    healed = 0
+    for agent_dir in live_agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        claude_settings = agent_dir / ".claude" / "settings.json"
+        robinhood_mcp = agent_dir / "tools" / "robinhood_mcp.py"
+
+        if not robinhood_mcp.exists():
+            continue  # not a live-trader agent
+
+        if claude_settings.exists():
+            continue  # already has settings
+
+        # Read config.json for credentials
+        config_path = agent_dir / "config.json"
+        if not config_path.exists():
+            continue
+
+        try:
+            config = _json.loads(config_path.read_text())
+        except Exception as exc:
+            _log.warning("[heal_mcp] Failed to read config for %s: %s", agent_dir.name, exc)
+            continue
+
+        rh_creds = config.get("robinhood_credentials") or config.get("robinhood") or {}
+        paper_mode = config.get("paper_mode", True)
+
+        # Build settings
+        settings: dict = {
+            "permissions": {
+                "allow": [
+                    "Bash(python *)", "Bash(python3 *)", "Bash(pip *)",
+                    "Bash(pip3 *)", "Bash(curl *)", "Read", "Write", "Edit", "Grep", "Glob"
+                ],
+                "deny": [
+                    "Bash(rm -rf /)", "Bash(rm -rf ~)", "Bash(git push --force *)",
+                    "Bash(shutdown *)", "Bash(reboot *)"
+                ]
+            },
+            "mcpServers": {},
+            "hooks": {
+                "SessionStart": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_start 2>/dev/null || true"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_stop 2>/dev/null || true"}]}]
+            }
+        }
+
+        if rh_creds:
+            settings["mcpServers"]["robinhood"] = {
+                "command": "python3",
+                "args": ["tools/robinhood_mcp.py"],
+                "env": {
+                    "ROBINHOOD_CONFIG": "config.json",
+                    "RH_USERNAME": rh_creds.get("username", ""),
+                    "RH_PASSWORD": rh_creds.get("password", ""),
+                    "RH_TOTP_SECRET": rh_creds.get("totp_secret", ""),
+                    "PAPER_MODE": "true" if paper_mode else "false",
+                }
+            }
+        else:
+            # Wire with config.json only (no direct credential injection)
+            settings["mcpServers"]["robinhood"] = {
+                "command": "python3",
+                "args": ["tools/robinhood_mcp.py"],
+                "env": {
+                    "ROBINHOOD_CONFIG": "config.json",
+                    "PAPER_MODE": "true",
+                }
+            }
+
+        claude_dir = agent_dir / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        claude_settings.write_text(_json.dumps(settings, indent=2))
+        _log.info("[heal_mcp] Wrote .claude/settings.json for agent %s", agent_dir.name)
+        healed += 1
+
+    if healed:
+        _log.info("[heal_mcp] Healed %d live agent director(ies)", healed)
 
 
 async def _seed_system_agents() -> None:
@@ -459,6 +594,11 @@ async def lifespan(app: FastAPI):
 
     # Phase H3: Recover orphaned agent sessions from previous container lifecycle
     try:
+        await _heal_live_agent_claude_settings(_log)
+    except Exception as exc:
+        _log.exception("[heal_mcp] Failed: %s", exc)
+
+    try:
         from apps.api.src.services.agent_runtime_recovery import recover_agents_on_startup
         recovery_summary = await recover_agents_on_startup()
         _log.info("Agent recovery: %s", recovery_summary)
@@ -562,6 +702,8 @@ app.include_router(pm_agents_routes.router)
 app.include_router(pm_research_routes.router)
 app.include_router(pm_venues_routes.router)
 app.include_router(pm_pipeline_routes.router)
+app.include_router(wiki_routes.router)
+app.include_router(wiki_routes.brain_router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

@@ -7,6 +7,7 @@ with a unified gateway that:
   - Manages lifecycle: start, stop, pause, resume, health-check
   - Orchestrates the backtest → auto-create-analyst flow
 """
+from __future__ import annotations
 
 import asyncio
 import json
@@ -56,6 +57,58 @@ def _get_api_url() -> str:
     """
     return os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
 _session_ids: dict[str, str] = {}
+
+
+def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = True) -> None:
+    """Write .claude/settings.json with Robinhood MCP server wired in.
+
+    Creates (or overwrites) `<work_dir>/.claude/settings.json` with the full
+    permissions block, hooks, and — when credentials are supplied — the
+    robinhood MCP server entry with credentials injected directly as env vars.
+
+    Args:
+        work_dir:   Agent working directory (e.g. data/live_agents/<id>/).
+        rh_creds:   Dict with keys ``username``, ``password``, ``totp_secret``.
+                    Pass an empty dict to omit the MCP entry entirely.
+        paper_mode: When True sets PAPER_MODE=true in the MCP server env.
+    """
+    claude_dir = work_dir / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+
+    settings: dict = {
+        "permissions": {
+            "allow": [
+                "Bash(python *)", "Bash(python3 *)", "Bash(pip *)",
+                "Bash(pip3 *)", "Bash(curl *)", "Read", "Write", "Edit", "Grep", "Glob"
+            ],
+            "deny": [
+                "Bash(rm -rf /)", "Bash(rm -rf ~)", "Bash(git push --force *)",
+                "Bash(shutdown *)", "Bash(reboot *)"
+            ]
+        },
+        "mcpServers": {},
+        "hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_start 2>/dev/null || true"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "python3 tools/report_to_phoenix.py --event session_stop 2>/dev/null || true"}]}]
+        }
+    }
+
+    if rh_creds:
+        settings["mcpServers"]["robinhood"] = {
+            "command": "python3",
+            "args": ["tools/robinhood_mcp.py"],
+            "env": {
+                "ROBINHOOD_CONFIG": "config.json",
+                "RH_USERNAME": rh_creds.get("username", ""),
+                "RH_PASSWORD": rh_creds.get("password", ""),
+                "RH_TOTP_SECRET": rh_creds.get("totp_secret", ""),
+                "PAPER_MODE": "true" if paper_mode else "false",
+            }
+        }
+
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text(json.dumps(settings, indent=2))
+
 
 # Phase H5: Concurrency limits to prevent OOM from too many subprocesses
 MAX_CONCURRENT_BACKTESTS = int(os.environ.get("MAX_CONCURRENT_BACKTESTS", "4"))
@@ -689,15 +742,12 @@ class AgentGateway:
             if src.exists():
                 shutil.copytree(src, dst)
 
-        claude_settings_dst = work_dir / ".claude"
-        claude_settings_dst.mkdir(exist_ok=True)
-        settings_src = LIVE_TEMPLATE / ".claude" / "settings.json"
-        if settings_src.exists():
-            shutil.copy2(settings_src, claude_settings_dst / "settings.json")
-
+        # .claude/commands/ is copied verbatim; settings.json is written dynamically
+        # (with credentials injected) further down after config.json is built.
         commands_src = LIVE_TEMPLATE / ".claude" / "commands"
         if commands_src.exists():
-            commands_dst = claude_settings_dst / "commands"
+            commands_dst = work_dir / ".claude" / "commands"
+            commands_dst.parent.mkdir(exist_ok=True)
             if commands_dst.exists():
                 shutil.rmtree(commands_dst)
             shutil.copytree(commands_src, commands_dst)
@@ -786,6 +836,9 @@ class AgentGateway:
         agent_config["_agent_home"] = str(work_dir)
 
         (work_dir / "config.json").write_text(json.dumps(agent_config, indent=2, default=str))
+        # Write .claude/settings.json with credentials injected (belt-and-suspenders
+        # over config.json; MCP server reads env vars first, then config.json fallback).
+        _write_claude_settings(work_dir, rh_creds, paper_mode=agent_config.get("paper_mode", True))
         self._render_claude_md(agent, manifest, work_dir)
         return work_dir
 
@@ -1036,6 +1089,8 @@ class AgentGateway:
                 "risk": (parent.manifest or {}).get("risk", {}),
             }
             (work_dir / "config.json").write_text(json.dumps(position_config, indent=2, default=str))
+            rh_creds = position_config.get("robinhood_credentials", {})
+            _write_claude_settings(work_dir, rh_creds, paper_mode=True)
 
             # Find the parent's active live session to link sub-agent
             parent_session = (await db.execute(
@@ -1679,6 +1734,16 @@ class AgentGateway:
                 **config,
             }
             (work_dir / "config.json").write_text(json.dumps(agent_config, indent=2, default=str))
+            rh_creds = agent_config.get("robinhood_credentials", {})
+            _write_claude_settings(work_dir, rh_creds, paper_mode=agent_config.get("paper_mode", True))
+
+            # Copy .claude/commands/ from live-trader-v1 template
+            commands_src = LIVE_TEMPLATE / ".claude" / "commands"
+            if commands_src.exists():
+                commands_dst = work_dir / ".claude" / "commands"
+                if commands_dst.exists():
+                    shutil.rmtree(commands_dst)
+                shutil.copytree(commands_src, commands_dst)
 
             session_row_id = uuid.uuid4()
             db.add(AgentSession(
