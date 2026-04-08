@@ -5,6 +5,9 @@ M2.1/M2.2: Skill Catalog & Sync Service.
 Reference: PRD Section 3.7, ArchitecturePlan Section 4.
 """
 
+from __future__ import annotations
+from typing import Optional
+
 import uuid
 from datetime import datetime
 
@@ -21,16 +24,16 @@ class Skill(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     category: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     inputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     outputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sync_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

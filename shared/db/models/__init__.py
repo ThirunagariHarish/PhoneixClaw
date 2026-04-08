@@ -17,14 +17,21 @@ from shared.db.models.error_log import ErrorLog
 from shared.db.models.learning_session import LearningSession
 from shared.db.models.notification import Notification
 from shared.db.models.polymarket import (
+    PMAgentActivityLog,
     PMCalibrationSnapshot,
+    PMChatMessage,
+    PMHistoricalMarket,
     PMJurisdictionAttestation,
     PMMarket,
+    PMMarketEmbedding,
+    PMModelEvaluation,
     PMOrder,
     PMPosition,
     PMPromotionAudit,
     PMResolutionScore,
     PMStrategy,
+    PMStrategyResearchLog,
+    PMTopBet,
 )
 from shared.db.models.skill import AgentSkill, Skill
 from shared.db.models.strategy import Strategy
@@ -76,4 +83,11 @@ __all__ = [
     "PMResolutionScore",
     "PMPromotionAudit",
     "PMJurisdictionAttestation",
+    "PMTopBet",
+    "PMChatMessage",
+    "PMAgentActivityLog",
+    "PMStrategyResearchLog",
+    "PMHistoricalMarket",
+    "PMMarketEmbedding",
+    "PMModelEvaluation",
 ]

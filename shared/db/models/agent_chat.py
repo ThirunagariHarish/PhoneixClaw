@@ -1,10 +1,16 @@
 """Chat messages between user and Claude Code agents."""
+
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+
 from sqlalchemy import DateTime, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from shared.db.models.base import Base
+
 
 class AgentChatMessage(Base):
     __tablename__ = "agent_chat_messages"

@@ -5,6 +5,67 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-04-07 — Analyst Agent (Phase 1)
+
+Introduces the **Analyst Agent** — a new agent type with 6 configurable analyst
+personas, a full tool suite (chart analysis, options flow, news sentiment, trade
+setup scoring, signal emission), an orchestrated trading workflow, 3 new API
+endpoints, and a persona picker + signal-feed dashboard. Includes DB migration
+034 (merge migration) adding 7 new columns to `trade_signals`. Python 3.9
+SQLAlchemy `Mapped[X | None]` compatibility fixed across 25 model files.
+Cortex APPROVED, Quill 17/17 tests passing, 0 regressions.
+
+### Added
+
+- **Analyst Agent (Phase 1)** — New `analyst` agent type with 6 configurable personas
+  - **Personas**: `aggressive_momentum`, `conservative_swing`, `options_flow_specialist`,
+    `dark_pool_hunter`, `sentiment_trader`, `scalper` (defined in `agents/analyst/personas/library.py`)
+  - **Tools**: chart analysis (RSI/MACD/Bollinger Bands/VWAP/pattern detection),
+    options flow scanner, news sentiment (FinBERT-powered), trade setup scorer,
+    signal emitter (`agents/analyst/tools/`)
+  - **Orchestrated workflow**: signal intake → technical confirmation → sentiment
+    cross-check → confidence scoring → trade decision → signal emission
+  - **New API endpoints**:
+    - `POST /api/v2/agents/{id}/analyst/run` — run analyst workflow for an agent
+    - `GET /api/v2/agents/{id}/signals` — retrieve per-agent trade signals
+    - `GET /api/v2/signals` — retrieve all trade signals (global feed)
+  - **Dashboard**: `PersonaSelector.tsx` in the 4-step agent creation wizard;
+    `AnalystSignalCard.tsx` and `AnalystSignalFeed.tsx` for the signal feed
+  - **17 unit tests** across `test_analyst_scorer.py`, `test_analyst_personas.py`,
+    `test_emit_trade_signal.py`, `test_analyst_routes.py` — all passing
+
+### Changed
+
+- Agent `type` field now accepts `analyst` in addition to `trading`, `trend`,
+  `sentiment` — validation pattern updated in `apps/api/src/routes/agents.py`
+- `apps/api/src/services/agent_gateway.py` — added `create_analyst_agent()` method
+  and `ANALYST_TEMPLATE` constant
+- `apps/dashboard/src/pages/Agents.tsx` — 4-step wizard with persona picker
+- `shared/db/models/trade_signal.py` — 7 new analyst-specific columns:
+  `analyst_persona`, `tool_signals_used`, `risk_reward_ratio`, `take_profit`,
+  `entry_price`, `stop_loss`, `pattern_name`
+- **Python 3.9 SQLAlchemy compatibility fix**: `Mapped[X | None]` → `Mapped[Optional[X]]`
+  applied across 25 model files (`shared/db/models/`)
+
+### Database Migrations
+
+- `034_add_analyst_agent.py` — Merge migration resolving multi-head chain
+  (`09b0dd176f5d` + `033_pm_phase15` → `034`). Adds 7 new nullable columns to
+  `trade_signals`; updates `agents.type` CHECK constraint to include `'analyst'`.
+  Fully reversible (`alembic downgrade 033_pm_phase15`). Idempotent `_has_column()`
+  guard on all `ADD COLUMN` operations.
+
+### Known Limitations (Phase 1)
+
+- `scan_options_flow` tool is a placeholder — live dark-pool feed integration
+  deferred to Phase 2.
+- No live trading execution — analyst agent emits signals only; execution
+  routing is Phase 2.
+- No scheduler — analyst run must be triggered via API; cron/APScheduler wiring
+  is Phase 2.
+
+---
+
 ## [0.4.0] — 2025-07-14 — Skills / Tools Tab
 
 New read-only "Skills" tab on each live agent's detail page, surfacing the

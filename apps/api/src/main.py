@@ -78,6 +78,13 @@ from apps.api.src.routes import agent_terminal as agent_terminal_routes
 from apps.api.src.routes import briefing_history as briefing_history_routes
 from apps.api.src.routes import claude_sdk_check as claude_sdk_check_routes
 from apps.api.src.routes import polymarket as polymarket_routes
+from apps.api.src.routes import analyst as analyst_routes
+from apps.api.src.routes import pm_top_bets as pm_top_bets_routes
+from apps.api.src.routes import pm_chat as pm_chat_routes
+from apps.api.src.routes import pm_agents as pm_agents_routes
+from apps.api.src.routes import pm_research as pm_research_routes
+from apps.api.src.routes import pm_venues as pm_venues_routes
+from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -548,6 +555,13 @@ app.include_router(agent_terminal_routes.router)
 app.include_router(briefing_history_routes.router)
 app.include_router(claude_sdk_check_routes.router)
 app.include_router(polymarket_routes.router)
+app.include_router(analyst_routes.router)
+app.include_router(pm_top_bets_routes.router)
+app.include_router(pm_chat_routes.router)
+app.include_router(pm_agents_routes.router)
+app.include_router(pm_research_routes.router)
+app.include_router(pm_venues_routes.router)
+app.include_router(pm_pipeline_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

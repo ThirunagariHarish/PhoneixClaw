@@ -2,6 +2,8 @@
 DEPRECATED — V3 removed the VPS layer (migration 007_v3_remove_vps_add_workers.py).
 This model is kept only for Alembic migration history. Do not use in new code.
 """
+from __future__ import annotations
+from typing import Optional
 
 import uuid
 from datetime import datetime
@@ -25,8 +27,8 @@ class OpenClawInstance(Base):
     node_type: Mapped[str] = mapped_column(String(10), nullable=False, default="vps")  # vps | local
     auto_registered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     capabilities: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_offline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_offline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

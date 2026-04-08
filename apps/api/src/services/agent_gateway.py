@@ -40,6 +40,7 @@ MORNING_BRIEFING_TEMPLATE = REPO_ROOT / "agents" / "templates" / "morning-briefi
 DAILY_SUMMARY_TEMPLATE = REPO_ROOT / "agents" / "templates" / "daily-summary-agent"
 EOD_ANALYSIS_TEMPLATE = REPO_ROOT / "agents" / "templates" / "eod-analysis-agent"
 TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-agent"
+ANALYST_TEMPLATE = "analyst-agent"
 DATA_DIR = REPO_ROOT / "data"
 
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -850,6 +851,119 @@ class AgentGateway:
     # ------------------------------------------------------------------
     # Lifecycle: stop, pause, resume, status
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Analyst persona agent (Phase 1 — signal generator)
+    # ------------------------------------------------------------------
+
+    async def create_analyst_agent(
+        self,
+        agent_id: uuid.UUID,
+        config: dict,
+        mode: str = "signal_intake",
+    ) -> str:
+        """Spawn a persona-driven analyst agent session.
+
+        Creates an AgentSession row and spawns the analyst_agent.py script.
+        Returns session_row_id as string.
+
+        Args:
+            agent_id: UUID of the analyst agent row.
+            config: Agent config dict (must include 'persona_id').
+            mode: Workflow mode ('signal_intake' or 'pre_market').
+
+        Returns:
+            session_row_id as string.
+        """
+        try:
+            from apps.api.src.services.budget_enforcer import check_budget
+            budget = await check_budget(agent_id)
+            if not budget.get("ok"):
+                logger.warning("Analyst agent spawn rejected for %s: %s",
+                               agent_id, budget.get("reason"))
+                return f"BUDGET_EXCEEDED:{budget.get('reason')}"
+        except Exception as exc:
+            logger.warning("Budget check failed for %s, allowing: %s", agent_id, exc)
+
+        persona_id = config.get("persona", config.get("persona_id", "aggressive_momentum"))
+        work_dir = DATA_DIR / f"analyst_{agent_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        config_path = work_dir / "config.json"
+        config_path.write_text(json.dumps(config, indent=2, default=str))
+
+        session_row_id = uuid.uuid4()
+        async for db in _get_session():
+            db.add(AgentSession(
+                id=session_row_id,
+                agent_id=agent_id,
+                agent_type="analyst",
+                status="starting",
+                working_dir=str(work_dir),
+                config=config,
+            ))
+            await db.commit()
+
+        task = asyncio.create_task(
+            self._run_analyst_agent(agent_id, persona_id, config, work_dir, session_row_id, mode)
+        )
+        _running_tasks[str(agent_id)] = task
+        return str(session_row_id)
+
+    async def _run_analyst_agent(
+        self,
+        agent_id: uuid.UUID,
+        persona_id: str,
+        config: dict,
+        work_dir: Path,
+        session_row_id: uuid.UUID,
+        mode: str = "signal_intake",
+    ) -> None:
+        """Run the analyst agent script via Claude Code."""
+        try:
+            from claude_agent_sdk import query, ClaudeAgentOptions
+        except ImportError:
+            logger.error("claude-agent-sdk not installed — cannot start analyst persona agent")
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="error",
+                                           error="claude-agent-sdk not installed")
+            return
+
+        async for db in _get_session():
+            await self._update_session(db, session_row_id, status="running")
+
+        config_str = json.dumps(config, default=str).replace('"', '\\"')
+        agent_script = str(REPO_ROOT / "agents" / "analyst" / "analyst_agent.py")
+
+        prompt = (
+            f"Run the analyst agent script: "
+            f"python {agent_script} "
+            f"--agent_id {agent_id} "
+            f"--persona_id {persona_id} "
+            f"--mode {mode} "
+            f"--config '{config_str}'"
+        )
+
+        options = ClaudeAgentOptions(
+            cwd=str(work_dir),
+            permission_mode="dontAsk",
+            allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+        )
+
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if hasattr(message, "session_id"):
+                    _session_ids[str(agent_id)] = message.session_id
+                    async for db in _get_session():
+                        await self._update_session(db, session_row_id,
+                                                   session_id=message.session_id)
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="completed")
+        except Exception as exc:
+            logger.error("Analyst persona agent failed for %s: %s", agent_id, exc)
+            async for db in _get_session():
+                await self._update_session(db, session_row_id, status="error",
+                                           error=str(exc)[:500])
 
     # ------------------------------------------------------------------
     # Position sub-agent (Phase 1.3)

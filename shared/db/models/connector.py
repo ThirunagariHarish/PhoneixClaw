@@ -5,6 +5,9 @@ M1.9: Connector Framework Core.
 Reference: PRD Section 3.6, Section 16.
 """
 
+from __future__ import annotations
+from typing import Optional
+
 import uuid
 from datetime import datetime
 
@@ -28,12 +31,12 @@ class Connector(Base):
     type: Mapped[str] = mapped_column(String(30), nullable=False)  # discord, reddit, twitter, etc.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="disconnected")
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    credentials_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credentials_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    last_connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_connected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow

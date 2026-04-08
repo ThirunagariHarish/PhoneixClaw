@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v2/agents", tags=["agents"])
 class AgentCreate(BaseModel):
     """Agent creation wizard payload."""
     name: str = Field(..., min_length=1, max_length=100)
-    type: str = Field(..., pattern="^(trading|trend|sentiment)$")
+    type: str = Field(..., pattern="^(trading|trend|sentiment|analyst)$")
     config: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     data_source: str = ""
@@ -287,6 +287,22 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
 
     from apps.api.src.services.agent_gateway import gateway
     await gateway.create_backtester(agent_id, backtest.id, backtest_config)
+
+    # For analyst agents, also spawn the persona-driven analyst session immediately
+    if payload.type == "analyst":
+        try:
+            persona_id = payload.config.get("persona_id", "aggressive_momentum")
+            analyst_config = {
+                **backtest_config,
+                "persona_id": persona_id,
+                "persona": persona_id,
+                "tickers": payload.config.get("tickers", []),
+                "watchlist": payload.config.get("watchlist", []),
+            }
+            await gateway.create_analyst_agent(agent_id, analyst_config, mode="signal_intake")
+            logger.info("Spawned analyst persona agent for %s (persona=%s)", agent_id, persona_id)
+        except Exception as exc:
+            logger.warning("Failed to spawn analyst persona agent for %s: %s", agent_id, exc)
 
     return AgentResponse.from_model(agent)
 
@@ -2047,3 +2063,90 @@ async def get_agent_sessions(agent_id: str, session: DbSession, limit: int = Que
         }
         for s in sessions
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 0: Verifiable Alpha CI — run backtest CI on a pending improvement
+# ---------------------------------------------------------------------------
+
+
+class BacktestCIResult(BaseModel):
+    """Response model for the run-backtest endpoint."""
+
+    improvement_id: str
+    backtest_passed: bool
+    backtest_status: str  # "passed" | "failed" | "borderline" | "running" | "pending"
+    backtest_metrics: dict[str, Any]
+    backtest_run_at: str
+    thresholds_missed: list[str]
+
+
+@router.post(
+    "/{agent_id}/improvements/{improvement_id}/run-backtest",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=BacktestCIResult,
+)
+async def run_improvement_backtest(
+    agent_id: str,
+    improvement_id: str,
+    request: Request,
+    session: DbSession,
+) -> BacktestCIResult:
+    """Run Backtest CI on a single pending improvement rule.
+
+    Auth: requires valid user; IDOR check enforced (owner or admin only).
+    Returns 202 Accepted with the CI result immediately (simulated backtest uses
+    the most-recent completed AgentBacktest as a proxy — see BacktestCIService).
+    """
+    from apps.api.src.services.backtest_ci import BacktestCIService
+
+    # Resolve agent
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    result = await session.execute(select(Agent).where(Agent.id == agent_uuid))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    # IDOR check
+    caller_id = getattr(request.state, "user_id", None)
+    is_admin = getattr(request.state, "is_admin", False)
+    if str(agent.user_id) != str(caller_id) and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Verify improvement exists
+    pending = agent.pending_improvements or {}
+    items: list[dict] = pending.get("items", []) if isinstance(pending, dict) else []
+    target = next((i for i in items if i.get("id") == improvement_id), None)
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Improvement not found"
+        )
+
+    # Reject if already running
+    if target.get("backtest_status") == "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Backtest CI is already running for this improvement",
+        )
+
+    # Delegate to BacktestCIService
+    svc = BacktestCIService(session)
+    try:
+        updated = await svc.run_ci_for_improvement(agent_uuid, improvement_id)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except OverflowError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return BacktestCIResult(
+        improvement_id=improvement_id,
+        backtest_passed=updated.get("backtest_passed", False),
+        backtest_status=updated.get("backtest_status", "failed"),
+        backtest_metrics=updated.get("backtest_metrics", {}),
+        backtest_run_at=updated.get("backtest_run_at", ""),
+        thresholds_missed=updated.get("backtest_thresholds_missed", []),
+    )

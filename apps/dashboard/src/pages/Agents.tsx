@@ -20,6 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AiAssistPopover } from '@/components/AiAssistPopover'
 import { EquityCurveChart } from '@/components/EquityCurveChart'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { PersonaSelector, type PersonaOption } from '@/components/agents/PersonaSelector'
 import { toast } from 'sonner'
 import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
@@ -95,9 +96,11 @@ function getStatusConfig(status: string) {
 const AGENT_TYPES = [
   { value: 'trading', label: 'Trading Agent' },
   { value: 'trend', label: 'Trend Agent' },
+  { value: 'analyst', label: 'Analyst Agent' },
 ]
 
 const WIZARD_STEPS = ['Channel', 'Risk Config', 'Review'] as const
+const ANALYST_WIZARD_STEPS = ['Channel', 'Persona', 'Risk Config', 'Review'] as const
 
 interface ConnectorInfo {
   id: string
@@ -176,6 +179,7 @@ interface WizardFormData {
   smart_hold_enabled: boolean
   smart_hold_buffer_pct: number
   source_config: Record<string, unknown>
+  persona_id?: string
 }
 
 /* P1: Spawn typed agent via popup dialog (UW / social / strategy / supervisor).
@@ -296,6 +300,7 @@ const DEFAULT_FORM: WizardFormData = {
   smart_hold_enabled: false,
   smart_hold_buffer_pct: 10,
   source_config: {},
+  persona_id: 'aggressive_momentum',
 }
 
 /**
@@ -308,7 +313,9 @@ export function computeCanAdvance(
   type: string,
   connector_ids: string[],
   selected_channel: SelectedChannel | null,
+  persona_id?: string,
 ): boolean {
+  const isAnalyst = type === 'analyst'
   switch (step) {
     case 0: {
       if (name.trim().length === 0) return false
@@ -317,8 +324,13 @@ export function computeCanAdvance(
       }
       return true
     }
-    case 1: return true
+    case 1: {
+      // For analyst: persona step must have a selection
+      if (isAnalyst) return Boolean(persona_id && persona_id.length > 0)
+      return true
+    }
     case 2: return true
+    case 3: return true
     default: return false
   }
 }
@@ -583,10 +595,10 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
   )
 }
 
-function StepIndicator({ currentStep }: { currentStep: number }) {
+function StepIndicator({ currentStep, steps = WIZARD_STEPS }: { currentStep: number; steps?: readonly string[] }) {
   return (
     <div className="flex items-center justify-between mb-6 overflow-x-auto">
-      {WIZARD_STEPS.map((label, idx) => (
+      {steps.map((label, idx) => (
         <div key={label} className="flex items-center">
           <div className="flex flex-col items-center">
             <div
@@ -604,7 +616,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
               {label}
             </span>
           </div>
-          {idx < WIZARD_STEPS.length - 1 && (
+          {idx < steps.length - 1 && (
             <div className={`h-0.5 w-4 sm:w-8 mx-1 mt-[-14px] sm:mt-[-14px] ${idx < currentStep ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
           )}
         </div>
@@ -771,6 +783,28 @@ function StepChannel({ form, onChange, connectors }: {
             {form.connector_ids.length} connector{form.connector_ids.length !== 1 ? 's' : ''} selected
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+function StepPersona({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
+  const { data: personas = [], isLoading } = useQuery<PersonaOption[]>({
+    queryKey: ['analyst-personas'],
+    queryFn: async () => (await api.get('/api/v2/analyst/personas')).data,
+    staleTime: 5 * 60_000,
+  })
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-sm font-medium mb-1">Trading Persona</h3>
+        <PersonaSelector
+          personas={personas}
+          selected={form.persona_id ?? 'aggressive_momentum'}
+          onChange={(id) => onChange({ persona_id: id })}
+          loading={isLoading}
+        />
       </div>
     </div>
   )
@@ -1316,6 +1350,9 @@ export default function AgentsPage() {
       if (form.type === 'trading' && form.selected_channel) {
         config.selected_channel = form.selected_channel
       }
+      if (form.type === 'analyst' && form.persona_id) {
+        config.persona_id = form.persona_id
+      }
       const payload = {
         name: form.name,
         type: form.type,
@@ -1354,7 +1391,10 @@ export default function AgentsPage() {
   })
 
   const canAdvance = (step: number): boolean =>
-    computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel)
+    computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel, form.persona_id)
+
+  const isAnalyst = form.type === 'analyst'
+  const activeSteps = isAnalyst ? ANALYST_WIZARD_STEPS : WIZARD_STEPS
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1379,12 +1419,22 @@ export default function AgentsPage() {
               <DialogTitle>Create Agent</DialogTitle>
             </DialogHeader>
 
-            <StepIndicator currentStep={wizardStep} />
+            <StepIndicator currentStep={wizardStep} steps={activeSteps} />
 
             <div className="min-h-[280px]">
               {wizardStep === 0 && <StepChannel form={form} onChange={updateForm} connectors={connectors} />}
-              {wizardStep === 1 && <StepRiskConfig form={form} onChange={updateForm} />}
-              {wizardStep === 2 && <StepReview form={form} connectors={connectors} />}
+              {isAnalyst ? (
+                <>
+                  {wizardStep === 1 && <StepPersona form={form} onChange={updateForm} />}
+                  {wizardStep === 2 && <StepRiskConfig form={form} onChange={updateForm} />}
+                  {wizardStep === 3 && <StepReview form={form} connectors={connectors} />}
+                </>
+              ) : (
+                <>
+                  {wizardStep === 1 && <StepRiskConfig form={form} onChange={updateForm} />}
+                  {wizardStep === 2 && <StepReview form={form} connectors={connectors} />}
+                </>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-4 border-t">
@@ -1396,7 +1446,7 @@ export default function AgentsPage() {
                 <ChevronLeft className="h-4 w-4 mr-1" /> Back
               </Button>
 
-              {wizardStep < WIZARD_STEPS.length - 1 ? (
+              {wizardStep < activeSteps.length - 1 ? (
                 <Button
                   onClick={() => setWizardStep((s) => s + 1)}
                   disabled={!canAdvance(wizardStep)}

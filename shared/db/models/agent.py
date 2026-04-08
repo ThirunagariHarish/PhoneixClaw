@@ -2,6 +2,9 @@
 Agent, AgentBacktest, and AgentLog models. M1.6, M2.3, M2.4.
 """
 
+from __future__ import annotations
+from typing import Optional
+
 import uuid
 from datetime import datetime
 
@@ -19,24 +22,24 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     type: Mapped[str] = mapped_column(String(30), nullable=False)  # trading | trend
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="CREATED")
-    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    phoenix_api_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    phoenix_api_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
-    worker_container_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    worker_container_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     worker_status: Mapped[str] = mapped_column(String(30), nullable=False, default="STOPPED")
 
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
-    channel_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    analyst_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    model_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    model_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    channel_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    analyst_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    model_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    model_accuracy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    last_signal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_trade_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_signal_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_trade_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     current_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="conservative")
@@ -44,21 +47,21 @@ class Agent(Base):
 
     # Phase 4: Supervisor agent staged improvements requiring user approval
     pending_improvements: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    last_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_research_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Phase H7: Token budget tracking + enforcement
-    daily_token_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
-    monthly_token_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    daily_token_budget_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    monthly_token_budget_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     tokens_used_today_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     tokens_used_month_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    budget_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    auto_paused_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    budget_reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_paused_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # Phase 4 (agents-tab-fix): latest backtest/Claude SDK error for fast list reads
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Phase P: runtime status + heartbeat-derived activity marker
-    runtime_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    runtime_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -75,23 +78,23 @@ class AgentBacktest(Base):
         UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="RUNNING", index=True)
-    current_step: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    current_step: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    strategy_template: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    strategy_template: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     parameters: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     equity_curve: Mapped[dict] = mapped_column(JSONB, nullable=False, default=list)
     total_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
-    sharpe_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
-    total_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sharpe_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_drawdown: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_return: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     model_selection: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     backtesting_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 

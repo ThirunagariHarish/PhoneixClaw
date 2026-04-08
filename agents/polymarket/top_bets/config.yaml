@@ -1,0 +1,12 @@
+scorer:
+  cot_samples: 5 # N for CoT self-consistency
+  debate_top_k: 20 # only run debate on top-20 candidates
+  reference_class_weight: 0.3
+  llm_weight: 0.5
+  heuristic_weight: 0.2
+  min_confidence_threshold: 0.55 # below this = skip
+  max_daily_debate_calls: 100 # cost cap
+llm:
+  model: "claude-3-5-haiku-20241022"
+  temperature: 0.3
+  max_tokens: 1024

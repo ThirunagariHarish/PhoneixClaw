@@ -5,6 +5,9 @@ M1.10: Trades and Positions tabs.
 Reference: PRD Section 3.1 (Trades Tab), Section 3.2 (Positions Tab), Section 16.
 """
 
+from __future__ import annotations
+from typing import Optional
+
 import uuid
 from datetime import datetime
 
@@ -29,16 +32,16 @@ class TradeIntent(Base):
     side: Mapped[str] = mapped_column(String(10), nullable=False)  # buy | sell
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     order_type: Mapped[str] = mapped_column(String(20), nullable=False, default="market")
-    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    limit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
-    risk_check_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    broker_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    signal_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    signal_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    risk_check_result: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    broker_order_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    fill_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    filled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    signal_source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    signal_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     extra_data: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -61,16 +64,16 @@ class Position(Base):
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     entry_price: Mapped[float] = mapped_column(Float, nullable=False)
     current_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
-    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     unrealized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN", index=True)
-    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    exit_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    trade_intent_id: Mapped[uuid.UUID | None] = mapped_column(
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    trade_intent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("trade_intents.id"), nullable=True
     )
     extra_data: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)

@@ -4,6 +4,10 @@ In PAPER mode, the agent adds tickers to a Robinhood watchlist instead of
 executing real trades. Each watchlist entry tracks the entry context so we
 can compute simulated P&L.
 """
+
+from __future__ import annotations
+from typing import Optional
+
 import uuid
 from datetime import datetime
 
@@ -27,7 +31,7 @@ class Watchlist(Base):
 
     # Entry context (snapshot at the time the signal was added)
     entry_price_at_add: Mapped[float] = mapped_column(Float, nullable=False)
-    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Simulated P&L (computed by paper_portfolio.py periodically)
     simulated_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -40,6 +44,6 @@ class Watchlist(Base):
     # status: 'open' | 'closed' | 'expired'
 
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_price_update: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_price_update: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

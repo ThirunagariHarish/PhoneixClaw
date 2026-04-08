@@ -3,14 +3,22 @@
 Pages through `/markets`, normalizes the Gamma payload into `MarketRow`,
 and yields each row to the scanner. Pure metadata; no order book.
 
+Phase 15.2 adds the extended venue interface (`fetch_markets`, `get_market`,
+`place_order`, `get_positions`) backed by the public Polymarket CLOB API so the
+venue registry can instantiate and use this class without a pre-wired GammaClient.
+
 Reference: docs/architecture/polymarket-tab.md Phase 4.
+Reference: docs/architecture/polymarket-phase15.md § 6, § 8.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
+
+import httpx
 
 from ..brokers.polymarket.gamma_client import GammaClient, GammaClientError
 from .base import MarketRow, MarketVenue, VenueError
@@ -21,9 +29,19 @@ DEFAULT_PAGE_SIZE = 100
 
 
 class PolymarketVenue(MarketVenue):
-    """Read-only Polymarket metadata venue."""
+    """Polymarket metadata venue with Phase-15.2 extended interface.
+
+    The `scan()` method uses the GammaClient (Phase 2) for backwards
+    compatibility with the DiscoveryScanner.  The Phase-15 extended methods
+    (`fetch_markets`, `place_order`, `get_positions`) call the public
+    Polymarket CLOB REST API directly so the venue can be instantiated
+    standalone via the venue registry without a pre-wired GammaClient.
+    """
 
     name = "polymarket"
+
+    #: Public Polymarket CLOB markets endpoint (no auth required for reads).
+    _CLOB_MARKETS_URL = "https://clob.polymarket.com/markets"
 
     def __init__(
         self,
@@ -114,6 +132,107 @@ class PolymarketVenue(MarketVenue):
             is_active=bool(raw.get("active", True)) and not bool(raw.get("closed", False)),
             raw=raw,
         )
+
+    # ------------------------------------------------------------------
+    # Phase-15.2 extended venue interface
+    # ------------------------------------------------------------------
+
+    @property
+    def venue_name(self) -> str:
+        return "polymarket"
+
+    @property
+    def is_paper(self) -> bool:
+        return True
+
+    async def fetch_markets(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Fetch active markets from the public Polymarket CLOB API.
+
+        Returns an empty list on any network or HTTP error (logged as WARNING)
+        so callers can degrade gracefully without crashing.
+
+        Args:
+            limit: Maximum number of market records to return.
+
+        Returns:
+            List of raw market dicts from the CLOB API.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(self._CLOB_MARKETS_URL, params={"limit": limit})
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:  # noqa: BLE001 — network errors must not propagate
+            logger.warning("polymarket fetch_markets failed: %s", exc)
+            return []
+
+        if isinstance(data, list):
+            return data[:limit]
+        # Some API versions return {"data": [...], "next_cursor": "..."}
+        if isinstance(data, dict):
+            markets = data.get("data") or data.get("markets") or []
+            if isinstance(markets, list):
+                return markets[:limit]
+        return []
+
+    async def place_order(
+        self,
+        market_id: str,
+        side: str,
+        amount: float,
+        paper: bool = True,
+    ) -> dict[str, Any]:
+        """Simulate a Polymarket order in paper mode.
+
+        Paper mode is MANDATORY in Phase 15.  Passing ``paper=False`` raises
+        ``ValueError`` immediately — no order is placed and no money moves.
+
+        Args:
+            market_id: Polymarket condition ID or market ID string.
+            side:      ``"yes"`` or ``"no"``.
+            amount:    Dollar amount to simulate.
+            paper:     Must be ``True``.
+
+        Returns:
+            A paper order receipt dict.
+
+        Raises:
+            ValueError: if ``paper=False`` or ``side`` is invalid.
+        """
+        if not paper:
+            raise ValueError(
+                "Live trading is blocked in Phase 15. "
+                "PolymarketVenue only supports paper=True."
+            )
+        side_lower = side.lower()
+        if side_lower not in {"yes", "no"}:
+            raise ValueError(f"Invalid side {side!r}: must be 'yes' or 'no'.")
+        if amount <= 0:
+            raise ValueError(f"Amount must be positive, got {amount}.")
+
+        order_id = str(uuid.uuid4())
+        receipt: dict[str, Any] = {
+            "order_id": order_id,
+            "market_id": market_id,
+            "side": side_lower,
+            "amount": amount,
+            "status": "filled",
+            "filled_at": datetime.now(tz=timezone.utc).isoformat(),
+            "paper": True,
+            "venue": "polymarket",
+        }
+        logger.info(
+            "polymarket paper_order order_id=%s market_id=%s side=%s amount=%.2f",
+            order_id,
+            market_id,
+            side_lower,
+            amount,
+        )
+        return receipt
+
+    async def get_positions(self) -> list[dict[str, Any]]:
+        """Return paper positions.  Always empty for stateless PolymarketVenue."""
+        return []
 
 
 def _to_float(v: Any) -> float | None:
