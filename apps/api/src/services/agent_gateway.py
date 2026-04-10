@@ -76,7 +76,7 @@ def _get_api_url() -> str:
 _session_ids: dict[str, str] = {}
 _chat_session_ids: dict[str, str] = {}
 
-CHAT_REPLY_TIMEOUT = int(os.environ.get("CHAT_REPLY_TIMEOUT_SECONDS", "90"))
+CHAT_REPLY_TIMEOUT = int(os.environ.get("CHAT_REPLY_TIMEOUT_SECONDS", "120"))
 
 _ROBINHOOD_MCP_SOURCE = (
     REPO_ROOT / "agents" / "templates" / "live-trader-v1" / "tools" / "robinhood_mcp.py"
@@ -85,12 +85,22 @@ _ROBINHOOD_MCP_SOURCE = (
 _ROBINHOOD_CHAT_TOOLS: list[str] = [
     "mcp__robinhood__robinhood_login",
     "mcp__robinhood__get_positions",
+    "mcp__robinhood__get_option_positions",
+    "mcp__robinhood__get_all_positions",
     "mcp__robinhood__get_account",
-    "mcp__robinhood__get_quote",
     "mcp__robinhood__get_account_snapshot",
+    "mcp__robinhood__get_quote",
     "mcp__robinhood__get_nbbo",
-    "mcp__robinhood__get_watchlist",
+    "mcp__robinhood__get_option_chain",
+    "mcp__robinhood__get_option_greeks",
     "mcp__robinhood__get_order_status",
+    "mcp__robinhood__get_order_history",
+    "mcp__robinhood__get_watchlist",
+    "mcp__robinhood__close_position",
+    "mcp__robinhood__close_option_position",
+    "mcp__robinhood__place_stock_order",
+    "mcp__robinhood__place_option_order",
+    "mcp__robinhood__smart_limit_order",
 ]
 
 
@@ -548,7 +558,7 @@ class AgentGateway:
                         await _syslog(db, agent_id, backtest_id, "sdk_retry", 3,
                                       f"Claude SDK error (attempt {attempt}/{max_attempts}), retrying in {delay}s: {last_error[:200]}")
                     await asyncio.sleep(delay)
-                else:
+            else:
                     logger.error("Claude SDK failed after %d attempts for agent %s: %s",
                                  max_attempts, agent_id, last_error)
 
@@ -941,6 +951,7 @@ class AgentGateway:
                                           config_data.get("selected_channel", {}).get("channel_id", "")),
             "server_id": config_data.get("server_id", ""),
             "risk": manifest.get("risk", config_data.get("risk_params", {})),
+            "risk_params": manifest.get("risk", config_data.get("risk_params", {})),
             "modes": manifest.get("modes", {}),
             "rules": manifest.get("rules", []),
             "models": manifest.get("models", {}),
@@ -2124,35 +2135,37 @@ class AgentGateway:
     async def chat_with_agent(self, agent_id: uuid.UUID, user_message: str) -> str | None:
         """Route a chat message to a Claude SDK session with full MCP tool access.
 
-        For agents with Robinhood credentials:
-          - Starts (or resumes) a dedicated chat session via Claude Agent SDK
-          - Passes MCP servers so the agent can call Robinhood tools live
-          - Maintains session continuity via _chat_session_ids for multi-turn chat
-
-        For agents without MCP tools:
-          - Falls back to fast direct Anthropic SDK call (~2s)
+        Immediately inserts a 'thinking' placeholder so the frontend can show a
+        spinner, then replaces it in-place once the real reply is ready.
         """
         agent_key = str(agent_id)
+
+        thinking_id = await self._write_thinking_indicator(agent_id)
 
         try:
             ctx = await self._load_chat_context(agent_id)
         except Exception as exc:
             logger.exception("[chat_gateway] failed to load context for %s: %s", agent_id, exc)
-            await self._write_chat_reply(agent_id, f"(Failed to load agent context: {str(exc)[:120]})")
+            await self._write_chat_reply(
+                agent_id, f"(Failed to load agent context: {str(exc)[:120]})", update_id=thinking_id,
+            )
             return None
 
         agent_info = ctx.get("agent")
         if not agent_info:
             logger.debug("[chat_gateway] agent %s not found", agent_id)
+            await self._write_chat_reply(agent_id, "(Agent not found.)", update_id=thinking_id)
             return None
 
         rh_creds: dict = ctx.get("_rh_creds") or {}
         has_mcp = bool(rh_creds.get("username") and rh_creds.get("password"))
 
         if not has_mcp:
-            return await self._chat_fast_path(agent_id, ctx, user_message)
+            return await self._chat_fast_path(agent_id, ctx, user_message, thinking_id=thinking_id)
 
-        return await self._chat_sdk_path(agent_id, agent_key, ctx, user_message, rh_creds)
+        return await self._chat_sdk_path(
+            agent_id, agent_key, ctx, user_message, rh_creds, thinking_id=thinking_id,
+        )
 
     async def _load_chat_context(self, agent_id: uuid.UUID) -> dict:
         """Fetch agent record, chat history, recent trades, and RH credentials."""
@@ -2219,8 +2232,8 @@ class AgentGateway:
         trades = ctx.get("trades") or []
 
         parts: list[str] = [
-            f"You are {agent.get('name', 'a Phoenix trading agent')} — a live trading agent on the Phoenix platform.",
-            f"Character: {agent.get('character', 'a professional trader')}.",
+            f"You are {agent.get('name', 'a Phoenix trading agent')} — a professional trader with full Robinhood access.",
+            f"Character: {agent.get('character', 'a sharp, data-driven prop trader')}.",
             f"Win rate: {agent.get('win_rate', 'N/A')}, Total trades: {agent.get('total_trades', 0)},",
             f"Total P&L: {agent.get('total_pnl', 0)}, Today P&L: {agent.get('daily_pnl', 0)}.",
         ]
@@ -2238,36 +2251,52 @@ class AgentGateway:
 
         if has_mcp:
             parts.append(
-                "You have Robinhood MCP tools available. For ANY question about positions, "
-                "account balance, buying power, or real-time quotes:\n"
-                "1. Call mcp__robinhood__robinhood_login to authenticate\n"
-                "2. Call the appropriate read-only tool (get_positions, get_account, get_quote, etc.)\n\n"
-                "Do NOT say you lack access to Robinhood — you HAVE live tools.\n"
-                "Do NOT place orders or execute trades via chat — read-only queries only."
+                "You have FULL Robinhood MCP access. USE THESE TOOLS for every question:\n\n"
+                "PORTFOLIO: get_all_positions (stocks + options in one call), get_option_positions "
+                "(with Greeks, P&L), get_positions (stocks only)\n"
+                "ACCOUNT: get_account, get_account_snapshot\n"
+                "MARKET DATA: get_quote, get_nbbo, get_option_chain, get_option_greeks "
+                "(delta/gamma/theta/vega/IV/chance of profit)\n"
+                "HISTORY: get_order_history (recent stock + option orders)\n"
+                "EXECUTION: close_position, close_option_position, place_stock_order, "
+                "place_option_order, smart_limit_order\n\n"
+                "CRITICAL RULES:\n"
+                "- NEVER say 'I don't have access' — you DO have full access via MCP\n"
+                "- NEVER ask the user what positions they hold — call get_all_positions\n"
+                "- For options: always report Greeks, days to expiry, theta decay, P&L\n"
+                "- Proactively warn about: near-expiry options, high theta decay, large losses\n"
+                "- Give specific BUY/HOLD/SELL recommendations with reasoning\n"
+                "- You can also run Python tools in your workspace for TA, research, etc."
             )
 
         parts.append(
-            "Reply in 1-3 sentences, direct and trader-friendly. Stay in character.\n\n"
+            "Be direct, data-driven, and specific. Pull real numbers from your tools. "
+            "Think like a prop trader managing real money.\n\n"
             f"User: {user_message}"
         )
 
         return "\n\n".join(parts)
 
     async def _chat_fast_path(
-        self, agent_id: uuid.UUID, ctx: dict, user_message: str,
+        self,
+        agent_id: uuid.UUID,
+        ctx: dict,
+        user_message: str,
+        *,
+        thinking_id: uuid.UUID | None = None,
     ) -> str | None:
         """Direct Anthropic Messages API — fast (~2s), no MCP tools."""
         try:
             import anthropic  # noqa: PLC0415
         except ImportError:
             logger.error("[chat_gateway] anthropic SDK not installed")
-            await self._write_chat_reply(agent_id, "(Chat unavailable — SDK not installed.)")
+            await self._write_chat_reply(agent_id, "(Chat unavailable — SDK not installed.)", update_id=thinking_id)
             return None
 
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             logger.error("[chat_gateway] ANTHROPIC_API_KEY not set")
-            await self._write_chat_reply(agent_id, "(Chat unavailable — API key not configured.)")
+            await self._write_chat_reply(agent_id, "(Chat unavailable — API key not configured.)", update_id=thinking_id)
             return None
 
         agent = ctx.get("agent") or {}
@@ -2275,11 +2304,13 @@ class AgentGateway:
         trades = ctx.get("trades") or []
 
         system_parts = [
-            f"You are {agent.get('name', 'a Phoenix trading agent')}.",
-            f"Character: {agent.get('character', 'a professional trader')}.",
+            f"You are {agent.get('name', 'a Phoenix trading agent')} — a professional trader.",
+            f"Character: {agent.get('character', 'a sharp, data-driven prop trader')}.",
             f"Win rate: {agent.get('win_rate', 'N/A')}, Total trades: {agent.get('total_trades', 0)},",
             f"Total P&L: {agent.get('total_pnl', 0)}, Today P&L: {agent.get('daily_pnl', 0)}.",
-            "Reply in 1-3 short sentences. Be direct and trader-friendly. Stay in character.",
+            "Be direct, data-driven, and specific. Think like a prop trader. "
+            "If asked about live positions or account data you don't have in context, "
+            "say you're checking and will follow up (the system will retry with full tools).",
         ]
         if trades:
             trade_strs = [f"  {t.get('symbol','?')} {t.get('side','?')} pnl=${t.get('pnl',0)}" for t in trades[:5]]
@@ -2303,12 +2334,12 @@ class AgentGateway:
                 messages=messages,
             )
             reply_text = resp.content[0].text if resp.content else "(No response generated)"
-            await self._write_chat_reply(agent_id, reply_text)
+            await self._write_chat_reply(agent_id, reply_text, update_id=thinking_id)
             logger.info("[chat_gateway] fast reply for %s (%d chars)", agent_id, len(reply_text))
             return reply_text
         except Exception as exc:
             logger.error("[chat_gateway] anthropic call failed for %s: %s", agent_id, exc)
-            await self._write_chat_reply(agent_id, f"(Chat error: {str(exc)[:120]})")
+            await self._write_chat_reply(agent_id, f"(Chat error: {str(exc)[:120]})", update_id=thinking_id)
             return None
 
     async def _chat_sdk_path(
@@ -2318,13 +2349,15 @@ class AgentGateway:
         ctx: dict,
         user_message: str,
         rh_creds: dict,
+        *,
+        thinking_id: uuid.UUID | None = None,
     ) -> str | None:
         """Claude Agent SDK path — full MCP tool access (Robinhood, etc.)."""
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
         except ImportError:
             logger.warning("[chat_gateway] claude_agent_sdk unavailable, falling back to fast path")
-            return await self._chat_fast_path(agent_id, ctx, user_message)
+            return await self._chat_fast_path(agent_id, ctx, user_message, thinking_id=thinking_id)
 
         work_dir = await self._resolve_chat_workdir(agent_id, agent_key)
 
@@ -2381,17 +2414,16 @@ class AgentGateway:
 
         try:
             reply = await asyncio.wait_for(_run_query(), timeout=CHAT_REPLY_TIMEOUT)
-            await self._write_chat_reply(agent_id, reply)
+            await self._write_chat_reply(agent_id, reply, update_id=thinking_id)
             logger.info("[chat_gateway] SDK reply for %s (%d chars)", agent_id, len(reply))
             return reply
         except asyncio.TimeoutError:
-            logger.warning("[chat_gateway] SDK session timed out for %s", agent_id)
-            await self._write_chat_reply(agent_id, "(Reply timed out — the agent took too long. Try again.)")
-            return None
+            logger.warning("[chat_gateway] SDK timed out for %s, falling back to fast path", agent_id)
+            return await self._chat_fast_path(agent_id, ctx, user_message, thinking_id=thinking_id)
         except Exception as exc:
             logger.exception("[chat_gateway] SDK chat failed for %s: %s", agent_id, exc)
             logger.info("[chat_gateway] falling back to fast path for %s", agent_id)
-            return await self._chat_fast_path(agent_id, ctx, user_message)
+            return await self._chat_fast_path(agent_id, ctx, user_message, thinking_id=thinking_id)
 
     async def _resolve_chat_workdir(self, agent_id: uuid.UUID, agent_key: str) -> Path:
         """Find the best working directory for a chat session.
@@ -2420,20 +2452,51 @@ class AgentGateway:
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
 
-    async def _write_chat_reply(self, agent_id: uuid.UUID, text: str) -> None:
-        """Persist an agent reply to the chat messages table."""
+    async def _write_thinking_indicator(self, agent_id: uuid.UUID) -> uuid.UUID:
+        """Insert a 'thinking' placeholder that the frontend renders as a spinner."""
+        from shared.db.models.agent_chat import AgentChatMessage  # noqa: PLC0415
+
+        row_id = uuid.uuid4()
+        async for sess in _get_session():
+            sess.add(AgentChatMessage(
+                id=row_id,
+                agent_id=agent_id,
+                role="agent",
+                content="Thinking\u2026",
+                message_type="thinking",
+                extra_data={"source": "chat_gateway"},
+            ))
+            await sess.commit()
+            break
+        return row_id
+
+    async def _write_chat_reply(
+        self,
+        agent_id: uuid.UUID,
+        text: str,
+        update_id: uuid.UUID | None = None,
+    ) -> None:
+        """Persist an agent reply — updates the thinking row in-place when possible."""
         from shared.db.models.agent_chat import AgentChatMessage  # noqa: PLC0415
 
         async for sess in _get_session():
-            row = AgentChatMessage(
+            if update_id:
+                row = await sess.get(AgentChatMessage, update_id)
+                if row:
+                    row.content = text[:4000]
+                    row.message_type = "text"
+                    row.extra_data = {"source": "chat_gateway"}
+                    await sess.commit()
+                    return
+
+            sess.add(AgentChatMessage(
                 id=uuid.uuid4(),
                 agent_id=agent_id,
                 role="agent",
                 content=text[:4000],
                 message_type="text",
                 extra_data={"source": "chat_gateway"},
-            )
-            sess.add(row)
+            ))
             await sess.commit()
             break
 

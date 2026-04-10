@@ -27,7 +27,7 @@ import {
   ChevronDown, ChevronUp, Check, X, Eye,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
-  CircleDot, AlertTriangle, CheckCircle2, XCircle,
+  CircleDot, AlertTriangle, CheckCircle2, XCircle, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -316,7 +316,7 @@ function TradeTimeline({ trail }: { trail: DecisionTrail }) {
     return { name, details: details.join(', ') }
   }
 
-  return (
+    return (
     <div className="space-y-3">
       <div className="relative pl-5">
         <div className="absolute left-[6.5px] top-1 bottom-1 w-px bg-border" />
@@ -353,9 +353,9 @@ function TradeTimeline({ trail }: { trail: DecisionTrail }) {
           </div>
         </div>
       )}
-    </div>
-  )
-}
+      </div>
+    )
+  }
 
 function TradesTab({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -445,7 +445,7 @@ function TradesTab({ id }: { id: string }) {
                   onClick={() => setFilter(f.key)}
                 >
                   {f.label} ({f.count})
-                </Button>
+          </Button>
               ))}
             </div>
           </div>
@@ -479,7 +479,7 @@ function TradesTab({ id }: { id: string }) {
                       <Eye className="h-3.5 w-3.5 text-primary/60 hover:text-primary" />
                     </button>
                     {expanded === t.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                  </div>
+        </div>
 
                   {timelineOpen === t.id && (
                     <div className="ml-4 mr-4 mb-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs">
@@ -512,8 +512,8 @@ function TradesTab({ id }: { id: string }) {
                         <span>Qty: {t.quantity}</span>
                         {t.pnl_pct != null && <span>P&L: {(t.pnl_pct * 100).toFixed(2)}%</span>}
                         {t.created_at && <span>Created: {new Date(t.created_at).toLocaleString()}</span>}
-                      </div>
-                    </div>
+        </div>
+      </div>
                   )}
                 </div>
               ))}
@@ -536,7 +536,7 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
   const { data: chatHistory = [] } = useQuery<ChatMsg[]>({
     queryKey: ['agent-chat', id],
     queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/chat`)).data } catch { return [] } },
-    refetchInterval: 5000,
+    refetchInterval: chatHistory.some((m: ChatMsg) => m.message_type === 'thinking') ? 2000 : 5000,
   })
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatHistory.length])
@@ -571,7 +571,7 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'switch_mode', mode: 'conservative' })}>Conservative</Button>
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'pause' })}>Pause</Button>
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => cmdMut.mutate({ action: 'resume' })}>Resume</Button>
-          </div>
+                </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-4">
             {chatHistory.length === 0 && (
@@ -587,19 +587,28 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
                   {msg.role === 'user' ? <User className="h-3.5 w-3.5 text-primary" /> : <Bot className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
                 </div>
                 <div className={cn('rounded-lg px-3 py-2 text-sm', msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
-                  {msg.message_type === 'trade_proposal' && (
-                    <div className="mb-2 p-2 rounded bg-background/50 border border-primary/20">
-                      <p className="text-xs font-semibold text-primary mb-1">Trade Proposal</p>
-                      <div className="flex gap-2 mt-2">
-                        <Button size="sm" className="text-xs h-6" onClick={() => cmdMut.mutate({ action: 'approve_trade', trade: msg.metadata })}><Check className="h-3 w-3 mr-1" />Approve</Button>
-                        <Button size="sm" variant="outline" className="text-xs h-6"><X className="h-3 w-3 mr-1" />Reject</Button>
-                      </div>
+                  {msg.message_type === 'thinking' ? (
+                    <div className="flex items-center gap-2 py-0.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
+                      <span className="text-muted-foreground animate-pulse text-xs">Thinking&hellip;</span>
                     </div>
+                  ) : (
+                    <>
+                      {msg.message_type === 'trade_proposal' && (
+                        <div className="mb-2 p-2 rounded bg-background/50 border border-primary/20">
+                          <p className="text-xs font-semibold text-primary mb-1">Trade Proposal</p>
+                          <div className="flex gap-2 mt-2">
+                            <Button size="sm" className="text-xs h-6" onClick={() => cmdMut.mutate({ action: 'approve_trade', trade: msg.metadata })}><Check className="h-3 w-3 mr-1" />Approve</Button>
+                            <Button size="sm" variant="outline" className="text-xs h-6"><X className="h-3 w-3 mr-1" />Reject</Button>
+                          </div>
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      <p className={cn('text-[10px] mt-1', msg.role === 'user' ? 'text-primary-foreground/60' : 'text-muted-foreground')}>
+                        {new Date(msg.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </>
                   )}
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                  <p className={cn('text-[10px] mt-1', msg.role === 'user' ? 'text-primary-foreground/60' : 'text-muted-foreground')}>
-                    {new Date(msg.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                  </p>
                 </div>
               </div>
             ))}
@@ -609,10 +618,10 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
           <div className="flex gap-2 shrink-0">
             <Input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }} placeholder={`Message ${agentName}...`} disabled={sendMut.isPending} className="flex-1" />
             <Button size="icon" onClick={handleSend} disabled={!message.trim() || sendMut.isPending}><Send className="h-4 w-4" /></Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
-    </div>
   )
 }
 
@@ -639,23 +648,23 @@ function IntelligenceTab({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       {models && (
-        <Card>
+          <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Model</CardTitle></CardHeader>
-          <CardContent>
+            <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-lg border p-3"><p className="text-[10px] text-muted-foreground uppercase">Primary</p><p className="text-lg font-bold font-mono mt-0.5">{String(models.primary ?? '—')}</p></div>
               <div className="rounded-lg border p-3"><p className="text-[10px] text-muted-foreground uppercase">Accuracy</p><p className="text-lg font-bold font-mono mt-0.5">{models.accuracy ? `${(Number(models.accuracy) * 100).toFixed(1)}%` : '—'}</p></div>
               <div className="rounded-lg border p-3"><p className="text-[10px] text-muted-foreground uppercase">AUC-ROC</p><p className="text-lg font-bold font-mono mt-0.5">{models.auc_roc ? Number(models.auc_roc).toFixed(3) : '—'}</p></div>
               <div className="rounded-lg border p-3"><p className="text-[10px] text-muted-foreground uppercase">Version</p><p className="text-lg font-bold font-mono mt-0.5">{String(models.version ?? '—')}</p></div>
             </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
       )}
 
       {analystProfile && (
-        <Card>
+          <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Analyst Profile</CardTitle></CardHeader>
-          <CardContent>
+            <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { label: 'Win Rate', value: analystProfile.win_rate != null ? `${(Number(analystProfile.win_rate) * 100).toFixed(1)}%` : '—' },
@@ -666,20 +675,20 @@ function IntelligenceTab({ id }: { id: string }) {
                 <div key={item.label} className="rounded-lg border p-3">
                   <p className="text-[10px] text-muted-foreground uppercase">{item.label}</p>
                   <p className="text-lg font-bold font-mono mt-0.5">{String(item.value)}</p>
-                </div>
+              </div>
               ))}
             </div>
             {(analystProfile.best_tickers as string[] | undefined)?.length ? (
               <div className="mt-3"><span className="text-xs text-muted-foreground">Best Tickers: </span>{(analystProfile.best_tickers as string[]).map(t => <Badge key={t} variant="outline" className="text-xs mr-1">{t}</Badge>)}</div>
             ) : null}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
       )}
 
       {rules.length > 0 && (
-        <Card>
+            <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Shield className="h-4 w-4 text-primary" />Learned Rules ({rules.length})</CardTitle></CardHeader>
-          <CardContent>
+                <CardContent>
             <div className="space-y-2">
               {rules.slice(0, 30).map((rule, i) => (
                 <div key={i} className="flex items-center gap-3 rounded-lg border p-3">
@@ -695,14 +704,14 @@ function IntelligenceTab({ id }: { id: string }) {
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+                </CardContent>
+            </Card>
+          )}
 
       {topFeatures.length > 0 && (
-        <Card>
+            <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Predictive Features</CardTitle></CardHeader>
-          <CardContent>
+              <CardContent>
             <div className="space-y-1.5">
               {topFeatures.slice(0, 15).map((f, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -715,19 +724,19 @@ function IntelligenceTab({ id }: { id: string }) {
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
       )}
 
       {!rules.length && !topFeatures.length && !analystProfile && (
-        <Card className="border-dashed">
+            <Card className="border-dashed">
           <CardContent className="p-8 text-center text-muted-foreground">
             <Shield className="h-8 w-8 mx-auto mb-3 opacity-50" />
             <p className="text-sm">No intelligence data available yet.</p>
             <p className="text-xs mt-1">Complete a backtest to see learned patterns, rules, and trade analysis.</p>
-          </CardContent>
-        </Card>
-      )}
+              </CardContent>
+            </Card>
+          )}
     </div>
   )
 }
@@ -764,8 +773,8 @@ function LogsTab({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="pb-2">
+          <Card>
+            <CardHeader className="pb-2">
           <div className="flex items-center gap-3">
             <CardTitle className="text-sm font-medium flex-1">Agent Logs</CardTitle>
             <Select value={level} onValueChange={setLevel}>
@@ -779,8 +788,8 @@ function LogsTab({ id }: { id: string }) {
             </Select>
             <Input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="w-48 h-8 text-xs" />
           </div>
-        </CardHeader>
-        <CardContent>
+            </CardHeader>
+            <CardContent>
           <div className="max-h-[60vh] overflow-y-auto font-mono text-xs space-y-0.5">
             {filteredLogs.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">No logs found.</p>
@@ -793,9 +802,9 @@ function LogsTab({ id }: { id: string }) {
                 </div>
               ))
             )}
-          </div>
-        </CardContent>
-      </Card>
+              </div>
+            </CardContent>
+          </Card>
     </div>
   )
 }
@@ -854,12 +863,12 @@ function PendingImprovementsSection({ agentId }: { agentId: string }) {
   if (items.length === 0) return null
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+            <Card>
+              <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">Pending Improvements ({items.length})</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
           {items.map((item) => {
             const status = item.backtest_status
             const canActivate = item.backtest_passed === true
@@ -884,7 +893,7 @@ function PendingImprovementsSection({ agentId }: { agentId: string }) {
 
             return (
               <div key={item.id} className="flex items-start gap-3 rounded-lg border p-2.5">
-                <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium">{item.description ?? item.type ?? item.id}</p>
                   {item.backtest_metrics && status && status !== 'running' && (
                     <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
@@ -899,7 +908,7 @@ function PendingImprovementsSection({ agentId }: { agentId: string }) {
                       Failed: {item.backtest_thresholds_missed.join(', ')}
                     </p>
                   )}
-                </div>
+                      </div>
                 <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                   {statusBadge}
                   {showRunButton && (
@@ -933,13 +942,13 @@ function PendingImprovementsSection({ agentId }: { agentId: string }) {
                       </Button>
                     </span>
                   )}
-                </div>
-              </div>
+                      </div>
+                    </div>
             )
           })}
-        </div>
-      </CardContent>
-    </Card>
+                </div>
+              </CardContent>
+            </Card>
   )
 }
 
@@ -987,17 +996,17 @@ function RulesTab({ id }: { id: string }) {
   const deleteRule = (idx: number) => { const r = [...(editRules ?? rules)]; r.splice(idx, 1); setEditRules(r) }
   const addRule = () => { if (!newRule.name || !newRule.condition) return; setEditRules([...(editRules ?? rules), { ...newRule }]); setNewRule({ name: '', condition: '', weight: 0, source: 'user', enabled: true, description: '' }); setShowAddRule(false) }
 
-  return (
+            return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="pb-2">
+              <Card>
+                <CardHeader className="pb-2">
           <div className="flex items-center gap-3">
             <CardTitle className="text-sm font-medium flex-1">Trading Rules ({activeRules.length})</CardTitle>
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowAddRule(!showAddRule)}>+ Add Rule</Button>
             {hasChanges && <Button size="sm" className="text-xs h-7" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>Save Changes</Button>}
           </div>
-        </CardHeader>
-        <CardContent>
+                </CardHeader>
+                <CardContent>
           {showAddRule && (
             <div className="mb-4 p-3 rounded-lg border bg-muted/20 space-y-2">
               <div className="grid grid-cols-2 gap-2">
@@ -1044,12 +1053,12 @@ function RulesTab({ id }: { id: string }) {
               <div key={item.key}>
                 <Label className="text-xs text-muted-foreground">{item.label}</Label>
                 <Input type="number" step={item.step} value={activeRisk[item.key] as number ?? 0} onChange={e => setEditRisk({ ...(editRisk ?? risk), [item.key]: parseFloat(e.target.value) || 0 })} className="h-8 text-xs mt-1" />
-              </div>
-            ))}
-          </div>
+                      </div>
+                    ))}
+                  </div>
           {hasChanges && <Button size="sm" className="text-xs h-7 mt-3" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>Save Risk Config</Button>}
-        </CardContent>
-      </Card>
+                </CardContent>
+              </Card>
 
       {Object.keys(modes).length > 0 && (
         <Card>
@@ -1111,9 +1120,9 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
   const isComplete = status === 'BACKTEST_COMPLETE' || artifacts?.status === 'COMPLETED'
   const activeStepIdx = PIPELINE_STEPS.findIndex(s => currentStep.toLowerCase().includes(s.key))
 
-  return (
-    <Card>
-      <CardHeader className="pb-2">
+            return (
+              <Card>
+                <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium flex items-center gap-2">
           {isRunning ? (
             <>
@@ -1131,7 +1140,7 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
             <span>Backtesting</span>
           )}
         </CardTitle>
-      </CardHeader>
+                </CardHeader>
       <CardContent className="space-y-4">
         <div>
           <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
@@ -1147,7 +1156,7 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
           {PIPELINE_STEPS.map((step, idx) => {
             const isDone = progressPct >= step.pct
             const isCurrent = activeStepIdx === idx
-            return (
+                              return (
               <div key={step.key} className="flex items-center">
                 <div className={cn(
                   'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap border',
@@ -1158,7 +1167,7 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
                   {isDone && <svg className="h-2.5 w-2.5" viewBox="0 0 12 12"><path d="M3.5 6L5.5 8L8.5 4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   {isCurrent && !isDone && <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />}
                   {step.label}
-                </div>
+                                  </div>
                 {idx < PIPELINE_STEPS.length - 1 && <div className={cn('h-px w-2 mx-0.5', isDone ? 'bg-emerald-500/40' : 'bg-border')} />}
               </div>
             )
@@ -1178,11 +1187,11 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
                 <span className="text-foreground">{log.message}</span>
               </div>
             ))}
-          </div>
+                  </div>
         )}
-      </CardContent>
-    </Card>
-  )
+                </CardContent>
+              </Card>
+            )
 }
 
 /* ================================================================
@@ -1231,27 +1240,27 @@ function BacktestModelsTab({ artifacts }: { artifacts: BacktestArtifacts }) {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+            <Card>
+              <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium flex items-center gap-2">
           <BarChart3 className="h-4 w-4 text-primary" />
           Model Comparison ({models.length} models)
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b">
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b">
                 {cols.map(col => (
                   <th key={col.key} className="text-left p-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => col.key !== 'model_name' && toggleSort(col.key)}>
                     {col.label}
                     {sortCol === col.key && <span className="ml-1">{sortDir === 'desc' ? '↓' : '↑'}</span>}
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
               {sorted.map((m, i) => (
                 <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', m.model_name === best && 'bg-emerald-500/5')}>
                   {cols.map(col => (
@@ -1262,12 +1271,12 @@ function BacktestModelsTab({ artifacts }: { artifacts: BacktestArtifacts }) {
                         )}
                         {col.fmt((m as Record<string, unknown>)[col.key])}
                       </span>
-                    </td>
+                          </td>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
         </div>
       </CardContent>
     </Card>
@@ -1321,10 +1330,10 @@ function BacktestFeaturesTab({ artifacts }: { artifacts: BacktestArtifacts }) {
                   <p className="text-lg font-bold font-mono mt-0.5">{String(item.value)}</p>
                 </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
       <Card>
         <CardHeader className="pb-2">
@@ -1390,8 +1399,8 @@ function BacktestDownloadsTab({ id, artifacts }: { id: string; artifacts: Backte
 
   if (files.length === 0) {
     return (
-      <Card className="border-dashed">
-        <CardContent className="p-8 text-center text-muted-foreground">
+            <Card className="border-dashed">
+              <CardContent className="p-8 text-center text-muted-foreground">
           <Download className="h-8 w-8 mx-auto mb-3 opacity-50" />
           <p className="text-sm">No downloadable files available.</p>
           <p className="text-xs mt-1">Files become available after backtesting completes on this server.</p>
@@ -1432,9 +1441,9 @@ function BacktestDownloadsTab({ id, artifacts }: { id: string; artifacts: Backte
                 </a>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+              </CardContent>
+            </Card>
+          )}
 
       <Card>
         <CardHeader className="pb-2">
@@ -1444,7 +1453,7 @@ function BacktestDownloadsTab({ id, artifacts }: { id: string; artifacts: Backte
           </CardTitle>
         </CardHeader>
         <CardContent>
-        <div className="space-y-4">
+          <div className="space-y-4">
           {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([dir, dirFiles]) => (
             <div key={dir}>
               {dir !== 'root' && <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{dir}/</p>}
@@ -1459,15 +1468,15 @@ function BacktestDownloadsTab({ id, artifacts }: { id: string; artifacts: Backte
                     {getIcon(f.name)}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-mono truncate">{f.name.includes('/') ? f.name.split('/').slice(1).join('/') : f.name}</p>
-                    </div>
+                  </div>
                     <span className="text-[10px] text-muted-foreground">{f.size_human}</span>
                     <Download className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                   </a>
                 ))}
+                  </div>
               </div>
-            </div>
           ))}
-        </div>
+            </div>
       </CardContent>
     </Card>
     </div>
@@ -1656,8 +1665,8 @@ function RuntimeTab({ id }: { id: string }) {
                   <span className="truncate">{l.message}</span>
                 </div>
               ))}
-            </div>
-          )}
+              </div>
+            )}
         </CardContent>
       </Card>
     </div>
@@ -1693,7 +1702,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
             <EquityCurveChart agentId={id} />
           </ErrorBoundary>
           <PortfolioTab id={id} agent={agent} />
-        </div>
+                </div>
       </TabsContent>
       <TabsContent value="trades" className="mt-4"><TradesTab id={id} /></TabsContent>
       <TabsContent value="chat" className="mt-4"><ChatTab id={id} agentName={agent.name} /></TabsContent>
@@ -1706,7 +1715,7 @@ function LiveSection({ id, agent }: { id: string; agent: AgentData }) {
         <div className="space-y-4">
           <RuntimeTab id={id} />
           <AgentTerminal agentId={id} />
-        </div>
+                </div>
       </TabsContent>
       <TabsContent value="skills" className="mt-4">
         <AgentSkillsTab agentId={id} agent={agent} />
@@ -1784,9 +1793,9 @@ export default function AgentDashboardPage() {
               <StatusBadge status={agent.status} />
               {agent.channel_name && <span className="text-xs text-muted-foreground">#{agent.channel_name}</span>}
               {agent.analyst_name && <span className="text-xs text-muted-foreground">by {agent.analyst_name}</span>}
-            </div>
-          </div>
-        </div>
+                </div>
+                </div>
+              </div>
 
         <div className="flex gap-2 flex-wrap items-center">
           <Select value={mode} onValueChange={m => modeMut.mutate(m)}>
@@ -1801,8 +1810,8 @@ export default function AgentDashboardPage() {
           ) : agent.status === 'PAUSED' ? (
             <Button size="sm" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}><Play className="h-4 w-4 mr-1" />Resume</Button>
           ) : null}
-        </div>
-      </div>
+              </div>
+            </div>
 
       {/* Metrics bar */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -1836,7 +1845,7 @@ export default function AgentDashboardPage() {
           <FlaskConical className="h-4 w-4" />
           Backtesting
         </button>
-      </div>
+            </div>
 
       {/* Section content */}
       {topTab === 'live' && <LiveSection id={id!} agent={agent} />}

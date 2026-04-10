@@ -291,8 +291,8 @@ class TestChatGatewayPromptBuilding:
         gw = self._make_gateway()
         ctx = {"agent": {"name": "Arty", "character": "aggressive"}, "chat": [], "trades": []}
         prompt = gw._build_chat_prompt(ctx, "show me positions", has_mcp=True)
-        assert "robinhood_login" in prompt.lower() or "MCP" in prompt
-        assert "Do NOT say you lack access" in prompt
+        assert "MCP" in prompt or "get_all_positions" in prompt
+        assert "NEVER say" in prompt and "don't have access" in prompt
 
     def test_prompt_excludes_mcp_section_when_no_mcp(self) -> None:
         gw = self._make_gateway()

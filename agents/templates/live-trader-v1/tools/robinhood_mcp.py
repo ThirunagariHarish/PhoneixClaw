@@ -852,6 +852,218 @@ def _tool_smart_limit_order(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Options positions, order history, and Greeks tools
+# ---------------------------------------------------------------------------
+
+def _tool_get_option_positions(_args: dict) -> dict:
+    """List ALL open option positions with contract details, P&L, and Greeks."""
+    _ensure_login()
+    if PAPER_MODE:
+        return {"positions": [], "paper_mode": True}
+
+    rh = _get_rh()
+    positions = _retry(rh.account.get_open_option_positions) or []
+    result = []
+    for p in positions:
+        qty = float(p.get("quantity", 0))
+        if qty == 0:
+            continue
+        avg_price = float(p.get("average_price", 0) or 0) / 100.0
+        option_id = p.get("option", "")
+
+        entry = {
+            "quantity": qty,
+            "avg_cost_per_contract": round(avg_price, 4),
+            "type": p.get("type", "unknown"),
+            "option_id": option_id.split("/")[-2] if "/" in option_id else option_id,
+        }
+
+        try:
+            from robin_stocks.robinhood.options import get_option_market_data_by_id
+            md = get_option_market_data_by_id(entry["option_id"])
+            if md and isinstance(md, list):
+                md = md[0] if md else {}
+            if md:
+                entry.update({
+                    "ticker": md.get("chain_symbol", "?"),
+                    "strike": float(md.get("strike_price", 0) or 0),
+                    "expiry": md.get("expiration_date", "?"),
+                    "option_type": md.get("type", "?"),
+                    "mark_price": float(md.get("mark_price", 0) or 0),
+                    "bid": float(md.get("bid_price", 0) or 0),
+                    "ask": float(md.get("ask_price", 0) or 0),
+                    "delta": float(md.get("delta", 0) or 0),
+                    "gamma": float(md.get("gamma", 0) or 0),
+                    "theta": float(md.get("theta", 0) or 0),
+                    "vega": float(md.get("vega", 0) or 0),
+                    "iv": float(md.get("implied_volatility", 0) or 0),
+                    "volume": int(float(md.get("volume", 0) or 0)),
+                    "open_interest": int(float(md.get("open_interest", 0) or 0)),
+                })
+                mark = entry.get("mark_price", 0)
+                pnl_per = (mark - avg_price) if qty > 0 else (avg_price - mark)
+                entry["pnl_per_contract"] = round(pnl_per, 4)
+                entry["pnl_total"] = round(pnl_per * qty * 100, 2)
+                entry["pnl_pct"] = round((pnl_per / avg_price) * 100, 2) if avg_price else 0
+        except Exception as exc:
+            log.warning("Failed to enrich option position %s: %s", entry.get("option_id"), exc)
+
+        result.append(entry)
+
+    return {"positions": result, "count": len(result)}
+
+
+def _tool_get_all_positions(_args: dict) -> dict:
+    """Combined view: ALL stock + option positions in one call."""
+    stocks = _tool_get_positions({})
+    options = _tool_get_option_positions({})
+    return {
+        "stock_positions": stocks.get("positions", []),
+        "option_positions": options.get("positions", []),
+        "stock_count": len(stocks.get("positions", [])),
+        "option_count": options.get("count", 0),
+    }
+
+
+def _tool_close_option_position(args: dict) -> dict:
+    """Close an option position by selling the contracts at limit or market."""
+    _ensure_login()
+    ticker = args["ticker"]
+    quantity = int(args["quantity"])
+    expiry = args["expiry"]
+    strike = float(args["strike"])
+    option_type = args["option_type"]
+    price = float(args.get("price", 0))
+
+    _order_limiter.acquire()
+
+    if PAPER_MODE:
+        order = _paper_place_order(ticker, quantity, "sell", price or 1.0, option_type=option_type, strike=strike, expiry=expiry)
+        return {"order_id": order["id"], "state": order["state"], "paper_mode": True}
+
+    rh = _get_rh()
+    if price > 0:
+        order = _retry(
+            rh.orders.order_sell_option_limit,
+            "close", ticker, quantity, price, expiry, strike, option_type,
+        )
+    else:
+        order = _retry(
+            rh.orders.order_sell_option_limit,
+            "close", ticker, quantity, 0.01, expiry, strike, option_type,
+        )
+    oid = order.get("id", "")
+    result = _poll_order_status(oid, is_option=True) if oid else {"order_id": oid, "state": order.get("state", "unknown")}
+    return result
+
+
+def _tool_get_order_history(args: dict) -> dict:
+    """Get recent order history (stocks and/or options)."""
+    _ensure_login()
+    order_type = args.get("type", "all")
+    limit = int(args.get("limit", 20))
+
+    if PAPER_MODE:
+        orders = list(_paper_orders.values())[-limit:]
+        return {"orders": orders, "count": len(orders), "paper_mode": True}
+
+    rh = _get_rh()
+    result = []
+
+    if order_type in ("all", "stock"):
+        stock_orders = _retry(rh.orders.get_all_stock_orders) or []
+        for o in stock_orders[:limit]:
+            result.append({
+                "id": o.get("id", ""),
+                "type": "stock",
+                "side": o.get("side", ""),
+                "ticker": o.get("instrument_id", ""),
+                "quantity": o.get("quantity", ""),
+                "price": o.get("price") or o.get("average_price"),
+                "state": o.get("state", ""),
+                "created_at": o.get("created_at", ""),
+                "updated_at": o.get("updated_at", ""),
+            })
+
+    if order_type in ("all", "option"):
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            start = (_dt.now() - _td(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            option_orders = _retry(rh.orders.get_all_option_orders, start_date=start) or []
+        except TypeError:
+            option_orders = _retry(rh.orders.get_all_option_orders) or []
+        for o in option_orders[:limit]:
+            legs = o.get("legs", [{}])
+            leg = legs[0] if legs else {}
+            result.append({
+                "id": o.get("id", ""),
+                "type": "option",
+                "side": leg.get("side", o.get("direction", "")),
+                "quantity": o.get("quantity") or o.get("processed_quantity"),
+                "price": o.get("price") or o.get("premium"),
+                "state": o.get("state", ""),
+                "opening_strategy": o.get("opening_strategy", ""),
+                "closing_strategy": o.get("closing_strategy", ""),
+                "created_at": o.get("created_at", ""),
+                "updated_at": o.get("updated_at", ""),
+            })
+
+    result.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"orders": result[:limit], "count": len(result[:limit])}
+
+
+def _tool_get_option_greeks(args: dict) -> dict:
+    """Get real-time Greeks and market data for a specific option contract."""
+    _ensure_login()
+    ticker = args["ticker"]
+    expiry = args["expiry"]
+    strike = float(args["strike"])
+    option_type = args["option_type"]
+
+    if PAPER_MODE:
+        return {
+            "ticker": ticker, "strike": strike, "expiry": expiry, "option_type": option_type,
+            "delta": round(random.uniform(0.1, 0.9), 4),
+            "gamma": round(random.uniform(0.01, 0.1), 4),
+            "theta": round(random.uniform(-0.5, -0.01), 4),
+            "vega": round(random.uniform(0.01, 0.3), 4),
+            "iv": round(random.uniform(0.15, 1.5), 4),
+            "paper_mode": True,
+        }
+
+    rh = _get_rh()
+    try:
+        md = _retry(rh.options.get_option_market_data, ticker, expiry, str(strike), option_type)
+        if md and isinstance(md, list):
+            md = md[0] if md else [{}]
+            if isinstance(md, list):
+                md = md[0] if md else {}
+        if not md:
+            return {"error": f"No market data for {ticker} {strike} {option_type} {expiry}"}
+        return {
+            "ticker": ticker, "strike": strike, "expiry": expiry, "option_type": option_type,
+            "bid": float(md.get("bid_price", 0) or 0),
+            "ask": float(md.get("ask_price", 0) or 0),
+            "mark": float(md.get("mark_price", 0) or 0),
+            "last": float(md.get("last_trade_price", 0) or 0),
+            "delta": float(md.get("delta", 0) or 0),
+            "gamma": float(md.get("gamma", 0) or 0),
+            "theta": float(md.get("theta", 0) or 0),
+            "vega": float(md.get("vega", 0) or 0),
+            "rho": float(md.get("rho", 0) or 0),
+            "iv": float(md.get("implied_volatility", 0) or 0),
+            "volume": int(float(md.get("volume", 0) or 0)),
+            "open_interest": int(float(md.get("open_interest", 0) or 0)),
+            "high": float(md.get("high_price", 0) or 0),
+            "low": float(md.get("low_price", 0) or 0),
+            "chance_of_profit_long": float(md.get("chance_of_profit_long", 0) or 0),
+            "chance_of_profit_short": float(md.get("chance_of_profit_short", 0) or 0),
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:200]}
+
+
+# ---------------------------------------------------------------------------
 # Tool registry & JSON schemas
 # ---------------------------------------------------------------------------
 
@@ -862,11 +1074,16 @@ TOOL_HANDLERS: dict[str, Any] = {
     "get_account_snapshot": _tool_get_account_snapshot,
     "smart_limit_order": _tool_smart_limit_order,
     "get_positions": _tool_get_positions,
+    "get_option_positions": _tool_get_option_positions,
+    "get_all_positions": _tool_get_all_positions,
     "place_stock_order": _tool_place_stock_order,
     "place_option_order": _tool_place_option_order,
     "close_position": _tool_close_position,
+    "close_option_position": _tool_close_option_position,
     "get_account": _tool_get_account,
     "get_order_status": _tool_get_order_status,
+    "get_order_history": _tool_get_order_history,
+    "get_option_greeks": _tool_get_option_greeks,
     "place_order_with_stop_loss": _tool_place_order_with_stop_loss,
     "cancel_and_close": _tool_cancel_and_close,
     "modify_stop_loss": _tool_modify_stop_loss,
@@ -894,8 +1111,60 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "get_positions",
-        "description": "List all open stock positions with ticker, quantity, average cost, and current price.",
+        "description": "List all open STOCK positions with ticker, quantity, average cost, and current price.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_option_positions",
+        "description": "List ALL open OPTION positions with full details: ticker, strike, expiry, type, quantity, avg cost, current mark price, P&L, and live Greeks (delta, gamma, theta, vega, IV).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_all_positions",
+        "description": "Get a combined view of ALL open positions — both stocks AND options — in a single call. Best for portfolio overview.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "close_option_position",
+        "description": "Close an option position by selling the contracts. Specify ticker, quantity, expiry, strike, option_type, and optionally a limit price (omit price or set 0 for market-like close at $0.01).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "quantity": {"type": "integer", "description": "Number of contracts to sell"},
+                "expiry": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
+                "strike": {"type": "number", "description": "Strike price"},
+                "option_type": {"type": "string", "enum": ["call", "put"]},
+                "price": {"type": "number", "description": "Limit price per contract (optional; 0 = market-like)"},
+            },
+            "required": ["ticker", "quantity", "expiry", "strike", "option_type"],
+        },
+    },
+    {
+        "name": "get_order_history",
+        "description": "Get recent order history for stocks and/or options. Returns the most recent orders with status, fills, and timestamps.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": ["all", "stock", "option"], "description": "Filter by order type (default: all)"},
+                "limit": {"type": "integer", "description": "Max number of orders to return (default: 20)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_option_greeks",
+        "description": "Get real-time Greeks (delta, gamma, theta, vega, rho), IV, bid/ask, volume, open interest, and chance of profit for a specific option contract.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "expiry": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
+                "strike": {"type": "number"},
+                "option_type": {"type": "string", "enum": ["call", "put"]},
+            },
+            "required": ["ticker", "expiry", "strike", "option_type"],
+        },
     },
     {
         "name": "place_stock_order",

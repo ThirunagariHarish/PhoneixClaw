@@ -1633,15 +1633,15 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
         bt.max_drawdown = m.get("max_drawdown")
         bt.total_return = m.get("total_return")
 
-        agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
-        agent = agent_result.scalar_one_or_none()
-        if agent:
-            agent.status = "BACKTEST_COMPLETE"
-            agent.updated_at = datetime.now(timezone.utc)
-            agent.model_type = m.get("best_model") or m.get("model")
-            agent.model_accuracy = m.get("accuracy")
-            agent.total_trades = bt.total_trades
-            agent.win_rate = bt.win_rate or 0.0
+    agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = agent_result.scalar_one_or_none()
+    if agent:
+        agent.status = "BACKTEST_COMPLETE"
+        agent.updated_at = datetime.now(timezone.utc)
+        agent.model_type = m.get("best_model") or m.get("model")
+        agent.model_accuracy = m.get("accuracy")
+        agent.total_trades = bt.total_trades
+        agent.win_rate = bt.win_rate or 0.0
 
         if m.get("auto_create_analyst"):
             try:
@@ -1703,7 +1703,7 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
             agent.status = "CREATED"
             agent.updated_at = datetime.now(timezone.utc)
 
-    await session.commit()
+        await session.commit()
     return {"logged": True, "backtest_id": backtest_id}
 
 
