@@ -136,22 +136,64 @@ def _is_rate_limit_error(text: str) -> bool:
     return any(p in lower for p in _RATE_LIMIT_PATTERNS)
 
 
+def _extract_rate_limit_info(raw: str) -> str:
+    """Parse Anthropic rate-limit fields from an error string and return a compact summary.
+
+    Anthropic embeds header values in error messages, e.g.:
+      'rate_limit_error: ... retry-after: 30 ... x-ratelimit-limit-requests: 60
+       x-ratelimit-remaining-requests: 0 x-ratelimit-limit-tokens: 80000
+       x-ratelimit-remaining-tokens: 0'
+
+    Returns a string like:
+      '[limit: 60 req/min | remaining: 0 req | limit: 80000 tok/min | remaining: 0 tok | retry-after: 30s]'
+    or empty string if nothing can be parsed.
+    """
+    import re
+    parts: list[str] = []
+
+    def _find(pattern: str) -> str | None:
+        m = re.search(pattern, raw, re.IGNORECASE)
+        return m.group(1).strip() if m else None
+
+    req_limit     = _find(r"x-ratelimit-limit-requests[:\s]+(\d+)")
+    req_remaining = _find(r"x-ratelimit-remaining-requests[:\s]+(\d+)")
+    tok_limit     = _find(r"x-ratelimit-limit-tokens[:\s]+(\d+)")
+    tok_remaining = _find(r"x-ratelimit-remaining-tokens[:\s]+(\d+)")
+    retry_after   = _find(r"retry-after[:\s]+(\d+(?:\.\d+)?)")
+
+    if req_limit:
+        parts.append(f"req limit: {req_limit}/min")
+    if req_remaining is not None:
+        parts.append(f"req remaining: {req_remaining}")
+    if tok_limit:
+        parts.append(f"tok limit: {tok_limit}/min")
+    if tok_remaining is not None:
+        parts.append(f"tok remaining: {tok_remaining}")
+    if retry_after:
+        parts.append(f"retry-after: {retry_after}s")
+
+    return f"[{' | '.join(parts)}]" if parts else ""
+
+
 def _format_credit_error(raw: str) -> str:
     """Return a user-facing error string that always includes the raw Anthropic message.
 
     Distinguishes rate-limit throttles (temporary) from hard billing failures so
     operators can see the real cause in the logs and dashboard.
+    Appends parsed rate-limit info (limits, remaining, retry-after) when available.
     """
     raw_snippet = raw[:300]
+    limit_info = _extract_rate_limit_info(raw)
+    limit_suffix = f" {limit_info}" if limit_info else ""
     if _is_rate_limit_error(raw):
         return (
-            f"RATE LIMIT ERROR (temporary): {raw_snippet}. "
+            f"RATE LIMIT ERROR (temporary): {raw_snippet}.{limit_suffix} "
             "Anthropic is throttling requests — this is NOT a billing problem. "
             "Phoenix will retry automatically. If this persists, reduce concurrent "
             "agents or upgrade your Anthropic API tier."
         )
     return (
-        f"BILLING ERROR: {raw_snippet}. "
+        f"BILLING ERROR: {raw_snippet}.{limit_suffix} "
         "This error comes from the Anthropic API / Claude Code CLI billing system, "
         "NOT from Phoenix. To fix: (1) Check your Claude Code spending limit via "
         "`claude config get`; (2) Add credits at console.anthropic.com; "
@@ -553,7 +595,7 @@ class AgentGateway:
                             hit_error_message = True
                             err_msg = f"Claude agent error: {last_text[:500]}"
                             if _is_credit_error(last_text):
-                                logger.error("[backtest] Anthropic raw error for %s: %s", agent_id, last_text[:400])
+                                logger.error("[backtest] Anthropic raw error for %s: %s %s", agent_id, last_text[:400], _extract_rate_limit_info(last_text))
                                 err_msg = _format_credit_error(last_text)
                             async for db in _get_session():
                                 await self._update_session(db, session_row_id, status="error",
@@ -629,7 +671,7 @@ class AgentGateway:
                 if _is_credit_error(last_error):
                     credit_msg = _format_credit_error(last_error)
                     event_key = "rate_limit_error" if _is_rate_limit_error(last_error) else "billing_error"
-                    logger.error("[backtest] Anthropic raw error for %s (not retrying): %s", agent_id, last_error[:400])
+                    logger.error("[backtest] Anthropic raw error for %s (not retrying): %s %s", agent_id, last_error[:400], _extract_rate_limit_info(last_error))
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error", error=credit_msg[:500])
                         await _syslog(db, agent_id, backtest_id, event_key, 3, credit_msg[:500])
@@ -953,7 +995,7 @@ class AgentGateway:
                     err_msg = f"Agent error: {last_text[:500]}"
                     is_rate_limit = _is_rate_limit_error(last_text)
                     if _is_credit_error(last_text):
-                        logger.error("[analyst] Anthropic raw error for %s: %s", agent_id, last_text[:400])
+                        logger.error("[analyst] Anthropic raw error for %s: %s %s", agent_id, last_text[:400], _extract_rate_limit_info(last_text))
                         err_msg = _format_credit_error(last_text)
                     asyncio.create_task(_persist_agent_log(
                         agent_id, "ERROR", err_msg, {"msg_type": "sdk_error"}
@@ -985,7 +1027,7 @@ class AgentGateway:
             exc_str = str(exc)[:500]
             err_msg = exc_str
             if _is_credit_error(exc_str):
-                logger.error("[analyst] Anthropic raw exception for %s: %s", agent_id, exc_str[:400])
+                logger.error("[analyst] Anthropic raw exception for %s: %s %s", agent_id, exc_str[:400], _extract_rate_limit_info(exc_str))
                 err_msg = _format_credit_error(exc_str)
             logger.exception("Live agent %s crashed: %s", agent_id, err_msg[:200])
             asyncio.create_task(_persist_agent_log(
