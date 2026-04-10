@@ -106,6 +106,16 @@ Uses Claude API to analyze discovered patterns and generate:
 - Regime insights and temporal patterns
 - Risk factors
 
+### Step 8c: Model Validation (NEW — validate before going live)
+Run: `python tools/validate_model.py --data output/ --models output/models/ --output output/validation_report.json`
+
+Loads the best model and runs inference on the held-out test set (never seen during training).
+Produces: accuracy, AUC-ROC, precision, recall, F1, confusion matrix, and a simulated trading
+return at threshold 0.55. Also shows 10 sample trade predictions in human-readable form.
+Verdict: PASS (accuracy >= 52%, AUC-ROC >= 0.50) or FAIL.
+
+If FAIL: review the model results and consider retraining. Do NOT create a live agent from a failing model.
+
 ### Step 9: Create Live Agent
 Run: `python tools/create_live_agent.py --config config.json --models output/models/ --output ~/agents/live/{channel_name}/`
 
@@ -161,7 +171,7 @@ curl -s -X POST "{phoenix_api_url}/api/v2/agents/{agent_id}/backtest-progress" \
   -d '{"step": "<step_name>", "message": "<what happened>", "progress_pct": <pct>}'
 ```
 
-Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28, train_base=56, train_ensemble=63, evaluate=68, explainability=75, patterns=80, llm_patterns=85, create_live_agent=100
+Progress percentages: transform=10, enrich=22, text_embeddings=25, preprocess=28, train_base=56, train_ensemble=63, evaluate=68, explainability=75, patterns=80, llm_patterns=85, validate_model=88, create_live_agent=100
 
 ## Important Rules
 - Always check if each tool script exists before running it

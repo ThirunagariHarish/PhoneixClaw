@@ -55,6 +55,7 @@ def _build_step_args(cfg: str, w: str) -> dict[str, list[str]]:
         "explainability":     ["--model", models, "--data", w, "--output", f"{w}/explainability.json"],
         "patterns":           ["--data", w, "--output", f"{w}/patterns.json"],
         "llm_patterns":       ["--data", w, "--output", f"{w}/llm_patterns.json", "--config", cfg],
+        "validate_model":     ["--data", w, "--models", models, "--output", f"{w}/validation_report.json"],
         "create_live_agent":  ["--config", cfg, "--models", models, "--output", f"{w}/live_agent"],
     }
 
@@ -126,6 +127,7 @@ async def _run_pipeline(
         ("explainability",     "build_explainability.py",   75),
         ("patterns",           "discover_patterns.py",      80),
         ("llm_patterns",       "analyze_patterns_llm.py",   85),
+        ("validate_model",     "validate_model.py",         88),
         ("create_live_agent",  "create_live_agent.py",      95),
     ]
 

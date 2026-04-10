@@ -84,7 +84,8 @@ def compute_trading_metrics(
         if test_end > len(df):
             return result
 
-        pnl_test = df["pnl_pct"].iloc[test_start:test_end].fillna(0).values / 100.0
+        # pnl_pct from transform.py is already a fraction (e.g. 0.05 = 5%), NOT percentage points
+        pnl_test = df["pnl_pct"].iloc[test_start:test_end].fillna(0).values
         if len(pnl_test) != len(y_prob):
             # Length mismatch — data misaligned, bail
             return result

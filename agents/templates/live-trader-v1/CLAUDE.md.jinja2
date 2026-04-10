@@ -59,13 +59,16 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
 - `tools/enrich_single.py` — adds real-time market data to a signal (200+ features)
 - `tools/risk_check.py` — validates trade against risk limits and daily caps
 - `tools/decision_engine.py` — orchestrates the full signal → trade pipeline
+- `tools/execute_trade.py` — **executes the trade** via Robinhood MCP, records it in Phoenix, and spawns a position monitor
 
-### Trade Execution (via Robinhood MCP)
-- **Robinhood MCP Server** — runs as `tools/robinhood_mcp.py`, registered in `.claude/settings.json`
-- MCP tools available: `robinhood_login`, `get_quote`, `get_positions`, `place_stock_order`, `place_option_order`, `close_position`, `get_account`, `get_order_status`, `place_order_with_stop_loss`, `cancel_and_close`, `modify_stop_loss`, `place_order_with_buffer`, `get_option_chain`
-- Always call `robinhood_login` before any trade operation
-- Use `place_order_with_buffer` for market entries (adds price buffer to improve fills)
-- Use `place_order_with_stop_loss` for automatic stop-loss placement with entries
+### Trade Execution
+- **CRITICAL**: After `decision_engine.py` produces `decision.json` with verdict `EXECUTE`, you MUST run:
+  `python tools/execute_trade.py --decision decision.json --config config.json`
+  This connects to the Robinhood MCP server, checks buying power, places the order, records
+  the trade in Phoenix API (so it appears in the dashboard), and spawns a position monitor sub-agent.
+- The Robinhood MCP server (`tools/robinhood_mcp.py`) is started automatically by execute_trade.py.
+- Available MCP tools: `robinhood_login`, `get_quote`, `get_positions`, `place_stock_order`, `place_option_order`, `close_position`, `get_account`, `get_order_status`, `place_order_with_stop_loss`, `cancel_and_close`, `modify_stop_loss`, `place_order_with_buffer`, `get_option_chain`, `smart_limit_order`
+- For manual or debugging use, you can also call MCP tools directly via robinhood_mcp.py
 
 ### Analysis & Monitoring
 - `tools/technical_analysis.py` — performs TA (RSI, MACD, support/resistance, patterns)
@@ -97,8 +100,8 @@ These rules were discovered by analysing {{ knowledge.analyst_profile.avg_trades
    e. Run `python tools/risk_check.py --signal enriched_signal.json` for position limits
    f. If confidence > threshold AND risk approved AND rule score positive:
       - Run `python tools/technical_analysis.py` for TA confirmation
-      - Execute trade via Robinhood MCP: call `place_order_with_stop_loss` with price buffer
-      - Report trade to Phoenix via `tools/report_to_phoenix.py`
+      - Run `python tools/execute_trade.py --decision decision.json --config config.json`
+        This handles: Robinhood login → buying power check → order placement → Phoenix recording → position monitor spawn
    g. If rejected: log the full reasoning to Phoenix
 
 ### Position Monitoring (Background Loop)

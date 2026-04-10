@@ -19,8 +19,13 @@ import joblib
 
 EXCLUDE_COLS = [
     "trade_id", "is_profitable", "entry_message_raw", "exit_messages_raw",
-    "analyst", "channel", "ticker", "side", "option_type",
+    "analyst", "channel", "ticker", "side", "option_type", "trade_type",
     "day_of_week", "hour_bucket", "market_regime", "vix_regime", "signal_type",
+    # Outcome/leakage columns — these encode the result, not predictive features
+    "entry_price", "weighted_exit_price", "pnl_pct", "hold_duration_hours",
+    "exit_time_first", "exit_time_final",
+    "exit_pct_25", "exit_pct_50", "exit_pct_75", "exit_pct_100",
+    "target_price", "stop_loss",
     # T1: multi-head labels are targets, not features
     "y_win", "y_pnl_pct", "y_mfe_atr", "y_mae_atr", "y_hold_minutes",
     "y_exit_bucket", "y_entry_slip_bps", "y_fill_60s",

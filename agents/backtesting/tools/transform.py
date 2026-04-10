@@ -17,12 +17,14 @@ import pandas as pd
 # ── Signal Parsing ──────────────────────────────────────────────────────────
 
 TICKER_RE = re.compile(r"\$([A-Z]{1,5})\b|(?<!\w)([A-Z]{2,5})(?:\s+\d+[cp]|\s+(?:calls?|puts?))", re.IGNORECASE)
+ENTRY_PRICE_RE = re.compile(r"(?:filled|in\s+at|entry|avg|entered\s+at|got\s+in|@)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
 PRICE_RE = re.compile(r"(?:@|at|entry|price|for)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
 OPTION_RE = re.compile(r"(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*(\d+(?:\.\d+)?)\s*([cpCP])", re.IGNORECASE)
 BUY_WORDS = re.compile(r"\b(buy|bought|long|entered|taking|grabbed|added|opening)\b", re.IGNORECASE)
 SELL_WORDS = re.compile(r"\b(sell|sold|closing|closed|exited|trimmed?|trim|profit|out)\b", re.IGNORECASE)
+EXIT_PCT_RE = re.compile(r"(?:sold|trim(?:med)?|closed?|out)\s+(\d+)\s*%", re.IGNORECASE)
 PCT_RE = re.compile(r"(\d+)\s*%", re.IGNORECASE)
-TARGET_RE = re.compile(r"(?:target|tp|take.?profit)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
+TARGET_RE = re.compile(r"(?:target|tp|take.?profit|pt)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
 STOP_RE = re.compile(r"(?:stop|sl|stop.?loss)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
 
 KNOWN_TICKERS = {"SPX", "SPY", "QQQ", "AAPL", "TSLA", "AMZN", "GOOGL", "MSFT", "NVDA", "META",
@@ -61,29 +63,42 @@ def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
     else:
         return None  # Info/noise
 
-    # Price
+    # Target and stop (parse first so we can disambiguate prices)
+    target_match = TARGET_RE.search(content)
+    target = float(target_match.group(1)) if target_match else None
+    stop_match = STOP_RE.search(content)
+    stop = float(stop_match.group(1)) if stop_match else None
+
+    # Price — prefer explicit entry-related keywords, fall back to generic
+    entry_match = ENTRY_PRICE_RE.search(content)
     price_match = PRICE_RE.search(content)
-    price = float(price_match.group(1)) if price_match else None
+    raw_price = float(entry_match.group(1)) if entry_match else (float(price_match.group(1)) if price_match else None)
+
+    # Disambiguate: if the parsed price equals target or stop, it's not the fill
+    if raw_price is not None:
+        if (target and abs(raw_price - target) < 0.01) or (stop and abs(raw_price - stop) < 0.01):
+            raw_price = None
+    price = raw_price
 
     # Options
     option_match = OPTION_RE.search(content)
     option_type = None
     strike = None
     expiry = None
+    trade_type = "stock"
     if option_match:
         expiry = option_match.group(1)
         strike = float(option_match.group(2))
         option_type = "call" if option_match.group(3).lower() == "c" else "put"
+        trade_type = "option"
 
-    # Percentage (for partial exits)
-    pct_match = PCT_RE.search(content)
-    exit_pct = int(pct_match.group(1)) / 100.0 if pct_match else None
-
-    # Target and stop
-    target_match = TARGET_RE.search(content)
-    target = float(target_match.group(1)) if target_match else None
-    stop_match = STOP_RE.search(content)
-    stop = float(stop_match.group(1)) if stop_match else None
+    # Percentage for partial exits — prefer "sold/trimmed/closed X%" over generic "%"
+    exit_pct_match = EXIT_PCT_RE.search(content)
+    if exit_pct_match:
+        exit_pct = int(exit_pct_match.group(1)) / 100.0
+    else:
+        pct_match = PCT_RE.search(content)
+        exit_pct = int(pct_match.group(1)) / 100.0 if pct_match and signal_type == "sell" else None
 
     return {
         "ticker": ticker,
@@ -95,6 +110,7 @@ def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
         "exit_pct": exit_pct,
         "target": target,
         "stop_loss": stop,
+        "trade_type": trade_type,
         "timestamp": posted_at,
         "raw_message": content,
     }
@@ -261,12 +277,15 @@ def _build_trade_row(trade_id: int, position: dict) -> Optional[dict]:
     # P&L
     pnl_pct = ((weighted_exit - entry_price) / entry_price) if weighted_exit else None
 
-    # Profit label: profitable if >50% of position exited with gain
-    profitable_weight = sum(
-        ex["pct"] for ex in exits
-        if ex["price"] and ex["price"] > entry_price
-    )
-    is_profitable = profitable_weight > 0.5 * total_weight if total_weight > 0 else False
+    # Profit label: use pnl_pct directly when available, fall back to majority-of-exits
+    if pnl_pct is not None:
+        is_profitable = pnl_pct > 0
+    else:
+        profitable_weight = sum(
+            ex["pct"] for ex in exits
+            if ex["price"] and ex["price"] > entry_price
+        )
+        is_profitable = profitable_weight > 0.5 * total_weight if total_weight > 0 else False
 
     # Hold duration
     exit_time_final = exits[-1]["time"] if exits else None
@@ -296,6 +315,7 @@ def _build_trade_row(trade_id: int, position: dict) -> Optional[dict]:
         "exit_messages_raw": json.dumps([e["raw_message"] for e in exits]),
         "analyst": entry.get("author", "unknown"),
         "channel": "",
+        "trade_type": entry.get("trade_type", "stock"),
         "option_type": entry.get("option_type"),
         "strike": entry.get("strike"),
         "expiry": entry.get("expiry"),

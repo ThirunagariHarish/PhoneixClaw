@@ -211,8 +211,8 @@ def _build_final_metrics(
             if "is_profitable" in enriched_df.columns:
                 win_rate = float(enriched_df["is_profitable"].mean())
             if "pnl_pct" in enriched_df.columns:
-                # Compounded return: (1+r1)(1+r2)...(1+rn) - 1 (vs naive sum)
-                returns = enriched_df["pnl_pct"].fillna(0) / 100.0
+                # pnl_pct is already a fraction (0.05 = 5%), NOT percentage points
+                returns = enriched_df["pnl_pct"].fillna(0)
                 total_return = round(float(((1 + returns).prod() - 1) * 100.0), 4)
     except Exception:
         pass
@@ -231,7 +231,7 @@ def _build_final_metrics(
     if (sharpe_ratio == 0.0 or max_drawdown == 0.0) and enriched_df is not None:
         try:
             import numpy as _np
-            returns = (enriched_df["pnl_pct"].fillna(0) / 100.0).values
+            returns = enriched_df["pnl_pct"].fillna(0).values
             if len(returns) > 1 and returns.std() > 0:
                 if sharpe_ratio == 0.0:
                     # Annualized assuming ~252 trading days

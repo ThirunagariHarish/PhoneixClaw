@@ -330,6 +330,18 @@ def _tool_place_stock_order(args: dict) -> dict:
     side = args["side"]
     price = float(args["price"])
 
+    if side == "buy":
+        acct = _tool_get_account({})
+        buying_power = float(acct.get("buying_power") or 0)
+        notional = quantity * price
+        if notional > buying_power:
+            return {
+                "status": "rejected",
+                "reason": "insufficient_buying_power",
+                "needed": round(notional, 2),
+                "available": round(buying_power, 2),
+            }
+
     _order_limiter.acquire()
 
     if PAPER_MODE:
@@ -356,6 +368,18 @@ def _tool_place_option_order(args: dict) -> dict:
     expiry = args["expiry"]
     strike = float(args["strike"])
     option_type = args["option_type"]
+
+    if side == "buy":
+        acct = _tool_get_account({})
+        buying_power = float(acct.get("buying_power") or 0)
+        notional = quantity * price * 100  # each contract = 100 shares
+        if notional > buying_power:
+            return {
+                "status": "rejected",
+                "reason": "insufficient_buying_power",
+                "needed": round(notional, 2),
+                "available": round(buying_power, 2),
+            }
 
     _order_limiter.acquire()
 
