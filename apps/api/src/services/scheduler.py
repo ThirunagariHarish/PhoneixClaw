@@ -5,6 +5,7 @@ Jobs:
   - 16:30 ET weekdays  → supervisor_run (AutoResearch analyzes the day)
   - 16:45 ET weekdays  → eod_analysis (enrich trade_signals with outcomes)
   - 17:00 ET weekdays  → daily_summary (WhatsApp summary across all agents)
+  - every 1 min        → live_agent_keepalive (re-spawn RUNNING/PAPER agents whose session ended)
   - every 5 min        → heartbeat_check (mark stale sessions)
 
 Single-worker guard: only the worker with RUN_SCHEDULER=1 (or the first
@@ -377,11 +378,122 @@ async def _job_consolidation_run() -> None:
         logger.exception("[scheduler] consolidation_run job failed")
 
 
+# Live-agent keepalive: how many seconds after a session ends before we re-spawn.
+# Default 60 s — enough to avoid a tight crash-loop, short enough to feel instant.
+_KEEPALIVE_RESTART_DELAY_SECONDS = int(os.environ.get("AGENT_KEEPALIVE_DELAY_SECONDS", "60"))
+# Set AGENT_KEEPALIVE_ENABLED=0 to disable entirely (e.g. overnight maintenance).
+_KEEPALIVE_ENABLED = os.environ.get("AGENT_KEEPALIVE_ENABLED", "1") != "0"
+
 _HEARTBEAT_STALE_MINUTES = int(os.environ.get("HEARTBEAT_STALE_MINUTES", "30"))
 
 
+async def _job_live_agent_keepalive() -> None:
+    """Keepalive: re-spawn live agents whose Claude session ended cleanly.
+
+    Runs every minute. For each agent with status RUNNING or PAPER that has
+    no active session (status in running/starting), and whose last session
+    ended at least _KEEPALIVE_RESTART_DELAY_SECONDS ago, spawns a fresh
+    Claude Code session via gateway.create_analyst().
+
+    Skipped when:
+    - AGENT_KEEPALIVE_ENABLED=0
+    - Agent worker_status is ERROR (needs human intervention)
+    - A task is already in-flight in _running_tasks
+    - The last session ended due to an error (status = error/interrupted)
+    - Budget is exceeded (gateway.create_analyst returns BUDGET_EXCEEDED)
+    """
+    if not _KEEPALIVE_ENABLED:
+        return
+
+    try:
+        import asyncio as _asyncio
+        from datetime import timedelta
+
+        from sqlalchemy import select
+
+        from shared.db.engine import get_session
+        from shared.db.models.agent import Agent
+        from shared.db.models.agent_session import AgentSession
+        from apps.api.src.services.agent_gateway import gateway, _running_tasks
+
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=_KEEPALIVE_RESTART_DELAY_SECONDS)
+
+        agents_to_restart: list[tuple] = []  # (agent_id, agent_name)
+
+        async for db in get_session():
+            # Find all live-approved agents that are not in ERROR worker state
+            result = await db.execute(
+                select(Agent).where(
+                    Agent.status.in_(["RUNNING", "PAPER"]),
+                    Agent.worker_status.notin_(["ERROR", "STARTING", "RUNNING"]),
+                )
+            )
+            candidates = list(result.scalars().all())
+
+            for agent in candidates:
+                agent_key = str(agent.id)
+
+                # Skip if a task is already in flight
+                if agent_key in _running_tasks and not _running_tasks[agent_key].done():
+                    continue
+
+                # Check whether there is an active session in DB
+                active_sess = (await db.execute(
+                    select(AgentSession).where(
+                        AgentSession.agent_id == agent.id,
+                        AgentSession.status.in_(["running", "starting"]),
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if active_sess:
+                    continue
+
+                # Find the most recent completed/interrupted session
+                last_sess = (await db.execute(
+                    select(AgentSession).where(
+                        AgentSession.agent_id == agent.id,
+                        AgentSession.agent_type.in_(["analyst", "live_trader"]),
+                    ).order_by(AgentSession.started_at.desc()).limit(1)
+                )).scalar_one_or_none()
+
+                # Never restart if the last session ended with an error — those need
+                # human review (billing failure, OOM, etc.)
+                if last_sess and last_sess.status in ("error", "interrupted"):
+                    continue
+
+                # Enforce the restart delay so we don't tight-loop
+                if last_sess and last_sess.stopped_at:
+                    stopped_at = last_sess.stopped_at
+                    if stopped_at.tzinfo is None:
+                        stopped_at = stopped_at.replace(tzinfo=timezone.utc)
+                    if stopped_at > cutoff:
+                        continue  # too soon
+
+                agents_to_restart.append((agent.id, agent.name))
+
+        for agent_id, agent_name in agents_to_restart:
+            try:
+                logger.info("[keepalive] Re-spawning completed session for agent %s (%s)",
+                            agent_name, agent_id)
+                result = await gateway.create_analyst(agent_id)
+                if result and result.startswith("BUDGET_EXCEEDED"):
+                    logger.warning("[keepalive] Budget exceeded for %s — skipping: %s",
+                                   agent_name, result)
+                elif result and result.startswith("NOT_ELIGIBLE"):
+                    logger.warning("[keepalive] Agent %s not eligible — skipping: %s",
+                                   agent_name, result)
+                else:
+                    logger.info("[keepalive] Session started for agent %s: session_row=%s",
+                                agent_name, result)
+            except Exception as exc:
+                logger.warning("[keepalive] Failed to restart agent %s: %s", agent_name, exc)
+
+    except Exception:
+        logger.exception("[scheduler] Live agent keepalive job failed")
+
+
 async def _job_heartbeat_check() -> None:
-    """Mark stale agent sessions and attempt auto-restart for analyst agents.
+    """Mark stale agent sessions.
 
     Also refreshes the Discord ingestion daemon (restarts dead connectors,
     picks up newly-created connectors).
@@ -404,32 +516,15 @@ async def _job_heartbeat_check() -> None:
                 )
             )
             stale = list(result.scalars().all())
-            restart_candidates = []
             for s in stale:
                 s.status = "stale"
                 s.error_message = f"No heartbeat for {_HEARTBEAT_STALE_MINUTES}+ minutes"
                 s.stopped_at = datetime.now(timezone.utc)
-                if s.session_type in ("analyst", "live_trader"):
-                    restart_candidates.append((s.agent_id, s.session_type))
             if stale:
                 await session.commit()
                 logger.warning("[scheduler] Marked %d stale sessions (cutoff=%dmin)",
                                len(stale), _HEARTBEAT_STALE_MINUTES)
-
-            # Auto-restart analyst/live_trader agents that went stale
-            if restart_candidates:
-                try:
-                    from apps.api.src.services.agent_gateway import AgentGateway
-                    gw = AgentGateway()
-                    for agent_id, stype in restart_candidates:
-                        try:
-                            logger.info("[scheduler] Auto-restarting stale %s agent %s", stype, agent_id)
-                            await gw.start_analyst_agent(agent_id)
-                        except Exception as restart_exc:
-                            logger.warning("[scheduler] Auto-restart failed for %s: %s",
-                                           agent_id, restart_exc)
-                except Exception as gw_exc:
-                    logger.warning("[scheduler] Gateway import for auto-restart failed: %s", gw_exc)
+                # Keepalive job will pick these up on its next tick and re-spawn them.
 
     except Exception:
         logger.exception("[scheduler] Heartbeat check failed")
@@ -503,12 +598,21 @@ def start_scheduler() -> "AsyncIOScheduler | None":
         misfire_grace_time=600,
     )
 
-    # Every 5 min — heartbeat check
+    # Every 5 min — heartbeat check (mark stale sessions)
     _scheduler.add_job(
         _job_heartbeat_check,
         trigger=IntervalTrigger(minutes=5),
         id="heartbeat_check",
         name="Heartbeat Check",
+        replace_existing=True,
+    )
+
+    # Every 1 min — live agent keepalive (re-spawn completed sessions)
+    _scheduler.add_job(
+        _job_live_agent_keepalive,
+        trigger=IntervalTrigger(minutes=1),
+        id="live_agent_keepalive",
+        name="Live Agent Keepalive",
         replace_existing=True,
     )
 
