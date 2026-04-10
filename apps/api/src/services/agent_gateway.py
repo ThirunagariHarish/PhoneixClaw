@@ -159,17 +159,6 @@ def _format_credit_error(raw: str) -> str:
     )
 
 
-# Legacy alias — kept so existing call sites need no changes
-_CREDIT_ERROR_HINT = (
-    "This error comes from the Anthropic API / Claude Code CLI billing system, "
-    "NOT from Phoenix. Your Claude Code CLI has a separate budget from your "
-    "Anthropic console balance. To fix: (1) Check your Claude Code spending limit "
-    "via `claude config get` or the Anthropic dashboard; (2) Increase the budget "
-    "or add payment method at console.anthropic.com; (3) If using Claude Max plan, "
-    "verify your subscription is active."
-)
-
-
 async def _persist_agent_log(agent_id: uuid.UUID, level: str, message: str, context: dict | None = None) -> None:
     """Fire-and-forget: write one row to agent_logs without blocking the caller."""
     try:
@@ -639,10 +628,11 @@ class AgentGateway:
                 # Fail-fast on billing/credit errors — retrying won't help
                 if _is_credit_error(last_error):
                     credit_msg = _format_credit_error(last_error)
+                    event_key = "rate_limit_error" if _is_rate_limit_error(last_error) else "billing_error"
                     logger.error("[backtest] Anthropic raw error for %s (not retrying): %s", agent_id, last_error[:400])
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error", error=credit_msg[:500])
-                        await _syslog(db, agent_id, backtest_id, "billing_error", 3, credit_msg[:500])
+                        await _syslog(db, agent_id, backtest_id, event_key, 3, credit_msg[:500])
                         await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", credit_msg[:500])
                     break
                 if attempt < max_attempts:
@@ -961,6 +951,7 @@ class AgentGateway:
                                                    session_id=message.session_id)
                 if hasattr(message, "is_error") and getattr(message, "is_error", False):
                     err_msg = f"Agent error: {last_text[:500]}"
+                    is_rate_limit = _is_rate_limit_error(last_text)
                     if _is_credit_error(last_text):
                         logger.error("[analyst] Anthropic raw error for %s: %s", agent_id, last_text[:400])
                         err_msg = _format_credit_error(last_text)
@@ -972,7 +963,9 @@ class AgentGateway:
                                                    error=err_msg)
                         agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
                         if agent:
-                            agent.worker_status = "ERROR"
+                            # Rate limits are temporary — set STOPPED so keepalive re-spawns automatically.
+                            # Hard billing failures require human action, so set ERROR.
+                            agent.worker_status = "STOPPED" if is_rate_limit else "ERROR"
                             agent.updated_at = datetime.now(timezone.utc)
                         await db.commit()
                     return
