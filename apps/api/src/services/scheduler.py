@@ -392,24 +392,27 @@ async def _job_live_agent_keepalive() -> None:
 
     Runs every minute. For each agent with status RUNNING or PAPER that has
     no active session (status in running/starting), and whose last session
-    ended at least _KEEPALIVE_RESTART_DELAY_SECONDS ago, spawns a fresh
-    Claude Code session via gateway.create_analyst().
+    ended cleanly (status=completed) at least _KEEPALIVE_RESTART_DELAY_SECONDS
+    ago, spawns a fresh Claude Code session via gateway.create_analyst().
 
     Skipped when:
     - AGENT_KEEPALIVE_ENABLED=0
-    - Agent worker_status is ERROR (needs human intervention)
+    - Agent worker_status is ERROR/STARTING/RUNNING (redundant guard; _running_tasks
+      check below is the authoritative in-flight test, but this avoids a DB roundtrip
+      for agents the gateway already knows are active)
     - A task is already in-flight in _running_tasks
-    - The last session ended due to an error (status = error/interrupted)
+    - Agent has no prior analyst session (first start is always a deliberate user action)
+    - The last session ended with error/interrupted (needs human review)
+    - The last session ended less than _KEEPALIVE_RESTART_DELAY_SECONDS ago
     - Budget is exceeded (gateway.create_analyst returns BUDGET_EXCEEDED)
     """
     if not _KEEPALIVE_ENABLED:
         return
 
     try:
-        import asyncio as _asyncio
         from datetime import timedelta
 
-        from sqlalchemy import select
+        from sqlalchemy import select, func
 
         from shared.db.engine import get_session
         from shared.db.models.agent import Agent
@@ -422,7 +425,10 @@ async def _job_live_agent_keepalive() -> None:
         agents_to_restart: list[tuple] = []  # (agent_id, agent_name)
 
         async for db in get_session():
-            # Find all live-approved agents that are not in ERROR worker state
+            # --- Step 1: candidates — RUNNING/PAPER agents not already active ---
+            # worker_status exclusion is a fast pre-filter; the _running_tasks check
+            # below is the authoritative in-flight guard (R-004: kept for efficiency,
+            # not correctness — avoids extra queries for clearly-active agents).
             result = await db.execute(
                 select(Agent).where(
                     Agent.status.in_(["RUNNING", "PAPER"]),
@@ -430,39 +436,71 @@ async def _job_live_agent_keepalive() -> None:
                 )
             )
             candidates = list(result.scalars().all())
+            if not candidates:
+                break
 
+            candidate_ids = [a.id for a in candidates]
+
+            # --- Step 2: batch fetch active sessions (R-002: single query) ---
+            active_result = await db.execute(
+                select(AgentSession.agent_id).where(
+                    AgentSession.agent_id.in_(candidate_ids),
+                    AgentSession.status.in_(["running", "starting"]),
+                )
+            )
+            has_active_session: set = {row[0] for row in active_result.all()}
+
+            # --- Step 3: batch fetch last analyst session per agent (R-002) ---
+            # Subquery: max started_at per agent among analyst session types
+            subq = (
+                select(
+                    AgentSession.agent_id,
+                    func.max(AgentSession.started_at).label("max_started"),
+                )
+                .where(
+                    AgentSession.agent_id.in_(candidate_ids),
+                    AgentSession.agent_type.in_(["analyst", "live_trader"]),
+                )
+                .group_by(AgentSession.agent_id)
+                .subquery()
+            )
+            last_sess_result = await db.execute(
+                select(AgentSession).join(
+                    subq,
+                    (AgentSession.agent_id == subq.c.agent_id)
+                    & (AgentSession.started_at == subq.c.max_started),
+                )
+            )
+            last_sess_by_agent: dict = {
+                sess.agent_id: sess for sess in last_sess_result.scalars().all()
+            }
+
+            # --- Step 4: evaluate each candidate ---
             for agent in candidates:
                 agent_key = str(agent.id)
 
-                # Skip if a task is already in flight
+                # Skip if a task is already in flight (authoritative in-process check)
                 if agent_key in _running_tasks and not _running_tasks[agent_key].done():
                     continue
 
-                # Check whether there is an active session in DB
-                active_sess = (await db.execute(
-                    select(AgentSession).where(
-                        AgentSession.agent_id == agent.id,
-                        AgentSession.status.in_(["running", "starting"]),
-                    ).limit(1)
-                )).scalar_one_or_none()
-                if active_sess:
+                # Skip if DB shows an active session
+                if agent.id in has_active_session:
                     continue
 
-                # Find the most recent completed/interrupted session
-                last_sess = (await db.execute(
-                    select(AgentSession).where(
-                        AgentSession.agent_id == agent.id,
-                        AgentSession.agent_type.in_(["analyst", "live_trader"]),
-                    ).order_by(AgentSession.started_at.desc()).limit(1)
-                )).scalar_one_or_none()
+                last_sess = last_sess_by_agent.get(agent.id)
+
+                # R-001: never restart agents with no prior session — first start
+                # must be a deliberate user action (approve/resume), not keepalive.
+                if last_sess is None:
+                    continue
 
                 # Never restart if the last session ended with an error — those need
                 # human review (billing failure, OOM, etc.)
-                if last_sess and last_sess.status in ("error", "interrupted"):
+                if last_sess.status in ("error", "interrupted"):
                     continue
 
-                # Enforce the restart delay so we don't tight-loop
-                if last_sess and last_sess.stopped_at:
+                # Enforce the restart delay to prevent tight crash-loops
+                if last_sess.stopped_at:
                     stopped_at = last_sess.stopped_at
                     if stopped_at.tzinfo is None:
                         stopped_at = stopped_at.replace(tzinfo=timezone.utc)
