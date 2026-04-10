@@ -581,12 +581,59 @@ async def pull_connector_history(connector_id: str, session: DbSession):
 # ── Agent linking ────────────────────────────────────────────────────────────
 
 @router.post("/{connector_id}/agents", status_code=status.HTTP_201_CREATED)
-async def link_agent(connector_id: str, payload: ConnectorAgentLink, session: DbSession):
-    """Link an agent to a connector (optionally with a specific channel)."""
+async def link_agent(connector_id: str, payload: ConnectorAgentLink, request: Request, session: DbSession):
+    """Link an agent to a connector (optionally with a specific channel).
+
+    Ownership check: the requesting user must own both the connector and the agent.
+    Unauthenticated requests are rejected with 401.
+    Duplicate links are returned as-is (idempotent).
+    """
+    from shared.db.models.agent import Agent
+
+    # R-001: require authenticated caller — never skip ownership checks
+    user_id_str = getattr(request.state, "user_id", None)
+    if not user_id_str:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    user_id = uuid.UUID(user_id_str)
+
+    # Resolve and validate IDs
+    try:
+        cid = uuid.UUID(connector_id)
+        aid = uuid.UUID(payload.agent_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid UUID")
+
+    connector = (await session.execute(
+        select(Connector).where(Connector.id == cid)
+    )).scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if connector.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your connector")
+
+    # Resolve and validate the agent
+    agent = (await session.execute(
+        select(Agent).where(Agent.id == aid)
+    )).scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if agent.user_id and agent.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your agent")
+
+    # R-002: idempotent — return existing row rather than inserting a duplicate
+    existing = (await session.execute(
+        select(ConnectorAgent).where(
+            ConnectorAgent.connector_id == cid,
+            ConnectorAgent.agent_id == aid,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if existing:
+        return {"id": str(existing.id), "connector_id": connector_id, "agent_id": payload.agent_id}
+
     link = ConnectorAgent(
         id=uuid.uuid4(),
-        connector_id=uuid.UUID(connector_id),
-        agent_id=uuid.UUID(payload.agent_id),
+        connector_id=cid,
+        agent_id=aid,
         channel=payload.channel,
     )
     session.add(link)
