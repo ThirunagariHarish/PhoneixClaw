@@ -104,23 +104,62 @@ _ROBINHOOD_CHAT_TOOLS: list[str] = [
 ]
 
 
-_CREDIT_ERROR_PATTERNS = (
+# Hard billing failures — account has no credits / payment issue
+_BILLING_ERROR_PATTERNS = (
     "credit balance is too low",
     "insufficient credit",
-    "billing",
     "payment required",
     "spending limit",
+)
+
+# Temporary throttles — not a billing issue, will resolve on its own
+_RATE_LIMIT_PATTERNS = (
     "rate_limit_error",
     "over_quota",
+    "too many requests",
+    "overloaded",
 )
+
+# Catch-all that includes both (kept for the broad _is_credit_error check)
+_CREDIT_ERROR_PATTERNS = _BILLING_ERROR_PATTERNS + _RATE_LIMIT_PATTERNS + ("billing",)
 
 
 def _is_credit_error(text: str) -> bool:
-    """Return True if the error text looks like an Anthropic credit/billing issue."""
+    """Return True if the error text looks like an Anthropic billing or rate-limit issue."""
     lower = text.lower()
     return any(p in lower for p in _CREDIT_ERROR_PATTERNS)
 
 
+def _is_rate_limit_error(text: str) -> bool:
+    """Return True if this is a temporary rate-limit/overload (not a hard billing failure)."""
+    lower = text.lower()
+    return any(p in lower for p in _RATE_LIMIT_PATTERNS)
+
+
+def _format_credit_error(raw: str) -> str:
+    """Return a user-facing error string that always includes the raw Anthropic message.
+
+    Distinguishes rate-limit throttles (temporary) from hard billing failures so
+    operators can see the real cause in the logs and dashboard.
+    """
+    raw_snippet = raw[:300]
+    if _is_rate_limit_error(raw):
+        return (
+            f"RATE LIMIT ERROR (temporary): {raw_snippet}. "
+            "Anthropic is throttling requests — this is NOT a billing problem. "
+            "Phoenix will retry automatically. If this persists, reduce concurrent "
+            "agents or upgrade your Anthropic API tier."
+        )
+    return (
+        f"BILLING ERROR: {raw_snippet}. "
+        "This error comes from the Anthropic API / Claude Code CLI billing system, "
+        "NOT from Phoenix. To fix: (1) Check your Claude Code spending limit via "
+        "`claude config get`; (2) Add credits at console.anthropic.com; "
+        "(3) If using Claude Max plan, verify your subscription is active."
+    )
+
+
+# Legacy alias — kept so existing call sites need no changes
 _CREDIT_ERROR_HINT = (
     "This error comes from the Anthropic API / Claude Code CLI billing system, "
     "NOT from Phoenix. Your Claude Code CLI has a separate budget from your "
@@ -525,7 +564,8 @@ class AgentGateway:
                             hit_error_message = True
                             err_msg = f"Claude agent error: {last_text[:500]}"
                             if _is_credit_error(last_text):
-                                err_msg = f"BILLING ERROR: {last_text[:300]}. {_CREDIT_ERROR_HINT}"
+                                logger.error("[backtest] Anthropic raw error for %s: %s", agent_id, last_text[:400])
+                                err_msg = _format_credit_error(last_text)
                             async for db in _get_session():
                                 await self._update_session(db, session_row_id, status="error",
                                                            error=err_msg)
@@ -598,8 +638,8 @@ class AgentGateway:
                     break
                 # Fail-fast on billing/credit errors — retrying won't help
                 if _is_credit_error(last_error):
-                    credit_msg = f"BILLING ERROR: {last_error[:300]}. {_CREDIT_ERROR_HINT}"
-                    logger.error("Anthropic billing error for agent %s — not retrying: %s", agent_id, last_error[:200])
+                    credit_msg = _format_credit_error(last_error)
+                    logger.error("[backtest] Anthropic raw error for %s (not retrying): %s", agent_id, last_error[:400])
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error", error=credit_msg[:500])
                         await _syslog(db, agent_id, backtest_id, "billing_error", 3, credit_msg[:500])
@@ -922,7 +962,8 @@ class AgentGateway:
                 if hasattr(message, "is_error") and getattr(message, "is_error", False):
                     err_msg = f"Agent error: {last_text[:500]}"
                     if _is_credit_error(last_text):
-                        err_msg = f"BILLING ERROR: {last_text[:300]}. {_CREDIT_ERROR_HINT}"
+                        logger.error("[analyst] Anthropic raw error for %s: %s", agent_id, last_text[:400])
+                        err_msg = _format_credit_error(last_text)
                     asyncio.create_task(_persist_agent_log(
                         agent_id, "ERROR", err_msg, {"msg_type": "sdk_error"}
                     ))
@@ -951,7 +992,8 @@ class AgentGateway:
             exc_str = str(exc)[:500]
             err_msg = exc_str
             if _is_credit_error(exc_str):
-                err_msg = f"BILLING ERROR: {exc_str[:300]}. {_CREDIT_ERROR_HINT}"
+                logger.error("[analyst] Anthropic raw exception for %s: %s", agent_id, exc_str[:400])
+                err_msg = _format_credit_error(exc_str)
             logger.exception("Live agent %s crashed: %s", agent_id, err_msg[:200])
             asyncio.create_task(_persist_agent_log(
                 agent_id, "ERROR", f"Agent crashed: {err_msg}", {"msg_type": "crash"}
