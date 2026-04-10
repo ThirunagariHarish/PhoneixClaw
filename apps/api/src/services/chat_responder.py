@@ -1,16 +1,11 @@
-"""Chat Responder — spawns a one-shot Claude Code SDK session per message.
+"""Chat Responder — answers agent chat messages using Anthropic Messages API.
 
-Per the architectural rule that "anything background should be a Claude agent,
-not Python code," this module does NOT use the raw anthropic SDK. Instead it
-spawns a full Claude Code session in a per-message workdir that contains:
-    - agent_context.json  — the agent's manifest, character, rules
-    - recent_trades.json  — last 7 days of closed trades
-    - chat_history.json   — the last 12 chat turns
-    - reply_chat.py       — a tiny helper the Claude session calls to persist
-                            its reply to agent_chat_messages via the API
+Primary path: direct anthropic SDK call (~2s latency, no CLI dependency).
+Optional enhancement: Claude Code SDK session with MCP tools for live agents
+that need real-time Robinhood data (falls back to primary on any failure).
 
-The agent's reply appears in chat within ~10-15 seconds (cold SDK spawn). The
-frontend chat tab polls every few seconds and picks it up automatically.
+The agent's reply is written directly to agent_chat_messages. The frontend
+chat tab polls every few seconds and picks it up automatically.
 """
 from __future__ import annotations
 
@@ -271,20 +266,95 @@ Then exit immediately. Do NOT read files you don't need. This is a one-shot
 response — get in, get out."""
 
 
+async def _fast_anthropic_reply(
+    agent_id: uuid.UUID,
+    ctx: dict,
+    user_message: str,
+) -> bool:
+    """Direct Anthropic Messages API call — no Claude Code CLI needed.
+
+    Returns True if a reply was successfully written to the DB.
+    """
+    try:
+        import anthropic  # noqa: PLC0415
+    except ImportError:
+        logger.error("[chat_responder] anthropic SDK not installed")
+        return False
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        logger.error("[chat_responder] ANTHROPIC_API_KEY not set")
+        return False
+
+    agent = ctx.get("agent") or {}
+    chat_history = ctx.get("chat") or []
+    trades = ctx.get("trades") or []
+
+    system_parts = [
+        f"You are {agent.get('name', 'a Phoenix trading agent')}.",
+        f"Character: {agent.get('character', 'a professional trader')}.",
+        f"Win rate: {agent.get('win_rate', 'N/A')}, Total trades: {agent.get('total_trades', 0)},",
+        f"Total P&L: {agent.get('total_pnl', 0)}, Today P&L: {agent.get('daily_pnl', 0)}.",
+        "Reply in 1-3 short sentences. Be direct and trader-friendly. Stay in character.",
+    ]
+    if trades:
+        trade_strs = [f"  {t.get('symbol','?')} {t.get('side','?')} pnl=${t.get('pnl',0)}" for t in trades[:5]]
+        system_parts.append("Recent trades:\n" + "\n".join(trade_strs))
+
+    system_prompt = "\n".join(system_parts)
+
+    messages: list[dict] = []
+    for turn in chat_history[-8:]:
+        role = "assistant" if turn.get("role") == "agent" else "user"
+        messages.append({"role": role, "content": turn.get("content", "")[:500]})
+    messages.append({"role": "user", "content": user_message})
+
+    if len(messages) >= 2 and messages[-1]["role"] == messages[-2]["role"]:
+        messages = [messages[-1]]
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            system=system_prompt,
+            messages=messages,
+        )
+        reply_text = resp.content[0].text if resp.content else "(No response generated)"
+        await _write_fallback_reply(agent_id, reply_text)
+        logger.info("[chat_responder] fast reply written for %s (%d chars)", agent_id, len(reply_text))
+        return True
+    except Exception as exc:
+        logger.error("[chat_responder] anthropic API call failed: %s", exc)
+        return False
+
+
 async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
-    """Fire-and-forget: spawn a Claude Code session that writes the reply."""
+    """Generate a reply for an agent chat message.
+
+    Strategy:
+    1. Try the direct Anthropic SDK (fast, ~2s, no CLI dependency)
+    2. If that fails, try Claude Code SDK with MCP tools (for live agents)
+    3. If everything fails, write a visible error to the chat
+    """
     try:
         ctx = await _load_context(agent_id)
         if not ctx.get("agent"):
             logger.debug("[chat_responder] agent %s not found", agent_id)
             return None
 
+        # ── Primary path: direct Anthropic SDK ────────────────────────────────
+        if await _fast_anthropic_reply(agent_id, ctx, user_message):
+            return None
+
+        # ── Fallback: Claude Code SDK with MCP tools ──────────────────────────
+        logger.warning("[chat_responder] fast reply failed for %s, trying Claude Code SDK", agent_id)
+
         agent_status: str = (ctx.get("agent") or {}).get("status", "")
         is_live = agent_status in _LIVE_AGENT_STATUSES
         rh_creds: dict = ctx.get("_rh_creds") or {}
         has_rh_creds = bool(rh_creds.get("username") and rh_creds.get("password"))
 
-        # ── Phase 1: Fetch live portfolio context for live agents ────────────
         live_portfolio_dict: dict | None = None
         if is_live and has_rh_creds:
             try:
@@ -299,100 +369,41 @@ async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
                     live_portfolio_dict = portfolio_ctx.to_dict()
                     break
             except Exception as fetch_exc:
-                logger.warning(
-                    "[chat_responder] live portfolio fetch failed for %s: %s",
-                    agent_id,
-                    fetch_exc,
-                )
-                from apps.api.src.services.robinhood_context_fetcher import (  # noqa: PLC0415
-                    _sanitize_error,
-                )
+                logger.warning("[chat_responder] live portfolio fetch failed: %s", fetch_exc)
 
-                live_portfolio_dict = {
-                    "positions": [],
-                    "account_value": None,
-                    "buying_power": None,
-                    "cash": None,
-                    "last_updated_at": datetime.now(timezone.utc).isoformat(),
-                    "error": _sanitize_error(fetch_exc),
-                }
-
-        # ── Phase 2: Only pass rh_creds to workdir when live + have creds ───
         workdir_rh_creds = rh_creds if (is_live and has_rh_creds) else None
-
         work_dir = _prepare_workdir(
-            agent_id,
-            ctx,
-            user_message,
+            agent_id, ctx, user_message,
             live_portfolio=live_portfolio_dict,
             rh_creds=workdir_rh_creds,
         )
 
         try:
-            # -------------------------------------------------------------------
-            # Smart Context injection (opt-in via ENABLE_SMART_CONTEXT=true)
-            # Falls back gracefully — never blocks existing chat path.
-            # -------------------------------------------------------------------
-            smart_context_str = ""
-            if ENABLE_SMART_CONTEXT:
-                try:
-                    from shared.db.engine import get_session  # noqa: PLC0415
-
-                    async for sess in get_session():
-                        token_budget = int(
-                            (ctx.get("agent") or {}).get("manifest", {}).get("wiki_context_token_budget", 8000)
-                            if isinstance((ctx.get("agent") or {}).get("manifest"), dict)
-                            else 8000
-                        )
-                        builder = ContextBuilderService(sess)
-                        context_payload = await builder.build(
-                            agent_id=agent_id,
-                            session_type="chat",
-                            signal=None,
-                            token_budget=token_budget,
-                        )
-                        smart_context_str = context_payload.to_context_string()
-                        asyncio.create_task(builder.save_audit(context_payload))
-                        break
-                except Exception as exc:
-                    logger.warning("[chat_responder] smart context builder failed, falling back: %s", exc)
-                    smart_context_str = ""
-
             try:
-                from claude_agent_sdk import ClaudeAgentOptions, query
+                from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
             except ImportError as exc:
                 logger.error("[chat_responder] claude_agent_sdk unavailable: %s", exc)
                 await _write_fallback_reply(
                     agent_id,
-                    f"(Responder offline — claude_agent_sdk not available: {exc})",
+                    "(Chat is temporarily unavailable. Please try again in a moment.)",
                 )
                 return None
 
             has_mcp = is_live and has_rh_creds and _ROBINHOOD_MCP_SOURCE.exists()
-            if is_live and has_rh_creds and not _ROBINHOOD_MCP_SOURCE.exists():
-                logger.warning(
-                    "[chat_responder] robinhood_mcp.py not found at %s — chat MCP disabled for agent %s",
-                    _ROBINHOOD_MCP_SOURCE,
-                    agent_id,
-                )
             prompt = _build_prompt(
-                ctx,
-                user_message,
-                smart_context_str=smart_context_str,
+                ctx, user_message,
                 has_live_portfolio=live_portfolio_dict is not None,
                 has_mcp_tools=has_mcp,
             )
 
-            # Environment variables the reply_chat.py tool will read
             env_patch = {
                 "PHOENIX_API_URL": os.environ.get("PHOENIX_API_URL", "http://localhost:8011"),
                 "PHOENIX_API_KEY": os.environ.get("PHOENIX_API_KEY", ""),
                 "PHOENIX_TARGET_AGENT_ID": str(agent_id),
             }
             for k, v in env_patch.items():
-                os.environ[k] = v  # inherited by the spawned claude subprocess
+                os.environ[k] = v
 
-            # Live agents get read-only Robinhood MCP tools; others get base set
             allowed_tools: list[str] = ["Bash", "Read"]
             if has_mcp:
                 allowed_tools = ["Bash", "Read"] + _ROBINHOOD_CHAT_TOOLS
@@ -405,34 +416,29 @@ async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
 
             async def _pump() -> None:
                 async for _msg in query(prompt=prompt, options=options):
-                    # We don't need to inspect messages — the session writes back
-                    # to agent_chat_messages via the reply_chat.py tool
                     pass
 
             try:
                 await asyncio.wait_for(_pump(), timeout=REPLY_TIMEOUT_SECONDS)
-                logger.info("[chat_responder] session completed for %s", agent_id)
+                logger.info("[chat_responder] SDK session completed for %s", agent_id)
             except asyncio.TimeoutError:
-                logger.warning("[chat_responder] session timed out for %s", agent_id)
+                logger.warning("[chat_responder] SDK session timed out for %s", agent_id)
                 await _write_fallback_reply(
                     agent_id,
                     "(Sorry — the reply took too long. Try again in a moment.)",
                 )
             return None
         finally:
-            # Always scrub the workdir — it may contain .claude/settings.json
-            # with plaintext credentials.  ignore_errors=True ensures a cleanup
-            # failure can never break the caller.
             try:
                 shutil.rmtree(work_dir, ignore_errors=True)
             except Exception:
-                pass  # never let cleanup failure break the response
+                pass
     except Exception as exc:
         logger.exception("[chat_responder] crashed: %s", exc)
         try:
             await _write_fallback_reply(
                 agent_id,
-                f"(Responder crashed: {str(exc)[:150]})",
+                f"(Responder error: {str(exc)[:150]})",
             )
         except Exception:
             pass
@@ -440,9 +446,9 @@ async def respond_to_chat(agent_id: uuid.UUID, user_message: str) -> str | None:
 
 
 async def _write_fallback_reply(agent_id: uuid.UUID, text: str) -> None:
-    """Write a plain reply directly to the DB when the Claude session is unusable."""
-    from shared.db.engine import get_session
-    from shared.db.models.agent_chat import AgentChatMessage
+    """Write a reply directly to the DB."""
+    from shared.db.engine import get_session  # noqa: PLC0415
+    from shared.db.models.agent_chat import AgentChatMessage  # noqa: PLC0415
 
     async for sess in get_session():
         row = AgentChatMessage(
@@ -459,9 +465,5 @@ async def _write_fallback_reply(agent_id: uuid.UUID, text: str) -> None:
 
 
 def schedule_reply(agent_id: uuid.UUID, user_message: str) -> None:
-    """Synchronous fire-and-forget — safe to call from FastAPI route handlers."""
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(respond_to_chat(agent_id, user_message))
-    except RuntimeError:
-        asyncio.run(respond_to_chat(agent_id, user_message))
+    """Fire-and-forget — safe to call from async FastAPI route handlers."""
+    asyncio.ensure_future(respond_to_chat(agent_id, user_message))

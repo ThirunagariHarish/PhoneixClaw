@@ -3,6 +3,8 @@ Chat API — trade chat history and send message stubs.
 Ported from v1; used by ChatWidget.
 """
 
+import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.engine import get_session
 from shared.db.models.agent_chat import AgentChatMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/chat", tags=["chat"])
 
@@ -91,12 +95,20 @@ async def send_message(
             ))
         except Exception:
             pass
-        # Fire-and-forget: one-shot Haiku responder writes back an agent reply
+        # Fire-and-forget: one-shot responder writes back an agent reply
         try:
             from apps.api.src.services.chat_responder import schedule_reply
             schedule_reply(agent_id, msg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("[chat/send] schedule_reply failed for agent %s: %s", agent_id, exc)
+            try:
+                from apps.api.src.services.chat_responder import _write_fallback_reply
+                asyncio.ensure_future(_write_fallback_reply(
+                    agent_id,
+                    f"(Chat responder failed to start: {str(exc)[:150]})",
+                ))
+            except Exception:
+                logger.error("[chat/send] fallback reply also failed for agent %s", agent_id)
 
     await session.commit()
     return {"ok": True, "id": str(row.id), "forwarded": forwarded}

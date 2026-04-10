@@ -533,13 +533,38 @@ class AgentGateway:
                 else:
                     logger.error("Claude SDK failed after %d attempts for agent %s: %s",
                                  max_attempts, agent_id, last_error)
-                    async for db in _get_session():
-                        await self._update_session(db, session_row_id, status="error",
-                                                   error=f"SDK failed after {max_attempts} attempts: {last_error[:200]}")
-                        await _syslog(db, agent_id, backtest_id, "sdk_failed", 3,
-                                      f"Claude SDK failed after {max_attempts} attempts: {last_error[:200]}")
-                        await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent",
-                                                   f"SDK failed after {max_attempts} attempts: {last_error[:300]}")
+
+                    # If the Python pipeline completed (models trained), mark as
+                    # completed-with-warning rather than failed — models are usable.
+                    pipeline_done = any(
+                        (work_dir / name).exists()
+                        for name in ("evaluation_report.json", "best_model.json", "models")
+                    )
+                    is_api_transient = any(k in last_error for k in ("424", "429", "529", "overloaded", "Could not serve"))
+
+                    if pipeline_done and is_api_transient:
+                        logger.warning(
+                            "[backtester] SDK unavailable (API %s) but pipeline complete — "
+                            "marking backtest as completed for agent %s",
+                            last_error[:80], agent_id,
+                        )
+                        async for db in _get_session():
+                            await self._update_session(db, session_row_id, status="completed",
+                                                       error=f"SDK unavailable but pipeline complete: {last_error[:200]}")
+                            await _syslog(db, agent_id, backtest_id, "sdk_unavailable_pipeline_ok", 2,
+                                          f"Claude SDK returned API error after {max_attempts} attempts, "
+                                          f"but all Python pipeline steps completed. Models are usable. "
+                                          f"Error: {last_error[:200]}")
+                            await _mark_backtest_completed(db, agent_id, backtest_id)
+                        await self._auto_create_analyst(agent_id, config, work_dir)
+                    else:
+                        async for db in _get_session():
+                            await self._update_session(db, session_row_id, status="error",
+                                                       error=f"SDK failed after {max_attempts} attempts: {last_error[:200]}")
+                            await _syslog(db, agent_id, backtest_id, "sdk_failed", 3,
+                                          f"Claude SDK failed after {max_attempts} attempts: {last_error[:200]}")
+                            await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent",
+                                                       f"SDK failed after {max_attempts} attempts: {last_error[:300]}")
 
         _running_tasks.pop(str(agent_id), None)
 
