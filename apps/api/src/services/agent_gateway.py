@@ -23,7 +23,7 @@ from sqlalchemy import select, text
 
 from shared.context.builder import ENABLE_SMART_CONTEXT, ContextBuilderService
 from shared.db.engine import get_session as _get_session
-from shared.db.models.agent import Agent, AgentBacktest
+from shared.db.models.agent import Agent, AgentBacktest, AgentLog
 from shared.db.models.agent_session import AgentSession
 from shared.db.models.system_log import SystemLog
 
@@ -129,6 +129,22 @@ _CREDIT_ERROR_HINT = (
     "or add payment method at console.anthropic.com; (3) If using Claude Max plan, "
     "verify your subscription is active."
 )
+
+
+async def _persist_agent_log(agent_id: uuid.UUID, level: str, message: str, context: dict | None = None) -> None:
+    """Fire-and-forget: write one row to agent_logs without blocking the caller."""
+    try:
+        async for db in _get_session():
+            db.add(AgentLog(
+                id=uuid.uuid4(),
+                agent_id=agent_id,
+                level=level,
+                message=message[:2000],
+                context=context or {},
+            ))
+            await db.commit()
+    except Exception as _exc:
+        logger.debug("[agent_log] write failed (non-fatal): %s", _exc)
 
 
 def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = True) -> None:
@@ -882,8 +898,22 @@ class AgentGateway:
             async for message in query(prompt=prompt, options=options):
                 if hasattr(message, "content") and isinstance(message.content, list):
                     for block in message.content:
-                        if hasattr(block, "text"):
+                        if hasattr(block, "text") and block.text:
                             last_text = block.text[-500:]
+                            asyncio.create_task(_persist_agent_log(
+                                agent_id, "INFO", block.text[:2000],
+                                {"msg_type": "assistant_text"},
+                            ))
+                        elif hasattr(block, "name") and hasattr(block, "input"):
+                            # Tool use block (e.g. Bash, Read)
+                            tool_name = getattr(block, "name", "tool")
+                            tool_input = getattr(block, "input", {})
+                            cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else str(tool_input)
+                            asyncio.create_task(_persist_agent_log(
+                                agent_id, "INFO",
+                                f"[{tool_name}] {cmd[:300]}",
+                                {"msg_type": "tool_use", "tool": tool_name},
+                            ))
                 if hasattr(message, "session_id"):
                     _session_ids[agent_key] = message.session_id
                     async for db in _get_session():
@@ -893,6 +923,9 @@ class AgentGateway:
                     err_msg = f"Agent error: {last_text[:500]}"
                     if _is_credit_error(last_text):
                         err_msg = f"BILLING ERROR: {last_text[:300]}. {_CREDIT_ERROR_HINT}"
+                    asyncio.create_task(_persist_agent_log(
+                        agent_id, "ERROR", err_msg, {"msg_type": "sdk_error"}
+                    ))
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error",
                                                    error=err_msg)
@@ -920,6 +953,9 @@ class AgentGateway:
             if _is_credit_error(exc_str):
                 err_msg = f"BILLING ERROR: {exc_str[:300]}. {_CREDIT_ERROR_HINT}"
             logger.exception("Live agent %s crashed: %s", agent_id, err_msg[:200])
+            asyncio.create_task(_persist_agent_log(
+                agent_id, "ERROR", f"Agent crashed: {err_msg}", {"msg_type": "crash"}
+            ))
             async for db in _get_session():
                 await self._update_session(db, session_row_id, status="error",
                                            error=err_msg[:500])
