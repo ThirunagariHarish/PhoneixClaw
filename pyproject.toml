@@ -45,6 +45,7 @@ dependencies = [
     "apscheduler>=3.10.0",
     "croniter>=2.0.0",
     "gunicorn>=22.0.0",
+    "robin-stocks>=3.0.0",
 ]
 
 [project.optional-dependencies]
