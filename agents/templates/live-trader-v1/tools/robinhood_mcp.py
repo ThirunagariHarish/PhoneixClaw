@@ -221,6 +221,24 @@ def _load_credentials() -> tuple[str, str, str]:
     return username, password, totp_secret
 
 
+def _ensure_token_dir() -> None:
+    """Ensure the .tokens/ directory exists for session pickle persistence.
+
+    robin_stocks stores session pickles in ~/.tokens/ by default.
+    We create it in CWD and try to set HOME so pickles land in the
+    agent's workspace and survive restarts without re-authenticating.
+    """
+    from pathlib import Path as _P
+    tokens_dir = _P(".tokens")
+    tokens_dir.mkdir(exist_ok=True)
+    home_tokens = _P.home() / ".tokens"
+    if not home_tokens.exists():
+        try:
+            home_tokens.mkdir(exist_ok=True)
+        except OSError:
+            pass
+
+
 def _ensure_login() -> None:
     global _rh_logged_in
     if PAPER_MODE:
@@ -237,13 +255,64 @@ def _ensure_login() -> None:
             "Robinhood credentials missing. Provide RH_USERNAME and RH_PASSWORD env vars, "
             "or a config.json with `robinhood_credentials` in the current working directory."
         )
+
+    _ensure_token_dir()
+
+    # Strategy 1: Try loading existing session from pickle (no 2FA needed)
+    # robin_stocks checks ~/.tokens/<pickle_name>.pickle automatically
+    # when store_session=True. We use a stable pickle_name derived from
+    # the username so sessions persist across process restarts.
+    pickle_name = f"phoenix_{username.split('@')[0]}" if username else ""
+
+    # Strategy 2: Generate TOTP code if secret is available.
+    # This avoids device-approval push notifications entirely.
+    # User must switch Robinhood 2FA from "Device Approval" to
+    # "Authenticator App" and store the TOTP secret in the connector.
     mfa_code = None
     if totp_secret:
-        import pyotp
-        mfa_code = pyotp.TOTP(totp_secret).now()
-    _retry(rh.login, username, password, mfa_code=mfa_code, store_session=True)
+        try:
+            import pyotp
+            mfa_code = pyotp.TOTP(totp_secret).now()
+            log.info("Generated TOTP code for %s", username)
+        except Exception as exc:
+            log.warning("TOTP generation failed: %s — will attempt session pickle or device approval", exc)
+
+    # Strategy 3: Long-lived session — expiresIn=86400 (24h) means once
+    # authenticated, the pickle is valid for a full trading day.
+    # Combined with store_session=True, subsequent logins within 24h
+    # reuse the cached token with zero 2FA.
+    try:
+        _retry(
+            rh.login,
+            username,
+            password,
+            mfa_code=mfa_code,
+            store_session=True,
+            expiresIn=86400,
+            pickle_name=pickle_name,
+        )
+    except Exception as first_err:
+        # If TOTP was provided but login still failed, retry without
+        # mfa_code in case the session pickle is valid (race condition
+        # where TOTP expired during network delay).
+        if mfa_code:
+            log.warning("Login with TOTP failed (%s), retrying with session pickle only", first_err)
+            try:
+                _retry(
+                    rh.login,
+                    username,
+                    password,
+                    store_session=True,
+                    expiresIn=86400,
+                    pickle_name=pickle_name,
+                )
+            except Exception:
+                raise first_err
+        else:
+            raise
+
     _rh_logged_in = True
-    log.info("Logged in to Robinhood as %s", username)
+    log.info("Logged in to Robinhood as %s (pickle=%s)", username, pickle_name)
 
 
 def _poll_order_status(order_id: str, is_option: bool = False) -> dict:

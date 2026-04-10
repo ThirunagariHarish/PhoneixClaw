@@ -2361,7 +2361,11 @@ class AgentGateway:
 
         work_dir = await self._resolve_chat_workdir(agent_id, agent_key)
 
+        # HOME points to the chat workdir so robin_stocks writes its session
+        # pickle (~/.tokens/) there — persists across chat turns without re-auth.
+        (work_dir / ".tokens").mkdir(exist_ok=True)
         mcp_env: dict[str, str] = {
+            "HOME": str(work_dir),
             "PAPER_MODE": "false",
             "RH_USERNAME": rh_creds.get("username", ""),
             "RH_PASSWORD": rh_creds.get("password", ""),

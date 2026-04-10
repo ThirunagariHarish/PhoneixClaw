@@ -139,7 +139,15 @@ class RobinhoodContextFetcher:
                 except Exception as totp_exc:
                     logger.warning("[rh_ctx_fetcher] TOTP generation failed: %s", totp_exc)
 
-            login_kwargs: dict = {"store_session": False, "pickle_name": ""}
+            # Reuse session pickle to avoid triggering 2FA on every chat message.
+            # pickle_name is stable per-user; expiresIn=86400 (24h) keeps the
+            # session valid for a full trading day.
+            pickle_name = f"phoenix_{username.split('@')[0]}" if username else ""
+            login_kwargs: dict = {
+                "store_session": True,
+                "expiresIn": 86400,
+                "pickle_name": pickle_name,
+            }
             if mfa_code:
                 login_kwargs["mfa_code"] = mfa_code
             rh.login(username, password, **login_kwargs)
