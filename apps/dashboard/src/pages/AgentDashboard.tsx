@@ -536,7 +536,10 @@ function ChatTab({ id, agentName }: { id: string; agentName: string }) {
   const { data: chatHistory = [] } = useQuery<ChatMsg[]>({
     queryKey: ['agent-chat', id],
     queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/chat`)).data } catch { return [] } },
-    refetchInterval: chatHistory.some((m: ChatMsg) => m.message_type === 'thinking') ? 2000 : 5000,
+    refetchInterval: (query) => {
+      const msgs = (query.state.data as ChatMsg[] | undefined) ?? []
+      return msgs.some((m) => m.message_type === 'thinking') ? 2000 : 5000
+    },
   })
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatHistory.length])

@@ -240,6 +240,74 @@ async def start_ingestion() -> None:
     logger.info("[ingestion] Started %d connectors", len(_tasks))
 
 
+async def refresh_ingestion() -> dict:
+    """Restart dead tasks and pick up newly-created connectors.
+
+    Safe to call repeatedly — only starts tasks for connectors that aren't
+    already running (or whose tasks have died).
+    """
+    global _running
+    if not _running:
+        await start_ingestion()
+        return get_ingestion_status()
+
+    try:
+        from sqlalchemy import select
+
+        from shared.crypto.credentials import decrypt_credentials
+        from shared.db.engine import get_session
+        from shared.db.models.connector import Connector
+    except Exception as exc:
+        logger.warning("[ingestion] refresh imports failed: %s", exc)
+        return get_ingestion_status()
+
+    try:
+        from services.connector_manager.src.connectors.discord import DiscordConnector
+    except Exception as exc:
+        logger.warning("[ingestion] DiscordConnector import failed on refresh: %s", exc)
+        return get_ingestion_status()
+
+    # Prune dead tasks
+    dead = [cid for cid, t in _tasks.items() if t.done()]
+    for cid in dead:
+        logger.warning("[ingestion] Restarting dead task for connector %s", cid)
+        _tasks.pop(cid, None)
+
+    async for session in get_session():
+        result = await session.execute(
+            select(Connector).where(
+                Connector.type == "discord",
+                Connector.is_active.is_(True),
+            )
+        )
+        for c in result.scalars().all():
+            cid = str(c.id)
+            if cid in _tasks:
+                continue
+            try:
+                creds = decrypt_credentials(c.credentials_encrypted) if c.credentials_encrypted else {}
+            except Exception:
+                creds = {}
+            token = creds.get("user_token") or creds.get("bot_token") or (c.config or {}).get("token", "")
+            if not token:
+                logger.warning("[ingestion] Connector %s has no token on refresh", c.id)
+                continue
+            cfg = dict(c.config or {})
+            cfg["token"] = token
+            if not cfg.get("channel_ids") and cfg.get("channel_id"):
+                cfg["channel_ids"] = [cfg["channel_id"]]
+            try:
+                connector = DiscordConnector(cid, cfg)
+                task = asyncio.create_task(_ingest_loop(cid, connector))
+                _tasks[cid] = task
+                logger.info("[ingestion] Started new connector %s on refresh", cid)
+            except Exception as exc:
+                logger.exception("[ingestion] Failed to start connector %s on refresh: %s", cid, exc)
+        break
+
+    return get_ingestion_status()
+
+
 async def stop_ingestion() -> None:
     """Cancel all ingestion tasks."""
     global _running, _redis
@@ -267,7 +335,8 @@ def get_ingestion_status() -> dict:
         "running": _running,
         "db_write_failures": _db_write_failures,
         "connectors": [
-            {"connector_id": cid, "alive": not task.done()}
+            {"connector_id": cid, "alive": not task.done(),
+             "exception": str(task.exception()) if task.done() and task.exception() else None}
             for cid, task in _tasks.items()
         ],
     }

@@ -26,10 +26,19 @@ async def scheduler_status():
     except Exception as exc:
         out["ingestion"] = {"error": str(exc)[:200]}
 
-    # Backward compat: keep `running` and `jobs` at the top level so existing
-    # dashboard pages continue to work.
     if isinstance(out["scheduler"], dict):
         out["running"] = out["scheduler"].get("running", False)
         if "jobs" in out["scheduler"]:
             out["jobs"] = out["scheduler"]["jobs"]
     return out
+
+
+@router.post("/ingestion/refresh")
+async def refresh_ingestion_endpoint():
+    """Restart dead ingestion tasks and pick up newly-created connectors."""
+    try:
+        from apps.api.src.services.message_ingestion import refresh_ingestion
+        result = await refresh_ingestion()
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:500]}

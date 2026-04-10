@@ -377,15 +377,24 @@ async def _job_consolidation_run() -> None:
         logger.exception("[scheduler] consolidation_run job failed")
 
 
+_HEARTBEAT_STALE_MINUTES = int(os.environ.get("HEARTBEAT_STALE_MINUTES", "30"))
+
+
 async def _job_heartbeat_check() -> None:
-    """Mark stale agent sessions (last_heartbeat > 15 min) as error."""
+    """Mark stale agent sessions and attempt auto-restart for analyst agents.
+
+    Also refreshes the Discord ingestion daemon (restarts dead connectors,
+    picks up newly-created connectors).
+    """
     try:
         from datetime import timedelta
+
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent_session import AgentSession
-        from sqlalchemy import select, update
 
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=_HEARTBEAT_STALE_MINUTES)
         async for session in get_session():
             result = await session.execute(
                 select(AgentSession).where(
@@ -395,15 +404,45 @@ async def _job_heartbeat_check() -> None:
                 )
             )
             stale = list(result.scalars().all())
+            restart_candidates = []
             for s in stale:
                 s.status = "stale"
-                s.error_message = "No heartbeat for 15+ minutes"
+                s.error_message = f"No heartbeat for {_HEARTBEAT_STALE_MINUTES}+ minutes"
                 s.stopped_at = datetime.now(timezone.utc)
+                if s.session_type in ("analyst", "live_trader"):
+                    restart_candidates.append((s.agent_id, s.session_type))
             if stale:
                 await session.commit()
-                logger.warning("[scheduler] Marked %d stale sessions", len(stale))
+                logger.warning("[scheduler] Marked %d stale sessions (cutoff=%dmin)",
+                               len(stale), _HEARTBEAT_STALE_MINUTES)
+
+            # Auto-restart analyst/live_trader agents that went stale
+            if restart_candidates:
+                try:
+                    from apps.api.src.services.agent_gateway import AgentGateway
+                    gw = AgentGateway()
+                    for agent_id, stype in restart_candidates:
+                        try:
+                            logger.info("[scheduler] Auto-restarting stale %s agent %s", stype, agent_id)
+                            await gw.start_analyst_agent(agent_id)
+                        except Exception as restart_exc:
+                            logger.warning("[scheduler] Auto-restart failed for %s: %s",
+                                           agent_id, restart_exc)
+                except Exception as gw_exc:
+                    logger.warning("[scheduler] Gateway import for auto-restart failed: %s", gw_exc)
+
     except Exception:
         logger.exception("[scheduler] Heartbeat check failed")
+
+    # Refresh ingestion daemon — restart dead Discord connections, add new connectors
+    try:
+        from apps.api.src.services.message_ingestion import refresh_ingestion
+        status = await refresh_ingestion()
+        dead_count = sum(1 for c in status.get("connectors", []) if not c.get("alive"))
+        if dead_count:
+            logger.warning("[scheduler] Ingestion refresh found %d dead connectors", dead_count)
+    except Exception:
+        logger.debug("[scheduler] Ingestion refresh skipped (non-fatal)")
 
 
 def start_scheduler() -> "AsyncIOScheduler | None":

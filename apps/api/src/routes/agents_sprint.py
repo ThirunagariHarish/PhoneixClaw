@@ -86,6 +86,100 @@ async def get_channel_messages(
     return {"messages": messages, "count": len(messages)}
 
 
+@router.post("/{agent_id}/channel-messages/backfill")
+async def backfill_channel_messages(
+    agent_id: uuid.UUID,
+    limit: int = Query(100, le=500),
+    session: DbSession = None,
+):
+    """On-demand backfill: fetch recent messages from Discord API for this agent's
+    connectors and persist them.  Useful when the ingestion daemon was down."""
+    from shared.crypto.credentials import decrypt_credentials
+    from shared.db.models.connector import Connector
+
+    sub_q = select(ConnectorAgent).where(
+        ConnectorAgent.agent_id == agent_id,
+        ConnectorAgent.is_active.is_(True),
+    )
+    sub_rows = (await session.execute(sub_q)).all()
+    connector_ids = [r[0].connector_id if hasattr(r[0], "connector_id") else r[0] for r in sub_rows]
+    if not connector_ids:
+        return {"backfilled": 0, "error": "No active connectors linked to this agent"}
+
+    total_backfilled = 0
+    errors = []
+
+    for cid in connector_ids:
+        try:
+            conn = (await session.execute(
+                select(Connector).where(Connector.id == cid)
+            )).scalar_one_or_none()
+            if not conn or conn.type != "discord":
+                continue
+
+            creds = decrypt_credentials(conn.credentials_encrypted) if conn.credentials_encrypted else {}
+            token = creds.get("user_token") or creds.get("bot_token") or (conn.config or {}).get("token", "")
+            if not token:
+                errors.append(f"Connector {cid}: no token")
+                continue
+
+            channel_ids = (conn.config or {}).get("channel_ids", [])
+            if not channel_ids:
+                cid_single = (conn.config or {}).get("channel_id")
+                if cid_single:
+                    channel_ids = [cid_single]
+
+            if not channel_ids:
+                errors.append(f"Connector {cid}: no channel_ids configured")
+                continue
+
+            import httpx
+            headers = {"Authorization": f"Bot {token}" if len(token) < 100 else token}
+
+            async with httpx.AsyncClient(timeout=15) as http:
+                for ch_id in channel_ids[:5]:
+                    try:
+                        resp = await http.get(
+                            f"https://discord.com/api/v10/channels/{ch_id}/messages",
+                            headers=headers,
+                            params={"limit": min(limit, 100)},
+                        )
+                        if resp.status_code != 200:
+                            errors.append(f"Channel {ch_id}: HTTP {resp.status_code}")
+                            continue
+
+                        msgs = resp.json()
+                        for m in msgs:
+                            existing = (await session.execute(
+                                select(ChannelMessage).where(ChannelMessage.platform_message_id == str(m.get("id", "")))
+                            )).scalar_one_or_none()
+                            if existing:
+                                continue
+                            row = ChannelMessage(
+                                id=uuid.uuid4(),
+                                connector_id=cid,
+                                channel=str(ch_id),
+                                author=m.get("author", {}).get("username", "unknown"),
+                                content=m.get("content", ""),
+                                message_type="info",
+                                tickers_mentioned=[],
+                                raw_data=m,
+                                platform_message_id=str(m.get("id", "")),
+                                posted_at=datetime.fromisoformat(m["timestamp"].replace("+00:00", "+00:00"))
+                                    if m.get("timestamp") else datetime.now(timezone.utc),
+                            )
+                            session.add(row)
+                            total_backfilled += 1
+
+                        await session.commit()
+                    except Exception as ch_exc:
+                        errors.append(f"Channel {ch_id}: {str(ch_exc)[:100]}")
+        except Exception as conn_exc:
+            errors.append(f"Connector {cid}: {str(conn_exc)[:100]}")
+
+    return {"backfilled": total_backfilled, "errors": errors if errors else None}
+
+
 # ---------------------------------------------------------------------------
 # P2: Logs (polling + SSE stream)
 # ---------------------------------------------------------------------------

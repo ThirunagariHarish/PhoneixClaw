@@ -104,6 +104,33 @@ _ROBINHOOD_CHAT_TOOLS: list[str] = [
 ]
 
 
+_CREDIT_ERROR_PATTERNS = (
+    "credit balance is too low",
+    "insufficient credit",
+    "billing",
+    "payment required",
+    "spending limit",
+    "rate_limit_error",
+    "over_quota",
+)
+
+
+def _is_credit_error(text: str) -> bool:
+    """Return True if the error text looks like an Anthropic credit/billing issue."""
+    lower = text.lower()
+    return any(p in lower for p in _CREDIT_ERROR_PATTERNS)
+
+
+_CREDIT_ERROR_HINT = (
+    "This error comes from the Anthropic API / Claude Code CLI billing system, "
+    "NOT from Phoenix. Your Claude Code CLI has a separate budget from your "
+    "Anthropic console balance. To fix: (1) Check your Claude Code spending limit "
+    "via `claude config get` or the Anthropic dashboard; (2) Increase the budget "
+    "or add payment method at console.anthropic.com; (3) If using Claude Max plan, "
+    "verify your subscription is active."
+)
+
+
 def _write_claude_settings(work_dir: Path, rh_creds: dict, paper_mode: bool = True) -> None:
     """Write .claude/settings.json with Robinhood MCP server wired in.
 
@@ -480,10 +507,13 @@ class AgentGateway:
                                 _total_output_tokens += int(_usage.get("output_tokens", 0))
                         if hasattr(message, "is_error") and getattr(message, "is_error", False):
                             hit_error_message = True
+                            err_msg = f"Claude agent error: {last_text[:500]}"
+                            if _is_credit_error(last_text):
+                                err_msg = f"BILLING ERROR: {last_text[:300]}. {_CREDIT_ERROR_HINT}"
                             async for db in _get_session():
                                 await self._update_session(db, session_row_id, status="error",
-                                                           error=f"Claude agent error: {last_text[:500]}")
-                                await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", last_text[:500])
+                                                           error=err_msg)
+                                await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", err_msg[:500])
                             break
                     return hit_error_message
 
@@ -549,6 +579,15 @@ class AgentGateway:
                                       "Claude CLI OOM-killed (SIGKILL/exit -9). Not retrying. Bump phoenix-api memory limit.")
                         await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent",
                                                    "Claude CLI OOM-killed (exit -9). Bump phoenix-api memory limit.")
+                    break
+                # Fail-fast on billing/credit errors — retrying won't help
+                if _is_credit_error(last_error):
+                    credit_msg = f"BILLING ERROR: {last_error[:300]}. {_CREDIT_ERROR_HINT}"
+                    logger.error("Anthropic billing error for agent %s — not retrying: %s", agent_id, last_error[:200])
+                    async for db in _get_session():
+                        await self._update_session(db, session_row_id, status="error", error=credit_msg[:500])
+                        await _syslog(db, agent_id, backtest_id, "billing_error", 3, credit_msg[:500])
+                        await _mark_backtest_failed(db, agent_id, backtest_id, "claude_agent", credit_msg[:500])
                     break
                 if attempt < max_attempts:
                     delay = 10 * (2 ** (attempt - 1))
@@ -851,9 +890,12 @@ class AgentGateway:
                         await self._update_session(db, session_row_id,
                                                    session_id=message.session_id)
                 if hasattr(message, "is_error") and getattr(message, "is_error", False):
+                    err_msg = f"Agent error: {last_text[:500]}"
+                    if _is_credit_error(last_text):
+                        err_msg = f"BILLING ERROR: {last_text[:300]}. {_CREDIT_ERROR_HINT}"
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error",
-                                                   error=f"Agent error: {last_text[:500]}")
+                                                   error=err_msg)
                         agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
                         if agent:
                             agent.worker_status = "ERROR"
@@ -873,10 +915,14 @@ class AgentGateway:
             logger.info("Live agent %s cancelled (pause/stop)", agent_id)
             raise
         except Exception as exc:
-            logger.exception("Live agent %s crashed", agent_id)
+            exc_str = str(exc)[:500]
+            err_msg = exc_str
+            if _is_credit_error(exc_str):
+                err_msg = f"BILLING ERROR: {exc_str[:300]}. {_CREDIT_ERROR_HINT}"
+            logger.exception("Live agent %s crashed: %s", agent_id, err_msg[:200])
             async for db in _get_session():
                 await self._update_session(db, session_row_id, status="error",
-                                           error=str(exc)[:500])
+                                           error=err_msg[:500])
                 agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
                 if agent:
                     agent.worker_status = "ERROR"

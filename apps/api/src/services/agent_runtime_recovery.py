@@ -16,7 +16,6 @@ This module runs on lifespan startup and:
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +23,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Session types that we KNOW how to resume safely
-RESUMABLE_TYPES = {"analyst"}
+RESUMABLE_TYPES = {"analyst", "live_trader"}
 # Sub-agents (position monitors) are tied to live positions; on restart we
 # re-spawn them only if their parent analyst comes back. We don't auto-resume
 # directly because the position state is owned by the parent.
@@ -57,7 +56,7 @@ async def recover_agents_on_startup() -> dict:
     async for db in get_session():
         result = await db.execute(
             select(AgentSession).where(
-                AgentSession.status.in_(["running", "starting"]),
+                AgentSession.status.in_(["running", "starting", "stale"]),
             )
         )
         rows = list(result.scalars().all())
