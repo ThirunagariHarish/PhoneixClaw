@@ -6,6 +6,7 @@ Cloud Tasks), and promoted to Docker-managed trading workers.  All state
 lives in PostgreSQL; no SSH or VPS management.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -1460,14 +1461,13 @@ async def send_agent_chat(agent_id: str, payload: dict[str, Any], session: DbSes
 
     await session.commit()
 
-    # Fire-and-forget: spawn a one-shot Haiku responder. Reply lands in
-    # agent_chat_messages with role='agent' within a few seconds, the
-    # frontend polls the chat endpoint and picks it up automatically.
+    # Route through Chat Gateway — SDK session with full MCP tool access.
+    # Reply lands in agent_chat_messages with role='agent' within seconds.
     try:
-        from apps.api.src.services.chat_responder import schedule_reply
-        schedule_reply(uuid.UUID(agent_id), content)
+        from apps.api.src.services.agent_gateway import gateway  # noqa: PLC0415
+        asyncio.ensure_future(gateway.chat_with_agent(uuid.UUID(agent_id), content))
     except Exception as exc:
-        logger.warning("[chat] responder dispatch failed: %s", exc)
+        logger.warning("[chat] chat_with_agent dispatch failed: %s", exc)
 
     return {"user_message": content, "message_type": msg_type, "status": "queued"}
 

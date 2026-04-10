@@ -63,18 +63,6 @@ def sample_connector_payload():
 
 
 @pytest.fixture
-def sample_instance_payload():
-    return {
-        "name": "test-openclaw-instance",
-        "host": "127.0.0.1",
-        "port": 18800,
-        "role": "general",
-        "node_type": "vps",
-        "capabilities": {"gpu": False},
-    }
-
-
-@pytest.fixture
 def sample_task_payload():
     return {
         "title": "Analyze AAPL momentum",

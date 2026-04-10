@@ -1,4 +1,4 @@
-"""Unit tests for RobinhoodContextFetcher and chat_responder live-portfolio injection.
+"""Unit tests for RobinhoodContextFetcher and Chat Gateway prompt building.
 
 Run with:
     PYTHONPATH=. pytest tests/unit/test_robinhood_context_fetcher.py -v
@@ -10,7 +10,6 @@ import sys
 import types
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -277,160 +276,59 @@ class TestRobinhoodContextFetcherPositionMapping:
 
 
 # ---------------------------------------------------------------------------
-# chat_responder — live portfolio injection into workdir + prompt
+# Chat Gateway — prompt building tests
 # ---------------------------------------------------------------------------
 
 
-class TestChatResponderLivePortfolioInjection:
-    """Verify _prepare_workdir injects live_portfolio and _build_prompt hints correctly."""
+class TestChatGatewayPromptBuilding:
+    """Verify _build_chat_prompt includes correct sections based on context."""
 
-    def test_live_portfolio_written_to_context_file(self, tmp_path: Path) -> None:
-        import apps.api.src.services.chat_responder as cr
-
-        original_dir = cr.CHAT_SESSIONS_DIR
-        cr.CHAT_SESSIONS_DIR = tmp_path
-        try:
-            agent_id = uuid.uuid4()
-            ctx = {
-                "agent": {"id": str(agent_id), "name": "Arty", "status": "RUNNING"},
-                "chat": [],
-                "trades": [],
-                "_rh_creds": {},
-            }
-            live_portfolio = {
-                "positions": [{"ticker": "NVDA", "quantity": 2.0}],
-                "account_value": 8000.0,
-                "buying_power": 2000.0,
-                "cash": 2000.0,
-                "last_updated_at": "2026-04-08T10:00:00Z",
-                "error": None,
-            }
-
-            work_dir = cr._prepare_workdir(
-                agent_id,
-                ctx,
-                "What are my positions?",
-                live_portfolio=live_portfolio,
-                rh_creds=None,
-            )
-
-            written = json.loads((work_dir / "agent_context.json").read_text())
-            assert "live_portfolio" in written
-            assert written["live_portfolio"]["positions"][0]["ticker"] == "NVDA"
-            assert written["live_portfolio"]["account_value"] == 8000.0
-        finally:
-            cr.CHAT_SESSIONS_DIR = original_dir
-
-    def test_no_live_portfolio_for_paper_agent(self, tmp_path: Path) -> None:
-        """Paper agent: live_portfolio=None -> no live_portfolio key in agent_context.json."""
-        import apps.api.src.services.chat_responder as cr
-
-        original_dir = cr.CHAT_SESSIONS_DIR
-        cr.CHAT_SESSIONS_DIR = tmp_path
-        try:
-            agent_id = uuid.uuid4()
-            ctx = {
-                "agent": {"id": str(agent_id), "name": "Arty", "status": "PAPER"},
-                "chat": [],
-                "trades": [],
-                "_rh_creds": {},
-            }
-
-            work_dir = cr._prepare_workdir(
-                agent_id,
-                ctx,
-                "How am I doing?",
-                live_portfolio=None,
-                rh_creds=None,
-            )
-
-            written = json.loads((work_dir / "agent_context.json").read_text())
-            assert "live_portfolio" not in written
-        finally:
-            cr.CHAT_SESSIONS_DIR = original_dir
-
-    def test_prompt_includes_live_portfolio_hint_for_live_agent(self) -> None:
-        import apps.api.src.services.chat_responder as cr
-
-        ctx = {"agent": {"name": "Arty", "character": "aggressive"}}
-        prompt = cr._build_prompt(ctx, "show me positions", has_live_portfolio=True, has_mcp_tools=False)
-        assert "LIVE Portfolio" in prompt
-
-    def test_prompt_does_not_include_live_portfolio_section_for_paper_agent(self) -> None:
-        import apps.api.src.services.chat_responder as cr
-
-        ctx = {"agent": {"name": "Arty", "character": "conservative"}}
-        prompt = cr._build_prompt(ctx, "show me positions", has_live_portfolio=False, has_mcp_tools=False)
-        assert "LIVE Portfolio" not in prompt
+    def _make_gateway(self):
+        from apps.api.src.services.agent_gateway import AgentGateway
+        return AgentGateway()
 
     def test_prompt_includes_mcp_section_when_mcp_enabled(self) -> None:
-        import apps.api.src.services.chat_responder as cr
-
-        ctx = {"agent": {"name": "Arty", "character": "aggressive"}}
-        prompt = cr._build_prompt(ctx, "show me positions", has_live_portfolio=True, has_mcp_tools=True)
+        gw = self._make_gateway()
+        ctx = {"agent": {"name": "Arty", "character": "aggressive"}, "chat": [], "trades": []}
+        prompt = gw._build_chat_prompt(ctx, "show me positions", has_mcp=True)
         assert "robinhood_login" in prompt.lower() or "MCP" in prompt
+        assert "Do NOT say you lack access" in prompt
 
+    def test_prompt_excludes_mcp_section_when_no_mcp(self) -> None:
+        gw = self._make_gateway()
+        ctx = {"agent": {"name": "Arty", "character": "conservative"}, "chat": [], "trades": []}
+        prompt = gw._build_chat_prompt(ctx, "how am I doing?", has_mcp=False)
+        assert "robinhood_login" not in prompt.lower()
 
-# ---------------------------------------------------------------------------
-# Security: workdir cleanup after respond_to_chat
-# ---------------------------------------------------------------------------
-
-
-class TestWorkdirCleanup:
-    """Verify that the per-message workdir is always removed when respond_to_chat exits."""
-
-    async def test_workdir_cleaned_up_after_session(self, tmp_path: Path) -> None:
-        """work_dir must not exist on disk after respond_to_chat() completes."""
-        import apps.api.src.services.chat_responder as cr
-
-        # Capture the work_dir path created during the call
-        captured_work_dirs: list[Path] = []
-        original_prepare = cr._prepare_workdir
-
-        def _spy_prepare(*args, **kwargs) -> Path:
-            wd = original_prepare(*args, **kwargs)
-            captured_work_dirs.append(wd)
-            return wd
-
-        agent_id = uuid.uuid4()
-
-        # Minimal agent context returned by _load_context
-        valid_ctx = {
-            "agent": {
-                "id": str(agent_id),
-                "name": "TestAgent",
-                "type": "PAPER",
-                "status": "PAPER",
-                "character": "test",
-                "rules": {},
-                "win_rate": None,
-                "total_trades": 0,
-                "daily_pnl": None,
-                "total_pnl": None,
-            },
+    def test_prompt_includes_trades_summary(self) -> None:
+        gw = self._make_gateway()
+        ctx = {
+            "agent": {"name": "Arty", "character": "aggressive"},
             "chat": [],
-            "trades": [],
-            "_rh_creds": {},
+            "trades": [{"symbol": "AAPL", "side": "buy", "pnl": 150.0}],
         }
+        prompt = gw._build_chat_prompt(ctx, "any recent wins?", has_mcp=False)
+        assert "AAPL" in prompt
 
-        with (
-            patch.object(cr, "CHAT_SESSIONS_DIR", tmp_path),
-            patch.object(cr, "_prepare_workdir", side_effect=_spy_prepare),
-            # Bypass DB entirely — return a known-good ctx
-            patch.object(cr, "_load_context", AsyncMock(return_value=valid_ctx)),
-            patch("apps.api.src.services.chat_responder.ENABLE_SMART_CONTEXT", False),
-            # Prevent _write_fallback_reply from touching the DB
-            patch.object(cr, "_write_fallback_reply", AsyncMock()),
-            # Make claude_agent_sdk unavailable — triggers ImportError path inside
-            # the try block, which must still fire the finally cleanup
-            patch.dict("sys.modules", {"claude_agent_sdk": None}),
-        ):
-            await cr.respond_to_chat(agent_id, "hello")
+    def test_prompt_includes_chat_history(self) -> None:
+        gw = self._make_gateway()
+        ctx = {
+            "agent": {"name": "Arty", "character": "aggressive"},
+            "chat": [
+                {"role": "user", "content": "Hello"},
+                {"role": "agent", "content": "Hey trader!"},
+            ],
+            "trades": [],
+        }
+        prompt = gw._build_chat_prompt(ctx, "what did I ask before?", has_mcp=False)
+        assert "Hello" in prompt
+        assert "Hey trader!" in prompt
 
-        # A workdir must have been created
-        assert captured_work_dirs, "expected _prepare_workdir to be called"
-        for wd in captured_work_dirs:
-            assert not wd.exists(), f"workdir {wd} was not cleaned up"
+    def test_prompt_includes_user_message(self) -> None:
+        gw = self._make_gateway()
+        ctx = {"agent": {"name": "Arty", "character": "aggressive"}, "chat": [], "trades": []}
+        prompt = gw._build_chat_prompt(ctx, "What is my buying power?", has_mcp=True)
+        assert "What is my buying power?" in prompt
 
 
 # ---------------------------------------------------------------------------

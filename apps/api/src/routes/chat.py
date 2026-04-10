@@ -64,7 +64,7 @@ async def send_message(
     body: dict,
     session: AsyncSession = Depends(get_session),
 ):
-    """Append a user message and forward it to the agent's running Claude session via send_task."""
+    """Append a user message and route it through the Chat Gateway."""
     msg = body.get("message", "")
     if not msg:
         return {"ok": False, "detail": "message required"}
@@ -77,41 +77,25 @@ async def send_message(
     session.add(row)
     await session.flush()
 
-    # Forward to running agent: trigger-bus (P9) + legacy send_task
-    forwarded = None
+    # Route through Chat Gateway — SDK session with full MCP tool access
     if agent_id != _TRADE_CHAT_AGENT_ID:
         try:
-            from apps.api.src.services.agent_gateway import gateway
-            forwarded = await gateway.send_task(agent_id, msg)
+            from apps.api.src.services.agent_gateway import gateway  # noqa: PLC0415
+            asyncio.ensure_future(gateway.chat_with_agent(agent_id, msg))
         except Exception as exc:
-            forwarded = {"status": "error", "error": str(exc)[:200]}
-        # Publish wake trigger — reaches the agent even if send_task failed
-        try:
-            from shared.triggers import get_bus, Trigger, TriggerType
-            await get_bus().publish(Trigger(
-                agent_id=str(agent_id),
-                type=TriggerType.CHAT_MESSAGE,
-                payload={"message": msg, "message_id": str(row.id)},
-            ))
-        except Exception:
-            pass
-        # Fire-and-forget: one-shot responder writes back an agent reply
-        try:
-            from apps.api.src.services.chat_responder import schedule_reply
-            schedule_reply(agent_id, msg)
-        except Exception as exc:
-            logger.exception("[chat/send] schedule_reply failed for agent %s: %s", agent_id, exc)
+            logger.exception("[chat/send] chat_with_agent launch failed for %s: %s", agent_id, exc)
             try:
-                from apps.api.src.services.chat_responder import _write_fallback_reply
-                asyncio.ensure_future(_write_fallback_reply(
+                from apps.api.src.services.agent_gateway import AgentGateway  # noqa: PLC0415
+                gw = AgentGateway()
+                asyncio.ensure_future(gw._write_chat_reply(
                     agent_id,
-                    f"(Chat responder failed to start: {str(exc)[:150]})",
+                    f"(Chat gateway failed to start: {str(exc)[:150]})",
                 ))
             except Exception:
                 logger.error("[chat/send] fallback reply also failed for agent %s", agent_id)
 
     await session.commit()
-    return {"ok": True, "id": str(row.id), "forwarded": forwarded}
+    return {"ok": True, "id": str(row.id)}
 
 
 @router.post("/agent-reply")
