@@ -1,7 +1,6 @@
 """Agent Gateway — central hub for managing Claude Code agent lifecycle.
 
-Replaces both agent_manager.py (live agents) and claude_backtester.py (backtest agents)
-with a unified gateway that:
+Unified gateway that:
   - Tracks all active Claude Code sessions in the DB (agent_sessions table)
   - Creates backtesting and analyst agent sessions from templates
   - Manages lifecycle: start, stop, pause, resume, health-check
@@ -2208,20 +2207,6 @@ class AgentGateway:
             sess.stopped_at = datetime.now(timezone.utc)
         sess.last_heartbeat = datetime.now(timezone.utc)
         await db.commit()
-
-    async def _fallback_subprocess(
-        self, agent_id: uuid.UUID, backtest_id: uuid.UUID, config: dict
-    ) -> None:
-        """Run the pipeline using the subprocess-based task_runner."""
-        try:
-            from apps.api.src.services.task_runner import _run_pipeline
-            await _run_pipeline(agent_id, backtest_id, config)
-        except Exception as exc:
-            logger.exception("Subprocess fallback also failed for agent %s", agent_id)
-            async for db in _get_session():
-                await _mark_backtest_failed(db, agent_id, backtest_id, "subprocess", str(exc)[:500])
-        finally:
-            _running_tasks.pop(str(agent_id), None)
 
 
 # Module-level singleton

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import Date, DateTime, Float, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.db.models.base import Base
@@ -37,4 +37,5 @@ class AgentTrade(Base):
     broker_order_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     decision_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", index=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decision_trail: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

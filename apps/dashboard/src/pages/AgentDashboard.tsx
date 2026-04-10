@@ -24,9 +24,10 @@ import { AreaChart } from '@/components/tremor/AreaChart'
 import {
   ArrowLeft, Bot, Pause, Play, Send, MessageSquare, User,
   Shield, TrendingUp, List, ScrollText, BookOpen,
-  ChevronDown, ChevronUp, Check, X,
+  ChevronDown, ChevronUp, Check, X, Eye,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
+  CircleDot, AlertTriangle, CheckCircle2, XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -65,6 +66,25 @@ interface Trade {
   pnl_dollar?: number; pnl_pct?: number; status: string
   model_confidence?: number; pattern_matches?: number
   reasoning?: string; signal_raw?: string
+  broker_order_id?: string; decision_status?: string
+  rejection_reason?: string; decision_trail?: DecisionTrail
+  created_at?: string
+}
+
+interface DecisionTrailStep {
+  step: string; status: string
+  features_count?: number; prediction?: string
+  confidence?: number; approved?: boolean
+  verdict?: string; error?: string
+}
+
+interface DecisionTrail {
+  steps?: DecisionTrailStep[]
+  reasoning?: string[]
+  risk_check?: { approved?: boolean; rejection_reason?: string; [k: string]: unknown }
+  ta_summary?: { verdict?: string; confidence?: number; bullish_signals?: number; bearish_signals?: number; [k: string]: unknown }
+  model_prediction?: { prediction?: string; confidence?: number; pattern_matches?: number }
+  execution_params?: Record<string, unknown>
 }
 
 interface ChatMsg {
@@ -274,8 +294,72 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
 /* ================================================================
    TRADES TAB
    ================================================================ */
+function TradeTimeline({ trail }: { trail: DecisionTrail }) {
+  if (!trail?.steps?.length) return <p className="text-xs text-muted-foreground">No decision trail available.</p>
+
+  const stepIcon = (s: DecisionTrailStep) => {
+    if (s.status === 'ok' || s.status === 'passed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+    if (s.status === 'failed' || s.status === 'rejected') return <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+    if (s.status === 'skipped') return <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+    return <CircleDot className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+  }
+
+  const stepLabel = (s: DecisionTrailStep) => {
+    const name = s.step.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    const details: string[] = []
+    if (s.features_count) details.push(`${s.features_count} features`)
+    if (s.prediction) details.push(s.prediction)
+    if (s.confidence != null) details.push(`conf=${(s.confidence * 100).toFixed(0)}%`)
+    if (s.approved != null) details.push(s.approved ? 'PASS' : 'FAIL')
+    if (s.verdict) details.push(s.verdict)
+    if (s.error) details.push(`error: ${s.error.slice(0, 80)}`)
+    return { name, details: details.join(', ') }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="relative pl-5">
+        <div className="absolute left-[6.5px] top-1 bottom-1 w-px bg-border" />
+        {trail.steps.map((s, i) => {
+          const { name, details } = stepLabel(s)
+          return (
+            <div key={i} className="relative flex items-start gap-2.5 pb-2.5">
+              <div className="relative z-10 bg-background">{stepIcon(s)}</div>
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-semibold">{name}</span>
+                {details && <span className="text-[10px] text-muted-foreground ml-1.5">({details})</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {trail.reasoning && trail.reasoning.length > 0 && (
+        <div className="bg-muted/50 rounded p-2">
+          <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">Reasoning Chain</p>
+          <ul className="space-y-0.5">
+            {trail.reasoning.map((r, i) => (
+              <li key={i} className="text-xs text-foreground/80">{i + 1}. {r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {trail.execution_params && (
+        <div className="bg-muted/50 rounded p-2">
+          <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">Execution Params</p>
+          <div className="grid grid-cols-3 gap-1 text-[10px] font-mono">
+            {Object.entries(trail.execution_params).filter(([, v]) => v != null).slice(0, 12).map(([k, v]) => (
+              <span key={k}><span className="text-muted-foreground">{k}:</span> {typeof v === 'number' ? (v as number).toFixed(4) : String(v)}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TradesTab({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [timelineOpen, setTimelineOpen] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const { data: trades = [] } = useQuery<Trade[]>({
     queryKey: ['trades', id],
@@ -309,6 +393,12 @@ function TradesTab({ id }: { id: string }) {
     { key: 'rejected', label: 'Rejected', count: trades.filter(t => t.status === 'rejected' || t.status === 'skipped').length },
     { key: 'watchlisted', label: 'Watchlisted', count: trades.filter(t => t.status === 'watchlisted' || t.status === 'watching').length },
   ]
+
+  const reasoningSummary = (t: Trade) => {
+    if (t.decision_trail?.reasoning?.length) return t.decision_trail.reasoning[t.decision_trail.reasoning.length - 1]
+    if (t.reasoning) return t.reasoning.length > 80 ? t.reasoning.slice(0, 80) + '...' : t.reasoning
+    return null
+  }
 
   return (
     <div className="space-y-4">
@@ -367,25 +457,62 @@ function TradesTab({ id }: { id: string }) {
             <div className="space-y-1">
               {filtered.map(t => (
                 <div key={t.id}>
-                  <div className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => setExpanded(expanded === t.id ? null : t.id)}>
-                    <div className="w-16 text-xs text-muted-foreground">{t.entry_time ? new Date(t.entry_time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}</div>
-                    <span className="font-mono font-semibold text-sm w-24 truncate">{t.ticker}</span>
-                    <Badge variant={t.side === 'buy' ? 'default' : 'destructive'} className="text-[10px] uppercase w-12 justify-center">{t.side}</Badge>
-                    <span className="font-mono text-xs w-16 text-right">${t.entry_price?.toFixed(2) ?? '—'}</span>
-                    <span className="font-mono text-xs w-16 text-right">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : '—'}</span>
-                    <span className={cn('font-mono text-xs font-medium w-20 text-right', (t.pnl_dollar ?? 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                  <div className="flex items-center gap-2 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => setExpanded(expanded === t.id ? null : t.id)}>
+                    <div className="w-14 text-xs text-muted-foreground">{t.entry_time ? new Date(t.entry_time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}</div>
+                    <span className="font-mono font-semibold text-sm w-20 truncate">{t.ticker}</span>
+                    <Badge variant={t.side === 'buy' ? 'default' : 'destructive'} className="text-[10px] uppercase w-10 justify-center">{t.side}</Badge>
+                    <span className="font-mono text-xs w-14 text-right">${t.entry_price?.toFixed(2) ?? '—'}</span>
+                    <span className="font-mono text-xs w-14 text-right">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : '—'}</span>
+                    <span className={cn('font-mono text-xs font-medium w-16 text-right', (t.pnl_dollar ?? 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
                       {t.pnl_dollar != null ? `${t.pnl_dollar >= 0 ? '+' : ''}$${t.pnl_dollar.toFixed(2)}` : '—'}
                     </span>
-                    <span className="text-xs w-12 text-right">{t.model_confidence != null ? `${(t.model_confidence * 100).toFixed(0)}%` : '—'}</span>
+                    <span className="text-xs w-10 text-right">{t.model_confidence != null ? `${(t.model_confidence * 100).toFixed(0)}%` : '—'}</span>
+                    <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={t.reasoning ?? ''}>
+                      {reasoningSummary(t) ?? '—'}
+                    </span>
                     <StatusBadge status={t.status} />
-                    {expanded === t.id ? <ChevronUp className="h-3.5 w-3.5 ml-auto" /> : <ChevronDown className="h-3.5 w-3.5 ml-auto" />}
+                    <button
+                      className="p-1 rounded hover:bg-primary/10 transition-colors"
+                      title="View decision trail"
+                      onClick={e => { e.stopPropagation(); setTimelineOpen(timelineOpen === t.id ? null : t.id) }}
+                    >
+                      <Eye className="h-3.5 w-3.5 text-primary/60 hover:text-primary" />
+                    </button>
+                    {expanded === t.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                   </div>
+
+                  {timelineOpen === t.id && (
+                    <div className="ml-4 mr-4 mb-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Eye className="h-4 w-4 text-primary" />
+                        <span className="font-semibold text-primary">Decision Trail</span>
+                        <span className="text-muted-foreground ml-auto">{t.entry_time ? new Date(t.entry_time).toLocaleString() : ''}</span>
+                      </div>
+                      {t.decision_trail ? (
+                        <TradeTimeline trail={t.decision_trail} />
+                      ) : (
+                        <p className="text-muted-foreground text-xs">No decision trail recorded for this trade.</p>
+                      )}
+                    </div>
+                  )}
+
                   {expanded === t.id && (
                     <div className="ml-4 mb-3 p-3 rounded-lg bg-muted/30 border text-xs space-y-2">
                       {t.signal_raw && <div><span className="font-semibold">Signal:</span> <span className="font-mono">{t.signal_raw}</span></div>}
                       {t.reasoning && <div><span className="font-semibold">Reasoning:</span> {t.reasoning}</div>}
                       {t.pattern_matches != null && <div><span className="font-semibold">Pattern Matches:</span> {t.pattern_matches}</div>}
                       {t.option_type && <div><span className="font-semibold">Option:</span> {t.option_type} {t.strike && `$${t.strike}`}</div>}
+                      {t.broker_order_id && <div><span className="font-semibold">Order ID:</span> <span className="font-mono">{t.broker_order_id}</span></div>}
+                      {t.decision_status && t.decision_status !== 'accepted' && (
+                        <div><span className="font-semibold">Decision:</span> <Badge variant="destructive" className="text-[10px]">{t.decision_status}</Badge>
+                          {t.rejection_reason && <span className="ml-1">{t.rejection_reason}</span>}
+                        </div>
+                      )}
+                      <div className="flex gap-4 text-muted-foreground">
+                        <span>Qty: {t.quantity}</span>
+                        {t.pnl_pct != null && <span>P&L: {(t.pnl_pct * 100).toFixed(2)}%</span>}
+                        {t.created_at && <span>Created: {new Date(t.created_at).toLocaleString()}</span>}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -246,32 +246,44 @@ def _ensure_login() -> None:
     log.info("Logged in to Robinhood as %s", username)
 
 
-def _poll_order_status(order_id: str) -> dict:
+def _poll_order_status(order_id: str, is_option: bool = False) -> dict:
     """Poll an order until filled, cancelled, or timeout."""
     if PAPER_MODE:
         order = _paper_orders.get(order_id, {})
         return {"order_id": order_id, "state": order.get("state", "unknown"), "fill_price": order.get("fill_price")}
 
     rh = _get_rh()
+    TERMINAL_STATES = ("filled", "cancelled", "failed", "rejected")
     deadline = time.monotonic() + ORDER_POLL_TIMEOUT
+
+    def _get_info():
+        if is_option:
+            try:
+                return _retry(rh.orders.get_option_order_info, order_id)
+            except Exception:
+                return _retry(rh.orders.get_stock_order_info, order_id)
+        return _retry(rh.orders.get_stock_order_info, order_id)
+
     while time.monotonic() < deadline:
-        info = _retry(rh.orders.get_stock_order_info, order_id)
+        info = _get_info()
         state = info.get("state", "unknown")
-        if state in ("filled", "cancelled", "failed", "rejected"):
+        if state in TERMINAL_STATES:
             return {
                 "order_id": order_id,
                 "state": state,
-                "fill_price": info.get("average_price"),
-                "filled_quantity": info.get("cumulative_quantity"),
+                "fill_price": info.get("average_price") or info.get("price"),
+                "filled_quantity": info.get("cumulative_quantity") or info.get("processed_quantity"),
             }
         time.sleep(ORDER_POLL_INTERVAL)
 
-    info = _retry(rh.orders.get_stock_order_info, order_id)
+    info = _get_info()
+    final_state = info.get("state", "unknown")
     return {
         "order_id": order_id,
-        "state": info.get("state", "unknown"),
-        "fill_price": info.get("average_price"),
-        "filled_quantity": info.get("cumulative_quantity"),
+        "state": "timed_out",
+        "broker_state": final_state,
+        "fill_price": info.get("average_price") or info.get("price"),
+        "filled_quantity": info.get("cumulative_quantity") or info.get("processed_quantity"),
         "timed_out": True,
     }
 
@@ -394,7 +406,7 @@ def _tool_place_option_order(args: dict) -> dict:
         pos_effect, ticker, quantity, price, expiry, strike, option_type,
     )
     oid = order.get("id", "")
-    result = _poll_order_status(oid) if oid else {"order_id": oid, "state": order.get("state", "unknown")}
+    result = _poll_order_status(oid, is_option=True) if oid else {"order_id": oid, "state": order.get("state", "unknown")}
     return result
 
 
@@ -1060,6 +1072,40 @@ TOOL_DEFINITIONS: list[dict] = [
             "properties": {
                 "watchlist_name": {"type": "string", "description": "Watchlist name (default: 'Phoenix Paper')"},
             },
+            "required": [],
+        },
+    },
+    {
+        "name": "smart_limit_order",
+        "description": "Place a limit order pegged to the current NBBO midpoint with buffer. Pre-checks buying power. Preferred over place_stock_order for most trades.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                "quantity": {"type": "number", "description": "Number of shares"},
+                "side": {"type": "string", "enum": ["buy", "sell"], "description": "Order side (default: buy)"},
+                "buffer_bps": {"type": "number", "description": "Price buffer in basis points (default: 5.0)"},
+            },
+            "required": ["ticker", "quantity"],
+        },
+    },
+    {
+        "name": "get_nbbo",
+        "description": "Get the National Best Bid and Offer (NBBO) for a stock: bid, ask, mid, spread. Cached 500ms.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_account_snapshot",
+        "description": "Get account snapshot (portfolio value, buying power, cash). Cached 500ms for rapid pre-trade checks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
             "required": [],
         },
     },

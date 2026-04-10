@@ -81,3 +81,6 @@ data/*
 !data/parser_test_cases.json
 *.tsbuildinfo
 .playwright-mcp/
+
+# Runtime artifacts
+execution_result.json

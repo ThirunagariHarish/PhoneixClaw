@@ -9,7 +9,7 @@ import App from '../../src/App'
 describe('App', () => {
   it('renders without crashing', () => {
     render(<App />)
-    // Unauthenticated: login page heading
-    expect(screen.getByRole('heading', { name: 'Phoenix v2' })).toBeInTheDocument()
+    // Unauthenticated: login page (branding text evolved from "Phoenix v2")
+    expect(screen.getByRole('heading', { name: /Phoenix Claw/i })).toBeInTheDocument()
   })
 })

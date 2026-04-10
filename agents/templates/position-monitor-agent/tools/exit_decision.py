@@ -76,10 +76,21 @@ def make_exit_decision(position: dict, config: dict) -> dict:
     mag7 = _run_tool("mag7_correlation.py", ["--side", side, "--output", "/tmp/mag7.json"])
     mag7_urgency = mag7.get("exit_urgency", 0)
 
-    # Run Discord sell signal check
-    discord = _run_tool("discord_sell_signal.py",
-                        ["--ticker", ticker, "--since-minutes", "30", "--output", "/tmp/sell.json"])
-    discord_urgency = discord.get("exit_urgency", 0)
+    # Check local sell_signal.json (fast, written by primary agent's sell-routing)
+    discord_urgency = 0
+    discord = {}
+    sell_signal_path = Path(f"positions/{ticker}/sell_signal.json")
+    if sell_signal_path.exists():
+        try:
+            sell_data = json.loads(sell_signal_path.read_text())
+            discord = {"alert": f"Analyst sell signal: {sell_data.get('content', '')[:100]}"}
+            discord_urgency = 40
+        except Exception:
+            pass
+    if discord_urgency == 0:
+        discord = _run_tool("discord_sell_signal.py",
+                            ["--ticker", ticker, "--since-minutes", "30", "--output", "/tmp/sell.json"])
+        discord_urgency = discord.get("exit_urgency", 0)
 
     # Risk-level urgency
     risk_urgency = 0

@@ -15,6 +15,29 @@ const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 const STORAGE_KEY = 'phoenix-v2-theme'
 
+function readStoredTheme(defaultTheme: Theme): Theme {
+  if (typeof window === 'undefined') return defaultTheme
+  try {
+    const ls = window.localStorage
+    if (ls && typeof ls.getItem === 'function') {
+      const raw = ls.getItem(STORAGE_KEY)
+      if (raw === 'dark' || raw === 'light' || raw === 'system') return raw
+    }
+  } catch {
+    /* private mode / test env */
+  }
+  return defaultTheme
+}
+
+function persistTheme(t: Theme): void {
+  try {
+    const ls = window.localStorage
+    if (ls && typeof ls.setItem === 'function') ls.setItem(STORAGE_KEY, t)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = 'dark',
@@ -22,9 +45,7 @@ export function ThemeProvider({
   children: ReactNode
   defaultTheme?: Theme
 }) {
-  const [theme, setTheme] = useState<Theme>(
-    () => (typeof window !== 'undefined' ? (localStorage.getItem(STORAGE_KEY) as Theme) || defaultTheme : defaultTheme)
-  )
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme(defaultTheme))
 
   useEffect(() => {
     const root = document.documentElement
@@ -40,7 +61,7 @@ export function ThemeProvider({
   const value: ThemeContextValue = {
     theme,
     setTheme: (t) => {
-      localStorage.setItem(STORAGE_KEY, t)
+      persistTheme(t)
       setTheme(t)
     },
   }

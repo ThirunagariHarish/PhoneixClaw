@@ -1,6 +1,6 @@
 """End-to-end integration test for the live trading pipeline.
 
-Simulates: Discord message → Redis stream → consumer → decision engine → execute_trade → trade recorded
+Simulates: Discord message -> Redis stream -> live_pipeline -> decision engine -> execute_trade -> trade recorded
 
 Runs entirely in paper mode with mocked Redis / Phoenix API.
 
@@ -36,6 +36,7 @@ def work_dir(tmp_path):
         "phoenix_api_url": "http://localhost:8011",
         "phoenix_api_key": "test-key",
         "paper_mode": True,
+        "_config_path": str(tmp_path / "config.json"),
         "current_mode": "conservative",
         "risk_params": {
             "max_position_size_pct": 5.0,
@@ -66,11 +67,59 @@ def _make_signal_message(ticker: str = "AAPL", price: float = 175.50, direction:
     }
 
 
-class TestSignalIngestion:
-    """Test 1: Verify signals are correctly written to pending_signals.json."""
+def _make_decision_engine_output(ticker="AAPL", direction="buy", price=175.50):
+    """Create a decision that matches real decision_engine.py output format (with direction, entry_price, parsed_signal)."""
+    return {
+        "decision": "EXECUTE",
+        "reason": None,
+        "timestamp": "2025-01-15T14:30:07+00:00",
+        "reasoning": [
+            "Enriched with 187 market features",
+            "Model: TRADE (confidence=0.720, patterns=3)",
+            "Risk check passed",
+            "TA: bullish (conf=0.62)",
+            f"APPROVED: {direction.upper()} {ticker}",
+        ],
+        "steps": [
+            {"step": "parse_signal", "status": "ok"},
+            {"step": "enrich", "status": "ok", "features_count": 187},
+            {"step": "inference", "status": "ok", "prediction": "TRADE", "confidence": 0.72},
+            {"step": "risk_check", "status": "ok", "approved": True},
+            {"step": "ta_confirmation", "status": "ok", "verdict": "bullish"},
+        ],
+        "parsed_signal": {
+            "ticker": ticker,
+            "direction": direction,
+            "signal_price": price,
+            "option_type": None,
+            "strike": None,
+            "expiry": None,
+        },
+        "model_prediction": {
+            "prediction": "TRADE",
+            "confidence": 0.72,
+            "pattern_matches": 3,
+        },
+        "risk_check": {"approved": True, "rejection_reason": None},
+        "ta_summary": {"verdict": "bullish", "confidence": 0.62},
+        "execution": {
+            "ticker": ticker,
+            "direction": direction,
+            "entry_price": round(price * 1.001, 2),
+            "signal_price": price,
+            "stop_loss": round(price * 0.97, 2),
+            "take_profit": round(price * 1.05, 2),
+            "position_size_pct": 3.5,
+            "option_type": None,
+            "strike": None,
+            "expiry": None,
+        },
+        "signal_raw": f"${ticker} {direction} at ${price:.2f} target $180 stop $172",
+    }
 
+
+class TestSignalIngestion:
     def test_signal_written_to_pending(self, work_dir):
-        """Simulate writing a signal from the consumer to pending_signals.json."""
         signal = _make_signal_message()
         pending_path = work_dir / "pending_signals.json"
         pending_path.write_text(json.dumps([signal], indent=2))
@@ -81,81 +130,11 @@ class TestSignalIngestion:
         assert "AAPL" in loaded[0]["content"]
 
 
-class TestDecisionEngine:
-    """Test 2: Verify decision engine can process a signal and produce a decision."""
+class TestSchemaMapping:
+    """Verify execute_trade correctly handles decision_engine.py's output format (direction not side, entry_price not price)."""
 
-    def test_decision_produced(self, work_dir):
-        """Run a minimal decision flow and check that decision.json is produced."""
-        signal = _make_signal_message()
-        pending_path = work_dir / "pending_signals.json"
-        pending_path.write_text(json.dumps([signal], indent=2))
-
-        decision = {
-            "decision": "EXECUTE",
-            "confidence": 0.72,
-            "signal": {
-                "ticker": "AAPL",
-                "direction": "buy",
-                "content": signal["content"],
-                "trade_type": "stock",
-            },
-            "execution": {
-                "ticker": "AAPL",
-                "side": "buy",
-                "quantity": 10,
-                "price": 175.50,
-                "trade_type": "stock",
-            },
-            "reasoning": "Strong buy signal with TA confirmation",
-            "patterns": ["momentum_breakout"],
-        }
-        decision_path = work_dir / "decision.json"
-        decision_path.write_text(json.dumps(decision, indent=2))
-
-        loaded = json.loads(decision_path.read_text())
-        assert loaded["decision"] == "EXECUTE"
-        assert loaded["execution"]["ticker"] == "AAPL"
-        assert loaded["confidence"] >= 0.55
-
-
-class TestExecuteTrade:
-    """Test 3: Verify execute_trade.py handles paper mode correctly."""
-
-    def test_paper_execute_skips_on_reject(self, work_dir):
-        """A REJECT decision should be skipped."""
-        decision = {
-            "decision": "REJECT",
-            "confidence": 0.3,
-            "signal": {"ticker": "AAPL"},
-            "reasoning": "Low confidence",
-        }
-        decision_path = work_dir / "decision.json"
-        decision_path.write_text(json.dumps(decision, indent=2))
-
-        result = execute(str(decision_path), str(work_dir / "config.json"))
-        assert result["status"] == "skipped"
-
-    def test_paper_execute_runs(self, work_dir):
-        """An EXECUTE decision in paper mode should go through MCP."""
-        decision = {
-            "decision": "EXECUTE",
-            "confidence": 0.72,
-            "signal": {
-                "ticker": "AAPL",
-                "direction": "buy",
-                "content": "Buy AAPL at $175.50",
-                "trade_type": "stock",
-            },
-            "execution": {
-                "ticker": "AAPL",
-                "side": "buy",
-                "quantity": 5,
-                "price": 175.50,
-                "trade_type": "stock",
-            },
-            "reasoning": "Good signal",
-            "patterns": ["test_pattern"],
-        }
+    def test_direction_mapped_to_side(self, work_dir):
+        decision = _make_decision_engine_output()
         decision_path = work_dir / "decision.json"
         decision_path.write_text(json.dumps(decision, indent=2))
 
@@ -163,56 +142,135 @@ class TestExecuteTrade:
         mock_mcp.call.side_effect = [
             {"status": "logged_in", "paper_mode": True},
             {"portfolio_value": 25000, "buying_power": 10000, "paper_mode": True},
-            {
-                "order_id": "paper-001",
-                "state": "filled",
-                "fill_price": 175.48,
-                "paper_mode": True,
-            },
+            {"order_id": "paper-001", "state": "filled", "fill_price": 175.67, "paper_mode": True},
         ]
 
         with patch("execute_trade.MCPClient") as MockMCPClass, \
-             patch("execute_trade._report_trade_to_phoenix") as mock_report:
+             patch("execute_trade._report_trade_to_phoenix") as mock_report, \
+             patch("execute_trade._spawn_position_agent", return_value={}) as mock_spawn, \
+             patch("execute_trade._register_position"):
             MockMCPClass.return_value = mock_mcp
             result = execute(str(decision_path), str(work_dir / "config.json"))
 
         assert result["status"] == "executed"
+        assert result["side"] == "buy"
         assert result["ticker"] == "AAPL"
-        assert result["paper_mode"] is True
+        assert result["fill_price"] == 175.67
 
-        mock_report.assert_called_once()
         trade_data = mock_report.call_args[0][1]
-        assert trade_data["ticker"] == "AAPL"
-        assert trade_data["decision_status"] == "accepted"
-        assert trade_data["status"] == "open"
+        assert trade_data["side"] == "buy"
+        assert trade_data["entry_price"] == 175.67
 
-    def test_insufficient_buying_power_rejected(self, work_dir):
-        """Trades exceeding buying power should be rejected."""
-        decision = {
-            "decision": "EXECUTE",
-            "confidence": 0.72,
-            "signal": {
-                "ticker": "AAPL",
-                "direction": "buy",
-                "content": "Buy AAPL at $175.50",
-                "trade_type": "stock",
-            },
-            "execution": {
-                "ticker": "AAPL",
-                "side": "buy",
-                "quantity": 100,
-                "price": 175.50,
-                "trade_type": "stock",
-            },
-            "reasoning": "Good signal",
-        }
+    def test_parsed_signal_fallback(self, work_dir):
+        """When 'signal' key is missing, fallback to 'parsed_signal'."""
+        decision = _make_decision_engine_output()
+        assert "signal" not in decision
+        assert "parsed_signal" in decision
+
         decision_path = work_dir / "decision.json"
         decision_path.write_text(json.dumps(decision, indent=2))
 
         mock_mcp = MagicMock()
         mock_mcp.call.side_effect = [
             {"status": "logged_in"},
-            {"buying_power": 500, "paper_mode": True},  # only $500 available
+            {"buying_power": 50000},
+            {"order_id": "p-002", "state": "filled", "fill_price": 175.50},
+        ]
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix") as mock_report, \
+             patch("execute_trade._spawn_position_agent", return_value={}), \
+             patch("execute_trade._register_position"):
+            MockMCPClass.return_value = mock_mcp
+            result = execute(str(decision_path), str(work_dir / "config.json"))
+
+        assert result["status"] == "executed"
+
+    def test_dict_decision_passthrough(self, work_dir):
+        """execute() accepts a dict directly (for in-process calls from live_pipeline)."""
+        decision = _make_decision_engine_output()
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50000},
+            {"order_id": "p-003", "state": "filled", "fill_price": 175.50},
+        ]
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix"), \
+             patch("execute_trade._spawn_position_agent", return_value={}), \
+             patch("execute_trade._register_position"):
+            MockMCPClass.return_value = mock_mcp
+            result = execute(decision, str(work_dir / "config.json"))
+
+        assert result["status"] == "executed"
+
+
+class TestDecisionTrailPersistence:
+    """Verify decision trail is included in the trade data sent to Phoenix."""
+
+    def test_trail_included_in_report(self, work_dir):
+        decision = _make_decision_engine_output()
+        decision_path = work_dir / "decision.json"
+        decision_path.write_text(json.dumps(decision, indent=2))
+
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50000},
+            {"order_id": "p-004", "state": "filled", "fill_price": 175.50},
+        ]
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix") as mock_report, \
+             patch("execute_trade._spawn_position_agent", return_value={}), \
+             patch("execute_trade._register_position"):
+            MockMCPClass.return_value = mock_mcp
+            execute(str(decision_path), str(work_dir / "config.json"))
+
+        trade_data = mock_report.call_args[0][1]
+        assert "decision_trail" in trade_data
+        trail = trade_data["decision_trail"]
+        assert "steps" in trail
+        assert len(trail["steps"]) == 5
+        assert trail["steps"][0]["step"] == "parse_signal"
+        assert trail["model_prediction"]["confidence"] == 0.72
+        assert "reasoning" in trail
+
+    def test_reasoning_text_is_pipe_joined(self, work_dir):
+        decision = _make_decision_engine_output()
+        decision_path = work_dir / "decision.json"
+        decision_path.write_text(json.dumps(decision, indent=2))
+
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50000},
+            {"order_id": "p-005", "state": "filled", "fill_price": 175.50},
+        ]
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix") as mock_report, \
+             patch("execute_trade._spawn_position_agent", return_value={}), \
+             patch("execute_trade._register_position"):
+            MockMCPClass.return_value = mock_mcp
+            execute(str(decision_path), str(work_dir / "config.json"))
+
+        trade_data = mock_report.call_args[0][1]
+        assert " | " in trade_data["reasoning"]
+        assert "APPROVED" in trade_data["reasoning"]
+
+
+class TestInsufficientBuyingPower:
+    def test_rejected_with_trail(self, work_dir):
+        decision = _make_decision_engine_output()
+        decision_path = work_dir / "decision.json"
+        decision_path.write_text(json.dumps(decision, indent=2))
+
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50, "paper_mode": True},
         ]
 
         with patch("execute_trade.MCPClient") as MockMCPClass, \
@@ -222,16 +280,93 @@ class TestExecuteTrade:
 
         assert result["status"] == "rejected"
         assert result["reason"] == "insufficient_buying_power"
+        trade_data = mock_report.call_args[0][1]
+        assert trade_data["decision_status"] == "rejected"
+        assert "decision_trail" in trade_data
+
+
+class TestTimedOutHandling:
+    def test_timed_out_is_rejected(self, work_dir):
+        decision = _make_decision_engine_output()
+        decision_path = work_dir / "decision.json"
+        decision_path.write_text(json.dumps(decision, indent=2))
+
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50000},
+            {"order_id": "p-006", "state": "timed_out", "timed_out": True},
+        ]
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix") as mock_report:
+            MockMCPClass.return_value = mock_mcp
+            result = execute(str(decision_path), str(work_dir / "config.json"))
+
+        assert result["status"] == "rejected"
         mock_report.assert_called_once()
         trade_data = mock_report.call_args[0][1]
         assert trade_data["decision_status"] == "rejected"
 
 
-class TestTradeRecording:
-    """Test 4: Verify trades are recorded to the correct Phoenix API endpoint."""
+class TestPositionRegistry:
+    def test_position_registered_after_buy(self, work_dir):
+        decision = _make_decision_engine_output()
+        decision_path = work_dir / "decision.json"
+        decision_path.write_text(json.dumps(decision, indent=2))
 
+        mock_mcp = MagicMock()
+        mock_mcp.call.side_effect = [
+            {"status": "logged_in"},
+            {"buying_power": 50000},
+            {"order_id": "p-007", "state": "filled", "fill_price": 175.50},
+        ]
+
+        os.chdir(work_dir)
+
+        with patch("execute_trade.MCPClient") as MockMCPClass, \
+             patch("execute_trade._report_trade_to_phoenix"), \
+             patch("execute_trade._spawn_position_agent", return_value={"session_id": "sub-001", "agent_id": "sub-agent-001"}):
+            MockMCPClass.return_value = mock_mcp
+            result = execute(str(decision_path), str(work_dir / "config.json"))
+
+        assert result["status"] == "executed"
+        registry_path = work_dir / "position_registry.json"
+        assert registry_path.exists()
+        registry = json.loads(registry_path.read_text())
+        assert "AAPL" in registry
+        assert registry["AAPL"]["session_id"] == "sub-001"
+        assert registry["AAPL"]["side"] == "buy"
+
+
+class TestSellSignalRouting:
+    def test_sell_signal_written(self, work_dir):
+        os.chdir(work_dir)
+        registry = {
+            "AAPL": {
+                "side": "buy",
+                "entry_price": 175.50,
+                "quantity": 10,
+                "session_id": "sub-001",
+            }
+        }
+        (work_dir / "position_registry.json").write_text(json.dumps(registry))
+
+        from live_pipeline import _route_sell_signal
+        signal = {"content": "Sold AAPL for profit", "author": "VinodTrader", "timestamp": "2025-01-15T15:00:00Z"}
+        decision = {"decision": "EXECUTE", "reasoning": ["Analyst sold"]}
+        _route_sell_signal("AAPL", signal, decision)
+
+        sell_path = work_dir / "positions" / "AAPL" / "sell_signal.json"
+        assert sell_path.exists()
+        data = json.loads(sell_path.read_text())
+        assert data["ticker"] == "AAPL"
+        assert data["signal_type"] == "sell"
+        assert "Sold AAPL" in data["content"]
+
+
+class TestTradeRecording:
     def test_trade_posted_to_live_trades(self, work_dir):
-        """After execution, trade data should POST to /live-trades (not /trade-signals)."""
         config = json.loads((work_dir / "config.json").read_text())
 
         trade_data = {
@@ -258,44 +393,19 @@ class TestTradeRecording:
 
 
 class TestFullPipeline:
-    """Test 5: End-to-end pipeline test in paper mode."""
+    def test_signal_to_trade_with_audit_trail(self, work_dir):
+        """Full flow: real decision_engine output -> execute -> trade recorded with decision trail."""
+        os.chdir(work_dir)
 
-    def test_signal_to_trade_flow(self, work_dir):
-        """Full flow: signal → pending → decision → execution → recorded."""
-        # Step 1: Write signal
-        signal = _make_signal_message()
-        pending_path = work_dir / "pending_signals.json"
-        pending_path.write_text(json.dumps([signal], indent=2))
-
-        # Step 2: Simulate decision
-        decision = {
-            "decision": "PAPER",
-            "confidence": 0.68,
-            "signal": {
-                "ticker": "AAPL",
-                "direction": "buy",
-                "content": signal["content"],
-                "trade_type": "stock",
-            },
-            "execution": {
-                "ticker": "AAPL",
-                "side": "buy",
-                "quantity": 3,
-                "price": 175.50,
-                "trade_type": "stock",
-            },
-            "reasoning": "Paper mode test",
-            "patterns": [],
-        }
+        decision = _make_decision_engine_output()
         decision_path = work_dir / "decision.json"
         decision_path.write_text(json.dumps(decision, indent=2))
 
-        # Step 3: Execute in paper mode
         mock_mcp = MagicMock()
         mock_mcp.call.side_effect = [
             {"status": "logged_in", "paper_mode": True},
             {"buying_power": 50000, "paper_mode": True},
-            {"order_id": "paper-002", "state": "filled", "fill_price": 175.50, "paper_mode": True},
+            {"order_id": "paper-010", "state": "filled", "fill_price": 175.67, "paper_mode": True},
         ]
 
         recorded_trades = []
@@ -305,19 +415,34 @@ class TestFullPipeline:
 
         with patch("execute_trade.MCPClient") as MockMCPClass, \
              patch("execute_trade._report_trade_to_phoenix", side_effect=capture_trade), \
-             patch("execute_trade._spawn_position_agent"):  # don't spawn in test
+             patch("execute_trade._spawn_position_agent", return_value={"session_id": "sub-010"}):
             MockMCPClass.return_value = mock_mcp
             result = execute(str(decision_path), str(work_dir / "config.json"))
 
-        # Verify full flow
         assert result["status"] == "executed"
         assert result["paper_mode"] is True
-        assert len(recorded_trades) == 1
-        assert recorded_trades[0]["ticker"] == "AAPL"
-        assert recorded_trades[0]["side"] == "buy"
-        assert recorded_trades[0]["decision_status"] == "accepted"
+        assert result["fill_price"] == 175.67
 
-        # Verify execution_result.json was written
+        assert len(recorded_trades) == 1
+        trade = recorded_trades[0]
+        assert trade["ticker"] == "AAPL"
+        assert trade["side"] == "buy"
+        assert trade["decision_status"] == "accepted"
+        assert trade["signal_raw"] != ""
+        assert trade["broker_order_id"] == "paper-010"
+
+        assert "decision_trail" in trade
+        trail = trade["decision_trail"]
+        assert len(trail["steps"]) == 5
+        assert trail["steps"][2]["step"] == "inference"
+        assert trail["steps"][2]["confidence"] == 0.72
+        assert len(trail["reasoning"]) == 5
+        assert trail["model_prediction"]["prediction"] == "TRADE"
+
         exec_result = json.loads((work_dir / "execution_result.json").read_text())
         assert exec_result["ticker"] == "AAPL"
         assert exec_result["paper_mode"] is True
+
+        registry = json.loads((work_dir / "position_registry.json").read_text())
+        assert "AAPL" in registry
+        assert registry["AAPL"]["session_id"] == "sub-010"

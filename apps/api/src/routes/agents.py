@@ -1287,6 +1287,10 @@ class LiveTradeCreate(BaseModel):
     reasoning: str | None = None
     signal_raw: str | None = None
     broker_order_id: str | None = None
+    decision_status: str | None = "accepted"
+    rejection_reason: str | None = None
+    status: str | None = "open"
+    decision_trail: dict | None = None
 
 
 @router.get("/{agent_id}/live-trades")
@@ -1306,7 +1310,12 @@ async def get_live_trades(agent_id: str, session: DbSession, status_filter: str 
             "entry_time": t.entry_time.isoformat() if t.entry_time else None,
             "exit_time": t.exit_time.isoformat() if t.exit_time else None,
             "pnl_dollar": t.pnl_dollar, "pnl_pct": t.pnl_pct, "status": t.status,
-            "model_confidence": t.model_confidence, "pattern_matches": t.pattern_matches, "reasoning": t.reasoning,
+            "model_confidence": t.model_confidence, "pattern_matches": t.pattern_matches,
+            "reasoning": t.reasoning, "signal_raw": t.signal_raw,
+            "broker_order_id": t.broker_order_id,
+            "decision_status": t.decision_status, "rejection_reason": t.rejection_reason,
+            "decision_trail": t.decision_trail if hasattr(t, "decision_trail") else None,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
         }
         for t in trades
     ]
@@ -1318,16 +1327,21 @@ async def report_live_trade(agent_id: str, payload: LiveTradeCreate, session: Db
     from shared.db.models.agent_trade import AgentTrade
     from datetime import date as date_type
 
+    trade_status = payload.status or "open"
     trade = AgentTrade(
         id=uuid.uuid4(), agent_id=uuid.UUID(agent_id),
         ticker=payload.ticker, side=payload.side, option_type=payload.option_type,
         strike=payload.strike,
         expiry=date_type.fromisoformat(payload.expiry) if payload.expiry else None,
         entry_price=payload.entry_price, quantity=payload.quantity,
-        entry_time=datetime.now(timezone.utc), status="open",
+        entry_time=datetime.now(timezone.utc), status=trade_status,
         model_confidence=payload.model_confidence, pattern_matches=payload.pattern_matches,
         reasoning=payload.reasoning, signal_raw=payload.signal_raw, broker_order_id=payload.broker_order_id,
+        decision_status=payload.decision_status or "accepted",
+        rejection_reason=payload.rejection_reason,
     )
+    if hasattr(trade, "decision_trail") and payload.decision_trail:
+        trade.decision_trail = payload.decision_trail
     session.add(trade)
 
     agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
@@ -1571,7 +1585,7 @@ async def update_agent_manifest(agent_id: str, payload: dict[str, Any], session:
     return {"agent_id": agent_id, "manifest": agent.manifest, "rules_version": agent.rules_version}
 
 
-# -- Backtest Progress Callback (used by both local task_runner and Claude Code Cloud) --
+# -- Backtest Progress Callback (used by Claude Code agents) --
 
 
 class BacktestProgressPayload(BaseModel):
@@ -1585,7 +1599,7 @@ class BacktestProgressPayload(BaseModel):
 
 @router.post("/{agent_id}/backtest-progress", status_code=201)
 async def report_backtest_progress(agent_id: str, payload: BacktestProgressPayload, session: DbSession):
-    """Callback endpoint for backtesting progress — from local task_runner or Claude Code Cloud."""
+    """Callback endpoint for backtesting progress from Claude Code agents."""
     from shared.db.models.system_log import SystemLog
 
     bt_result = await session.execute(

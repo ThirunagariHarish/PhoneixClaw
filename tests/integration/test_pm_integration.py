@@ -109,16 +109,15 @@ async def test_ingest_then_embed_then_score() -> None:
 
     # --- Stage 1: ingest ---
     mock_venue = MagicMock()
-    mock_venue.fetch_historical = AsyncMock(
+    mock_venue.fetch_markets = AsyncMock(
         return_value=[
             {
-                "id": "rh-hist-001",
+                "market_id": "rh-hist-001",
                 "question": "Test historical market?",
                 "category": "finance",
-                "winning_outcome": "yes",
-                "resolution_date": "2024-12-31",
-                "total_volume": 50_000.0,
-                "closed_at": "2024-12-31T00:00:00Z",
+                "venue": "robinhood_predictions",
+                "yes_price": 0.5,
+                "no_price": 0.5,
             }
         ]
     )
@@ -132,7 +131,7 @@ async def test_ingest_then_embed_then_score() -> None:
     db_session.flush = AsyncMock()
     db_session.commit = AsyncMock()
 
-    pipeline = HistoricalIngestPipeline(venue=mock_venue, db_session=db_session)
+    pipeline = HistoricalIngestPipeline(db_session=db_session, venue_name="robinhood_predictions")
 
     with patch("agents.polymarket.data.historical_ingest.get_venue", return_value=mock_venue):
         result = await pipeline.run()

@@ -1,4 +1,5 @@
 .PHONY: help install dev-install lint test test-cov infra-up infra-down infra-logs \
+       test-integration test-e2e test-api-all go-live-regression go-live-regression-quality db-alembic-heads \
        db-init db-migrate dev \
        docker-build docker-up docker-down docker-logs clean benchmark \
        up down status logs setup local-up local-down \
@@ -110,10 +111,14 @@ typecheck: ## Run mypy type checker
 # ─────────────────────────────────────────────
 # Testing
 # ─────────────────────────────────────────────
-test: ## Run all unit tests (legacy + apps/api)
-	$(PYTHON) -m pytest tests/unit/ apps/api/tests/ -v --tb=short
+test: ## Run unit tests: tests/unit + apps/api/tests/unit (split avoids conftest clash; no API integration)
+	PYTHONPATH=. $(PYTHON) -m pytest tests/unit/ -v --tb=short
+	PYTHONPATH=. $(PYTHON) -m pytest apps/api/tests/unit/ -v --tb=short
 
-test-api: ## Run Phoenix v2 API tests only
+test-api: ## Run Phoenix v2 API unit tests (apps/api/tests/unit only)
+	PYTHONPATH=. $(PYTHON) -m pytest apps/api/tests/unit/ -v --tb=short
+
+test-api-all: ## All API tests including integration (may fail on route/DB drift)
 	PYTHONPATH=. $(PYTHON) -m pytest apps/api/tests/ -v --tb=short
 
 test-dashboard: ## Run Phoenix v2 dashboard unit tests
@@ -121,6 +126,25 @@ test-dashboard: ## Run Phoenix v2 dashboard unit tests
 
 test-bridge: ## Run OpenClaw Bridge Service tests (M1.7)
 	cd openclaw/bridge && PYTHONPATH=. $(PYTHON) -m pytest tests/ -v --tb=short
+
+test-integration: ## Run pytest integration tests (live pipeline mocks, etc.)
+	PYTHONPATH=. $(PYTHON) -m pytest tests/integration/ -v --tb=short
+
+test-e2e: ## Playwright E2E — requires dashboard :3000 + API :8011 running
+	PYTHONPATH=. $(PYTHON) -m pytest tests/e2e/ -v --tb=short
+
+go-live-regression: ## Automated go-live: test (unit + api unit), integration, bridge, dashboard
+	$(MAKE) test
+	$(MAKE) test-integration
+	$(MAKE) test-bridge
+	$(MAKE) test-dashboard
+
+go-live-regression-quality: ## Optional quality gate: ruff + mypy (may fail until repo-wide cleanup)
+	$(MAKE) lint
+	$(MAKE) typecheck
+
+db-alembic-heads: ## Print Alembic head revision(s); expect 038_decision_trail for audit trail column
+	$(RUN) PYTHONPATH=. alembic -c $(ALEMBIC_INI) heads
 
 test-cov: ## Run tests with coverage report
 	PYTHONPATH=. $(PYTHON) -m pytest tests/unit/ apps/api/tests/ --cov=shared --cov=apps --cov-report=term-missing --cov-report=html

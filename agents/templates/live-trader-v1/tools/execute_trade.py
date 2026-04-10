@@ -37,6 +37,7 @@ class MCPClient:
 
     def start(self):
         import os
+        import threading
         env = os.environ.copy()
         creds = self.config.get("robinhood_credentials", self.config.get("robinhood", {}))
         if isinstance(creds, dict):
@@ -53,6 +54,12 @@ class MCPClient:
             text=True,
             env=env,
         )
+        # Drain stderr in a daemon thread to prevent pipe deadlock
+        def _drain_stderr():
+            for line in self.proc.stderr:
+                log.debug("[mcp-stderr] %s", line.rstrip())
+        t = threading.Thread(target=_drain_stderr, daemon=True)
+        t.start()
         log.info("MCP server started (pid=%d)", self.proc.pid)
 
     def call(self, tool_name: str, arguments: dict, timeout: int = 60) -> dict:
@@ -110,14 +117,14 @@ def _report_trade_to_phoenix(config: dict, trade_data: dict):
         log.error("Failed to record trade: %s", e)
 
 
-def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: float, quantity: float):
+def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: float, quantity: float) -> dict:
     """Ask Phoenix API to spawn a position monitor sub-agent."""
     import httpx
     agent_id = config.get("agent_id", "")
     api_url = config.get("phoenix_api_url", "")
     api_key = config.get("phoenix_api_key", "")
     if not agent_id or not api_url:
-        return
+        return {}
     url = f"{api_url}/api/v2/agents/{agent_id}/spawn-position-agent"
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
@@ -128,13 +135,39 @@ def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: flo
             "quantity": quantity,
         }, headers=headers, timeout=30)
         log.info("Position agent spawn request: status=%d", resp.status_code)
+        return resp.json() if resp.status_code < 400 else {}
     except Exception as e:
         log.error("Failed to spawn position agent: %s", e)
+        return {}
+
+
+def _register_position(ticker: str, side: str, entry_price: float, quantity: float,
+                       order_id: str, spawn_result: dict):
+    """Maintain position_registry.json so the primary agent can route sell signals."""
+    registry_path = Path("position_registry.json")
+    try:
+        registry = json.loads(registry_path.read_text()) if registry_path.exists() else {}
+    except Exception:
+        registry = {}
+    registry[ticker] = {
+        "side": side,
+        "entry_price": entry_price,
+        "quantity": quantity,
+        "order_id": order_id,
+        "session_id": spawn_result.get("session_id", ""),
+        "sub_agent_id": spawn_result.get("agent_id", ""),
+        "opened_at": datetime.now(timezone.utc).isoformat(),
+    }
+    registry_path.write_text(json.dumps(registry, indent=2, default=str))
+    log.info("Position registered: %s -> %s", ticker, registry[ticker].get("session_id", "local"))
 
 
 def execute(decision_path: str, config_path: str):
-    with open(decision_path) as f:
-        decision = json.load(f)
+    if isinstance(decision_path, dict):
+        decision = decision_path
+    else:
+        with open(decision_path) as f:
+            decision = json.load(f)
     with open(config_path) as f:
         config = json.load(f)
 
@@ -144,12 +177,16 @@ def execute(decision_path: str, config_path: str):
         return {"status": "skipped", "reason": verdict}
 
     execution = decision.get("execution", {})
-    signal = decision.get("signal", {})
+    # decision_engine uses "parsed_signal", live_pipeline uses "signal"
+    signal = decision.get("signal", decision.get("parsed_signal", {}))
+
     ticker = execution.get("ticker") or signal.get("ticker", "")
-    side = execution.get("side", signal.get("direction", "buy"))
-    quantity = float(execution.get("quantity", execution.get("shares", 1)))
-    price = float(execution.get("price", execution.get("limit_price", 0)))
-    trade_type = signal.get("trade_type", execution.get("trade_type", "stock"))
+    # decision_engine outputs "direction", execute_trade expects "side"
+    side = execution.get("side") or execution.get("direction") or signal.get("direction", "buy")
+    quantity = float(execution.get("quantity") or execution.get("shares") or execution.get("position_size_pct") or 1)
+    # decision_engine outputs "entry_price" and "signal_price", not "price"
+    price = float(execution.get("price") or execution.get("entry_price") or execution.get("signal_price") or signal.get("signal_price") or 0)
+    trade_type = signal.get("trade_type") or execution.get("trade_type") or ("option" if execution.get("option_type") else "stock")
     is_paper = verdict == "PAPER" or config.get("paper_mode", False)
 
     if not ticker:
@@ -176,6 +213,22 @@ def execute(decision_path: str, config_path: str):
         notional = quantity * price if price > 0 else 0
         log.info("Account: buying_power=$%.2f, notional=$%.2f", buying_power, notional)
 
+        # Build reasoning and signal_raw from the decision structure
+        reasoning_list = decision.get("reasoning", [])
+        reasoning_text = " | ".join(reasoning_list) if isinstance(reasoning_list, list) else str(reasoning_list)
+        signal_raw = signal.get("content") or signal.get("raw_message") or decision.get("signal_raw", "")
+        model_conf = (decision.get("confidence") or
+                      decision.get("model_prediction", {}).get("confidence") or 0)
+        # Build decision trail for audit
+        decision_trail = {
+            "steps": decision.get("steps", []),
+            "reasoning": reasoning_list,
+            "risk_check": decision.get("risk_check"),
+            "ta_summary": decision.get("ta_summary"),
+            "model_prediction": decision.get("model_prediction"),
+            "execution_params": execution,
+        }
+
         if side == "buy" and notional > 0 and notional > buying_power:
             log.warning("Insufficient buying power: need $%.2f, have $%.2f", notional, buying_power)
             _report_trade_to_phoenix(config, {
@@ -183,12 +236,13 @@ def execute(decision_path: str, config_path: str):
                 "side": side,
                 "entry_price": price,
                 "quantity": quantity,
-                "model_confidence": decision.get("confidence", 0),
+                "model_confidence": model_conf,
                 "reasoning": f"Rejected: insufficient buying power (need ${notional:.0f}, have ${buying_power:.0f})",
-                "signal_raw": signal.get("content", signal.get("raw_message", "")),
+                "signal_raw": signal_raw,
                 "decision_status": "rejected",
                 "rejection_reason": "insufficient_buying_power",
                 "status": "rejected",
+                "decision_trail": decision_trail,
             })
             return {"status": "rejected", "reason": "insufficient_buying_power"}
 
@@ -217,34 +271,39 @@ def execute(decision_path: str, config_path: str):
         fill_price = float(order_result.get("fill_price", price) or price)
         state = order_result.get("state", order_result.get("status", "unknown"))
 
-        if state in ("rejected", "error"):
+        if state in ("rejected", "error", "timed_out"):
             _report_trade_to_phoenix(config, {
                 "ticker": ticker,
                 "side": side,
                 "entry_price": price,
                 "quantity": quantity,
-                "model_confidence": decision.get("confidence", 0),
+                "model_confidence": model_conf,
                 "reasoning": f"Order rejected by broker: {order_result.get('reason', state)}",
-                "signal_raw": signal.get("content", signal.get("raw_message", "")),
+                "signal_raw": signal_raw,
                 "decision_status": "rejected",
                 "rejection_reason": order_result.get("reason", state),
                 "status": "rejected",
+                "decision_trail": decision_trail,
             })
             return {"status": "rejected", "reason": order_result.get("reason", state)}
 
         # Record successful trade in Phoenix
+        pattern_matches = (decision.get("patterns") or
+                           decision.get("pattern_matches") or
+                           decision.get("model_prediction", {}).get("pattern_matches") or [])
         trade_data = {
             "ticker": ticker,
             "side": side,
             "entry_price": fill_price,
             "quantity": quantity,
-            "model_confidence": decision.get("confidence", 0),
-            "pattern_matches": decision.get("patterns", decision.get("pattern_matches", [])),
-            "reasoning": decision.get("reasoning", ""),
-            "signal_raw": signal.get("content", signal.get("raw_message", "")),
+            "model_confidence": model_conf,
+            "pattern_matches": pattern_matches,
+            "reasoning": reasoning_text,
+            "signal_raw": signal_raw,
             "broker_order_id": order_id,
             "decision_status": "accepted",
             "status": "open",
+            "decision_trail": decision_trail,
         }
         if trade_type == "option":
             trade_data["option_type"] = execution.get("option_type")
@@ -254,8 +313,9 @@ def execute(decision_path: str, config_path: str):
         _report_trade_to_phoenix(config, trade_data)
 
         # Spawn position monitor sub-agent for exit management
-        if side == "buy" and not is_paper:
-            _spawn_position_agent(config, ticker, side, fill_price, quantity)
+        if side == "buy":
+            spawn_result = _spawn_position_agent(config, ticker, side, fill_price, quantity)
+            _register_position(ticker, side, fill_price, quantity, order_id, spawn_result)
 
         # Write execution result for the agent to read
         result = {
@@ -269,7 +329,10 @@ def execute(decision_path: str, config_path: str):
             "paper_mode": is_paper,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        result_path = Path(decision_path).parent / "execution_result.json"
+        if isinstance(decision_path, str):
+            result_path = Path(decision_path).parent / "execution_result.json"
+        else:
+            result_path = Path("execution_result.json")
         result_path.write_text(json.dumps(result, indent=2))
         log.info("Trade executed: %s %s %.0f @ $%.2f", side, ticker, quantity, fill_price)
         return result

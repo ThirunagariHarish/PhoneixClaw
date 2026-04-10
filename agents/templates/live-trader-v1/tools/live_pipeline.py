@@ -1,7 +1,8 @@
-"""Live trading pipeline — async loop consuming signals from Redis stream.
+"""Live trading pipeline — async hot-loop consuming signals from Redis stream.
 
-Replaces the subprocess-based decision_engine.py with in-process calls:
-  discord_redis_consumer → Redis stream → enrich → predict → risk_check → decide → report
+This is a **latency-optimized** path the Claude agent can start when it needs
+all pipeline steps to run in-process without per-signal LLM overhead.  The agent
+can alternatively drive each tool individually for more control.
 
 Usage:
     python live_pipeline.py --config config.json
@@ -24,11 +25,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-TOOLS_DIR = Path(__file__).resolve().parent
 
-
-def _json_safe(obj):
-    """Convert numpy/pandas types for JSON serialization."""
+def _json_safe(obj: object) -> object:
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -47,33 +45,28 @@ def _json_safe(obj):
 
 
 async def process_signal(raw_signal: dict, config: dict) -> dict:
-    """Process a single signal through the full pipeline in-process.
+    """Process a single signal through the full pipeline in-process."""
+    from parse_signal import parse as parse_signal
+    from decision_engine import _build_execution_params
 
-    Returns a decision dict with: decision, reasoning, steps, execution params.
-    """
-    steps = []
-    reasoning = []
+    steps: list[dict] = []
+    reasoning: list[str] = []
     risk_params = config.get("risk_params", {})
 
-    # -- Step 1: Parse signal (reuse decision_engine logic) --
-    from decision_engine import _build_execution_params, _parse_signal
-    parsed = _parse_signal(raw_signal)
+    # Step 1: Parse
+    parsed = parse_signal(raw_signal)
     steps.append({"step": "parse_signal", "status": "ok"})
-    log.info("Parsed: ticker=%s direction=%s priority=%s",
-             parsed.get("ticker"), parsed.get("direction"), raw_signal.get("priority"))
 
     ticker = parsed.get("ticker")
     direction = parsed.get("direction")
-
     if not ticker:
         reasoning.append("No ticker found in signal")
         return _build_result("REJECT", "no_ticker", steps, reasoning, parsed)
-
     if not direction:
-        reasoning.append("No trade direction found in signal")
+        reasoning.append("No trade direction found")
         return _build_result("REJECT", "no_direction", steps, reasoning, parsed)
 
-    # -- Step 2: Enrich (in-process, no subprocess) --
+    # Step 2: Enrich
     enriched = parsed.copy()
     try:
         from enrich_single import enrich_signal
@@ -84,54 +77,39 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     except Exception as e:
         steps.append({"step": "enrich", "status": "failed", "error": str(e)[:200]})
         reasoning.append(f"Enrichment failed: {e}")
-        log.warning("Enrichment failed: %s", e)
 
-    # -- Step 3: Inference (needs a temp file for model loading) --
+    # Step 3: Inference
     prediction = {"prediction": "SKIP", "confidence": 0.0, "pattern_matches": 0}
     try:
         from inference import predict
-
-        # Write enriched features to temp file (inference.predict reads from file)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, prefix="feat_") as f:
             json.dump(_json_safe(enriched), f, default=str)
             features_path = f.name
-
-        models_dir = str(Path(config.get("models_dir", "models")))
         try:
-            prediction = predict(features_path, models_dir)
+            prediction = predict(features_path, str(Path(config.get("models_dir", "models"))))
         finally:
             Path(features_path).unlink(missing_ok=True)
-        steps.append({
-            "step": "inference", "status": "ok",
-            "prediction": prediction.get("prediction"),
-            "confidence": prediction.get("confidence"),
-        })
-        reasoning.append(
-            f"Model: {prediction.get('prediction')} "
-            f"(confidence={prediction.get('confidence', 0):.3f}, "
-            f"patterns={prediction.get('pattern_matches', 0)})"
-        )
+        steps.append({"step": "inference", "status": "ok",
+                       "prediction": prediction.get("prediction"),
+                       "confidence": prediction.get("confidence")})
+        reasoning.append(f"Model: {prediction.get('prediction')} "
+                         f"(confidence={prediction.get('confidence', 0):.3f})")
     except Exception as e:
         steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
         reasoning.append(f"Inference failed: {e}")
-        log.warning("Inference failed: %s", e)
 
-    # -- Step 4: Risk check (in-process) --
-    portfolio_path = Path("portfolio.json")
+    # Step 4: Risk check
     portfolio = {"open_positions": 0, "daily_pnl_pct": 0}
+    portfolio_path = Path("portfolio.json")
     if portfolio_path.exists():
         try:
             portfolio = json.loads(portfolio_path.read_text())
-            if isinstance(portfolio.get("positions"), list):
-                portfolio["open_positions"] = len([p for p in portfolio["positions"] if p.get("status") == "open"])
         except Exception:
             pass
-
     try:
         from risk_check import check_risk
         risk_result = check_risk(enriched, prediction, portfolio, config)
         steps.append({"step": "risk_check", "status": "ok", "approved": risk_result.get("approved")})
-
         if not risk_result.get("approved"):
             reasoning.append(f"Risk rejected: {risk_result.get('rejection_reason')}")
             return _build_result("REJECT", risk_result.get("rejection_reason", "risk_failed"),
@@ -139,26 +117,21 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         reasoning.append("Risk check passed")
     except Exception as e:
         steps.append({"step": "risk_check", "status": "failed", "error": str(e)[:200]})
-        reasoning.append(f"Risk check failed: {e}")
         return _build_result("REJECT", "risk_check_error", steps, reasoning, parsed, prediction)
 
-    # -- Step 5: TA confirmation (optional, in-process) --
+    # Step 5: TA confirmation
     ta_result = None
     try:
         from technical_analysis import analyze_ticker
         ta_result = analyze_ticker(ticker)
-        steps.append({
-            "step": "ta_confirmation", "status": "ok",
-            "verdict": ta_result.get("overall_verdict"),
-        })
-
-        # Check TA alignment
+        steps.append({"step": "ta_confirmation", "status": "ok",
+                       "verdict": ta_result.get("overall_verdict")})
         ta_verdict = ta_result.get("overall_verdict", "")
         ta_conf = ta_result.get("confidence", 0)
         if direction == "buy" and ta_verdict == "bearish" and ta_conf > 0.5:
             reasoning.append("TA strongly contradicts buy signal")
             return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result)
-        elif direction == "sell" and ta_verdict == "bullish" and ta_conf > 0.5:
+        if direction == "sell" and ta_verdict == "bullish" and ta_conf > 0.5:
             reasoning.append("TA strongly contradicts sell signal")
             return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result)
         reasoning.append(f"TA: {ta_verdict} (conf={ta_conf:.2f})")
@@ -166,15 +139,14 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         steps.append({"step": "ta_confirmation", "status": "skipped", "error": str(e)[:200]})
         reasoning.append("TA check skipped")
 
-    # -- Step 6: Model must say TRADE --
+    # Step 6: Model must say TRADE
     if prediction.get("prediction") != "TRADE":
         reasoning.append(f"Model says SKIP (confidence={prediction.get('confidence', 0):.3f})")
         return _build_result("REJECT", "model_skip", steps, reasoning, parsed, prediction, risk_result)
 
-    # -- Step 7: EXECUTE --
+    # Step 7: Build execution params and approve
     exec_params = _build_execution_params(parsed, enriched, prediction, risk_params, ta_result)
     reasoning.append(f"APPROVED: {direction.upper()} {ticker}")
-
     result = _build_result("EXECUTE", None, steps, reasoning, parsed, prediction, risk_result)
     result["execution"] = exec_params
     return result
@@ -183,7 +155,7 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
 def _build_result(decision: str, reason: str | None, steps: list, reasoning: list,
                   parsed: dict | None = None, prediction: dict | None = None,
                   risk_result: dict | None = None) -> dict:
-    result = {
+    result: dict = {
         "decision": decision,
         "reason": reason,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -197,29 +169,19 @@ def _build_result(decision: str, reason: str | None, steps: list, reasoning: lis
             "signal_price": parsed.get("signal_price"),
         }
     if prediction:
-        result["model_prediction"] = {
-            "prediction": prediction.get("prediction"),
-            "confidence": prediction.get("confidence"),
-            "pattern_matches": prediction.get("pattern_matches"),
-        }
+        result["model_prediction"] = prediction
     if risk_result:
         result["risk_check"] = risk_result
     return result
 
 
 async def _redis_signal_stream(config: dict):
-    """Async generator that yields signal dicts from the Redis stream.
-
-    Reads from `stream:channel:{connector_id}` (preferred) or
-    `stream:channel:{channel_id}` (fallback), honouring the persisted cursor.
-    Yields indefinitely until the process is stopped.
-    """
+    """Async generator yielding signal dicts from the Redis stream."""
     import os
-
     try:
         import redis.asyncio as aioredis
     except ImportError:
-        log.error("[pipeline] redis-py not installed — cannot consume signals")
+        log.error("redis-py not installed")
         return
 
     from discord_redis_consumer import _load_cursor_data, _save_cursor
@@ -227,34 +189,28 @@ async def _redis_signal_stream(config: dict):
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     connector_id = config.get("connector_id")
     channel_id = config.get("channel_id", connector_id)
-
     if not connector_id and not channel_id:
-        log.error("[pipeline] config missing both connector_id and channel_id — cannot start Redis stream")
+        log.error("config missing connector_id and channel_id")
         return
 
     primary_key = f"stream:channel:{connector_id}" if connector_id else None
     fallback_key = f"stream:channel:{channel_id}"
-
     try:
         redis_client = aioredis.from_url(redis_url, decode_responses=True)
     except Exception as exc:
-        log.error("[pipeline] Redis connect failed: %s", exc)
+        log.error("Redis connect failed: %s", exc)
         return
 
-    # Choose stream key: try connector_id key first, fall back to channel_id key.
     stream_key = primary_key or fallback_key
     if primary_key and primary_key != fallback_key:
         try:
             if await redis_client.xlen(primary_key) == 0 and await redis_client.xlen(fallback_key) > 0:
                 stream_key = fallback_key
-                log.info("[pipeline] Using fallback stream key '%s'", stream_key)
-            else:
-                log.info("[pipeline] Using primary stream key '%s'", stream_key)
         except Exception:
             pass
 
     last_id, total = _load_cursor_data(stream_key)
-    log.info("[pipeline] Redis signal stream starting on '%s' (cursor=%s)", stream_key, last_id)
+    log.info("Redis stream '%s' (cursor=%s)", stream_key, last_id)
 
     try:
         while True:
@@ -279,7 +235,7 @@ async def _redis_signal_stream(config: dict):
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                log.error("[pipeline] Redis xread error: %s", exc, exc_info=True)
+                log.error("Redis xread error: %s", exc, exc_info=True)
                 await asyncio.sleep(2)
     finally:
         try:
@@ -288,17 +244,15 @@ async def _redis_signal_stream(config: dict):
             pass
 
 
-async def run_pipeline(config: dict):
-    """Main pipeline loop — consume signals from Redis stream, process, report."""
-    from report_to_phoenix import report_heartbeat, report_trade
+async def run_pipeline(config: dict) -> None:
+    """Main pipeline loop — consume signals, process, execute."""
+    from report_to_phoenix import report_heartbeat
 
     signals_processed = 0
     trades_today = 0
+    log.info("Pipeline started, waiting for signals...")
 
-    log.info("Pipeline started, waiting for signals from Redis stream...")
-
-    # Run heartbeat in background
-    async def heartbeat_loop():
+    async def heartbeat_loop() -> None:
         while True:
             await asyncio.sleep(60)
             try:
@@ -307,70 +261,83 @@ async def run_pipeline(config: dict):
                     "signals_processed": signals_processed,
                     "trades_today": trades_today,
                 })
-            except Exception as e:
-                log.debug("Heartbeat failed: %s", e)
+            except Exception:
+                pass
 
     asyncio.create_task(heartbeat_loop())
 
     async for signal in _redis_signal_stream(config):
         signals_processed += 1
-        log.info("Processing signal #%d: %s", signals_processed, signal.get("content", "")[:80])
+        log.info("Signal #%d: %s", signals_processed, signal.get("content", "")[:80])
 
         try:
             decision = await process_signal(signal, config)
             decision = _json_safe(decision)
+            decision["signal_raw"] = signal.get("content", "")
 
-            # Save decision to file for debugging
-            decision_file = Path("last_decision.json")
-            decision_file.write_text(json.dumps(decision, indent=2, default=str))
+            Path("decision.json").write_text(json.dumps(decision, indent=2, default=str))
 
             if decision["decision"] == "EXECUTE":
                 trades_today += 1
-                log.info("EXECUTE: %s %s",
-                         decision.get("parsed_signal", {}).get("direction"),
-                         decision.get("parsed_signal", {}).get("ticker"))
+                ticker = decision.get("parsed_signal", {}).get("ticker", "?")
+                direction = decision.get("parsed_signal", {}).get("direction", "?")
+                log.info("EXECUTE: %s %s", direction, ticker)
 
-                # Report trade to Phoenix API
                 try:
-                    trade_data = {
-                        "ticker": decision["parsed_signal"]["ticker"],
-                        "side": decision["parsed_signal"]["direction"],
-                        "entry_price": decision.get("execution", {}).get("entry_price", 0),
-                        "quantity": 1,
-                        "model_confidence": decision.get("model_prediction", {}).get("confidence"),
-                        "pattern_matches": decision.get("model_prediction", {}).get("pattern_matches"),
-                        "reasoning": " | ".join(decision.get("reasoning", [])),
-                        "signal_raw": signal.get("content", ""),
-                    }
-                    await report_trade(config, trade_data)
+                    from execute_trade import execute as execute_trade
+                    config_path = str(Path(config.get("_config_path", "config.json")))
+                    exec_result = execute_trade(decision, config_path)
+                    log.info("Execution: %s", json.dumps(exec_result, default=str)[:300])
+
+                    if direction in ("sell", "close", "trim"):
+                        _route_sell_signal(ticker, signal, decision)
                 except Exception as e:
-                    log.error("Failed to report trade: %s", e)
-
-                # Output for execution by robinhood_mcp — suppressed in paper mode
-                if config.get("paper_mode"):
-                    log.warning("[pipeline] Paper mode: EXECUTE suppressed — call log_paper_trade.py instead")
-                else:
-                    print(json.dumps({
-                        "event": "trade_decision",
-                        "decision": "EXECUTE",
-                        **decision.get("execution", {}),
-                    }))
-                    sys.stdout.flush()
+                    log.error("Trade execution failed: %s", e, exc_info=True)
             else:
-                log.info("REJECT: %s — %s",
-                         decision.get("parsed_signal", {}).get("ticker"),
-                         decision.get("reason"))
+                direction = decision.get("parsed_signal", {}).get("direction")
+                ticker = decision.get("parsed_signal", {}).get("ticker")
+                log.info("REJECT: %s — %s", ticker, decision.get("reason"))
+                if direction in ("sell", "close", "trim") and ticker:
+                    _route_sell_signal(ticker, signal, decision)
         except Exception as e:
-            log.error("Pipeline error processing signal: %s", e, exc_info=True)
+            log.error("Pipeline error: %s", e, exc_info=True)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Live trading pipeline")
-    parser.add_argument("--config", default="config.json", help="Path to agent config.json")
+def _route_sell_signal(ticker: str, raw_signal: dict, decision: dict) -> None:
+    """Write a sell signal file for the position sub-agent."""
+    registry_path = Path("position_registry.json")
+    if not registry_path.exists():
+        return
+    try:
+        registry = json.loads(registry_path.read_text())
+    except Exception:
+        return
+    if ticker not in registry:
+        return
+
+    sell_dir = Path("positions") / ticker
+    sell_dir.mkdir(parents=True, exist_ok=True)
+    sell_signal = {
+        "ticker": ticker,
+        "signal_type": "sell",
+        "content": raw_signal.get("content", ""),
+        "author": raw_signal.get("author", ""),
+        "timestamp": raw_signal.get("timestamp", datetime.now(timezone.utc).isoformat()),
+        "decision": decision.get("decision"),
+        "reasoning": decision.get("reasoning", []),
+    }
+    (sell_dir / "sell_signal.json").write_text(json.dumps(sell_signal, indent=2, default=str))
+    log.info("Sell signal routed for %s", ticker)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Live trading pipeline (hot loop)")
+    parser.add_argument("--config", default="config.json")
     args = parser.parse_args()
 
     with open(args.config) as f:
         config = json.load(f)
+    config["_config_path"] = args.config
 
     asyncio.run(run_pipeline(config))
 
