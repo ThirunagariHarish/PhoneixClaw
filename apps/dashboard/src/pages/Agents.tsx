@@ -387,7 +387,7 @@ function MetricPill({ label, value, trend }: { label: string; value: string; tre
   )
 }
 
-export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote }: {
+export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote, onRetryBacktest, isRetryPending }: {
   agent: AgentData
   onSelect: () => void
   onPause: () => void
@@ -395,6 +395,8 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
   onDelete: () => void
   onReview: () => void
   onPromote: () => void
+  onRetryBacktest?: () => void
+  isRetryPending?: boolean
 }) {
   const config = agent.config as Record<string, unknown>
   const sc = getStatusConfig(agent.status)
@@ -479,21 +481,45 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
         </div>
 
         {/* ERROR: error message banner */}
-        {agent.status === 'ERROR' && agent.error_message && (
-          <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
-            <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <p className="text-[11px] text-red-600 dark:text-red-400 break-words">{agent.error_message}</p>
-              <button
-                disabled
-                title="Contact your administrator to retry the backtest"
-                className="text-[10px] font-medium text-red-500/60 cursor-not-allowed underline-offset-2"
-              >
-                Retry (contact admin)
-              </button>
+        {agent.status === 'ERROR' && agent.error_message && (() => {
+          const isBillingError = agent.error_message.startsWith('BILLING ERROR:')
+          return (
+            <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
+              <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <p className="text-[11px] text-red-600 dark:text-red-400 break-words">{agent.error_message}</p>
+                {isBillingError ? (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <a
+                      href="https://console.anthropic.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] font-medium text-red-400 underline underline-offset-2 hover:text-red-300"
+                    >
+                      Fix billing ↗
+                    </a>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onRetryBacktest?.() }}
+                      disabled={isRetryPending}
+                      className="text-[10px] font-medium text-red-400 underline underline-offset-2 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isRetryPending ? 'Resetting…' : 'Retry backtest'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    disabled
+                    title="Contact your administrator to retry the backtest"
+                    className="text-[10px] font-medium text-red-500/60 cursor-not-allowed underline-offset-2"
+                  >
+                    Retry (contact admin)
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
         {agent.status === 'BACKTESTING' && <BacktestingSpinner />}
 
         {/* BACKTEST_COMPLETE: rich metrics preview */}
@@ -1390,6 +1416,15 @@ export default function AgentsPage() {
     onSuccess: invalidateAgents,
   })
 
+  const retryBacktestMutation = useMutation({
+    mutationFn: async (id: string) => api.post(`/api/v2/agents/${id}/retry-backtest`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] })
+      toast.success('Agent reset — you can now re-run the backtest')
+    },
+    onError: () => toast.error('Failed to reset agent'),
+  })
+
   const canAdvance = (step: number): boolean =>
     computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel, form.persona_id)
 
@@ -1525,6 +1560,8 @@ export default function AgentsPage() {
                       onReview={() => setReviewAgent(agent)}
                       onPromote={() => promoteMutation.mutate(agent.id)}
                       onDelete={() => deleteMutation.mutate(agent.id)}
+                      onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
+                      isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
                     />
                   ))}
                 </div>
@@ -1554,6 +1591,8 @@ export default function AgentsPage() {
                       onReview={() => setReviewAgent(agent)}
                       onPromote={() => promoteMutation.mutate(agent.id)}
                       onDelete={() => deleteMutation.mutate(agent.id)}
+                      onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
+                      isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
                     />
                   ))}
                 </div>
@@ -1584,6 +1623,8 @@ export default function AgentsPage() {
                       onReview={() => setReviewAgent(agent)}
                       onPromote={() => promoteMutation.mutate(agent.id)}
                       onDelete={() => deleteMutation.mutate(agent.id)}
+                      onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
+                      isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
                     />
                   ))}
                 </div>

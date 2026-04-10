@@ -379,6 +379,34 @@ async def resume_agent(agent_id: str, session: DbSession):
     return {"id": agent_id, "status": "RUNNING"}
 
 
+@router.post("/{agent_id}/retry-backtest")
+async def retry_backtest(agent_id: str, request: Request, session: DbSession):
+    """Reset a failed/errored agent back to CREATED so the backtest can be re-run.
+
+    Only valid when the agent is in ERROR state. Clears error_message so the
+    user can re-trigger the backtest after resolving the underlying issue
+    (e.g. topping up Anthropic API credits for a billing error).
+    """
+    agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = agent_result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    # IDOR check — owner or admin only
+    caller_id = getattr(request.state, "user_id", None)
+    is_admin = getattr(request.state, "is_admin", False)
+    if str(agent.user_id) != str(caller_id) and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if agent.status != "ERROR":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Agent must be in ERROR state to retry. Current status: {agent.status}",
+        )
+    agent.status = "CREATED"
+    agent.error_message = None
+    await session.commit()
+    return {"id": agent_id, "status": "CREATED"}
+
+
 class AgentApprovePayload(BaseModel):
     trading_mode: str = "paper"
     account_id: str | None = None
