@@ -981,32 +981,33 @@ class AgentGateway:
         prompt = (
             home_export +
             smart_context_prefix +
-            "You are now live. Read CLAUDE.md for your full instructions. "
-            "FIRST: run `bash startup.sh` to start the signal consumer (live_pipeline.py). "
-            "This is mandatory — without it you will not receive any Discord signals. "
-            "Then run pre-market analysis and report your status to Phoenix.\n\n"
-            "After startup, enter a MONITORING LOOP — you must stay alive indefinitely:\n"
-            "1. Every 5 minutes, check `cat pipeline_status.json` and `tail -10 live_pipeline.log` to verify the pipeline is healthy.\n"
-            "2. Report a heartbeat to Phoenix via `python3 tools/report_to_phoenix.py --config config.json --action heartbeat`.\n"
-            "3. Check for any new signals in `trades.log` and report them.\n"
-            "4. If pipeline PID is dead, restart it with `bash startup.sh`.\n"
-            "5. Sleep 300 seconds (`sleep 300`) and repeat from step 1.\n\n"
-            "NEVER exit this loop. You must stay alive to handle trade signals and user messages. "
-            "If you have nothing to do, sleep and check again. Do NOT finish your session."
+            "You are now live. Read CLAUDE.md for your full instructions.\n"
+            "FIRST: run `bash startup.sh` to verify your environment.\n"
+            "Then run pre-market analysis if before market open.\n\n"
+            "After setup, enter your SIGNAL POLLING LOOP (you must stay alive indefinitely):\n"
+            "1. Run: `python3 tools/check_messages.py --config config.json`\n"
+            "2. Read the JSON output. If count > 0, process EACH new message:\n"
+            "   a. Run `python3 tools/parse_signal.py` on the message content\n"
+            "   b. If valid trade signal and backtesting models exist: run `python3 tools/decision_engine.py`\n"
+            "   c. If no backtesting data: add to watchlist via Robinhood MCP\n"
+            "   d. If decision is EXECUTE: run `python3 tools/execute_trade.py`\n"
+            "   e. Report result to Phoenix via `python3 tools/report_to_phoenix.py`\n"
+            "3. Sleep 5 seconds: `sleep 5`\n"
+            "4. Go back to step 1\n\n"
+            "Every 12 iterations (~60s), also send a heartbeat to Phoenix.\n"
+            "NEVER exit this loop. NEVER finish your session. You ARE the trading pipeline."
         )
         if resume:
             prompt = (
                 home_export +
                 smart_context_prefix +
-                "Resume your live trading session. Check your current positions in positions.json. "
-                "FIRST: run `bash startup.sh` to restart the signal consumer if not already running. "
-                "Then continue monitoring. Report your resumed status to Phoenix.\n\n"
-                "Enter the MONITORING LOOP — you must stay alive indefinitely:\n"
-                "1. Every 5 minutes, check `cat pipeline_status.json` and `tail -10 live_pipeline.log`.\n"
-                "2. Report a heartbeat to Phoenix.\n"
-                "3. If pipeline PID is dead, restart it with `bash startup.sh`.\n"
-                "4. Sleep 300 seconds and repeat.\n\n"
-                "NEVER exit this loop. Stay alive to handle trade signals and user messages."
+                "Resume your live trading session. Check positions in positions.json.\n"
+                "Run `bash startup.sh` to verify environment, then enter your SIGNAL POLLING LOOP:\n"
+                "1. Run: `python3 tools/check_messages.py --config config.json`\n"
+                "2. If new messages, process each: parse -> validate -> execute/watchlist -> report\n"
+                "3. Sleep 5 seconds\n"
+                "4. Repeat\n\n"
+                "NEVER exit this loop. You ARE the trading pipeline. Stay alive indefinitely."
             )
 
         # Smart Context Builder (feature-flagged)

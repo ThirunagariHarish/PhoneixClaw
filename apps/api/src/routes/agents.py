@@ -12,6 +12,7 @@ import logging
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,16 @@ from shared.db.models.connector import Connector, ConnectorAgent
 from shared.db.models.system_log import SystemLog as _SysLog
 
 router = APIRouter(prefix="/api/v2/agents", tags=["agents"])
+
+_MANIFEST_DEFAULTS_PATH = Path(__file__).resolve().parents[4] / "agents" / "templates" / "live-trader-v1" / "manifest.defaults.json"
+
+
+def _load_manifest_defaults() -> dict:
+    """Load the template manifest defaults (tools, skills, modes, etc.)."""
+    try:
+        return json.loads(_MANIFEST_DEFAULTS_PATH.read_text())
+    except Exception:
+        return {}
 
 
 class AgentCreate(BaseModel):
@@ -502,7 +513,9 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
 
     if not agent.manifest or not agent.manifest.get("identity"):
         channel = agent.channel_name or agent.name.lower().replace(" ", "-")
+        defaults = _load_manifest_defaults()
         agent.manifest = {
+            **defaults,
             "version": "1.0",
             "template": "live-trader-v1",
             "identity": {
@@ -511,15 +524,15 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
                 "analyst": agent.analyst_name or "",
                 "character": "balanced-intraday",
             },
-            "rules": (agent.config or {}).get("rules", []),
-            "modes": (agent.config or {}).get("modes", {}),
+            "rules": (agent.config or {}).get("rules", defaults.get("rules", [])),
+            "modes": (agent.config or {}).get("modes", defaults.get("modes", {})),
             "risk": {
                 "max_daily_loss_pct": payload.max_daily_loss_pct,
                 "max_position_size_pct": payload.max_position_pct,
                 "stop_loss_pct": payload.stop_loss_pct,
             },
-            "models": {},
-            "knowledge": {},
+            "models": defaults.get("models", {}),
+            "knowledge": defaults.get("knowledge", {}),
             "credentials": {},
         }
 
@@ -1706,15 +1719,22 @@ async def get_agent_manifest(agent_id: str, session: DbSession):
 
     manifest = agent.manifest or {}
     if not manifest and agent.config:
+        defaults = _load_manifest_defaults()
         manifest = {
+            **defaults,
             "version": "1.0", "template": "live-trader-v1",
             "identity": {"name": agent.name, "channel": agent.channel_name or "", "analyst": agent.analyst_name or "", "character": "balanced-intraday"},
-            "rules": (agent.config or {}).get("rules", []),
-            "modes": (agent.config or {}).get("modes", {}),
-            "risk": (agent.config or {}).get("risk_params", (agent.config or {}).get("risk", {})),
+            "rules": (agent.config or {}).get("rules", defaults.get("rules", [])),
+            "modes": (agent.config or {}).get("modes", defaults.get("modes", {})),
+            "risk": (agent.config or {}).get("risk_params", (agent.config or {}).get("risk", defaults.get("risk", {}))),
             "models": {"primary": agent.model_type or "unknown", "accuracy": agent.model_accuracy or 0},
-            "tools": [], "skills": [], "knowledge": {},
+            "knowledge": defaults.get("knowledge", {}),
         }
+
+    if manifest and ("tools" not in manifest or "skills" not in manifest):
+        defaults = _load_manifest_defaults()
+        manifest.setdefault("tools", defaults.get("tools", []))
+        manifest.setdefault("skills", defaults.get("skills", []))
 
     return {"agent_id": agent_id, "manifest": manifest, "current_mode": agent.current_mode, "rules_version": agent.rules_version}
 

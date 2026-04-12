@@ -90,7 +90,7 @@ All tools are in `tools/`. Run via `python tools/<name>.py <args>`.
 - `add_to_watchlist` / `remove_from_watchlist` / `get_watchlist`
 
 ### Signal Processing
-- `signal_listener.py` — Background daemon: reads Discord → Redis → JSON files in `incoming_signals/`
+- `check_messages.py` — **Primary signal source**: polls Phoenix API for new Discord messages every 5 seconds. Deduplicates automatically.
 - `parse_signal.py` — Raw message → structured signal (ticker, direction, price, options metadata)
 
 ### Analysis Pipeline
@@ -121,52 +121,18 @@ All tools are in `tools/`. Run via `python tools/<name>.py <args>`.
 - `portfolio_tracker.py` — Local position/P&L tracking
 - `agent_comms.py` — Inter-agent message passing
 
-### Hot Loop (latency-critical)
-- `live_pipeline.py` — In-process async pipeline for maximum speed. **Preferred way** to consume signals from Redis.
+### Signal Polling (you ARE the pipeline)
+- `check_messages.py` — Call every 5 seconds. Returns new unprocessed messages from your Discord channel via the Phoenix API. No Redis, no background process — you poll directly.
 
 ## Operation Loop
 
-### Startup — CRITICAL: start the signal consumer
+### Startup
 
-**IMMEDIATE FIRST ACTION** — run `bash startup.sh` before anything else:
+**FIRST ACTION** — run `bash startup.sh` to verify your environment:
 ```bash
 bash startup.sh
 ```
-This automatically starts `live_pipeline.py` in the background and verifies `connector_id` is set. Without this, you will receive NO signals from Discord.
-
-If `startup.sh` reports `connector_id is empty`, the agent was misconfigured. Report to Phoenix and stop.
-
-**VERIFY PIPELINE HEALTH** — after startup.sh, wait 5 seconds then check:
-```bash
-sleep 5
-tail -20 live_pipeline.log
-cat pipeline_status.json 2>/dev/null || echo "No status file yet"
-```
-You MUST confirm you see `[pipeline] INFO Pipeline started` and a successful Redis PING in the logs. If you see errors (import failures, Redis connection refused, etc.), fix them immediately. The `pipeline_status.json` file is updated every 30 seconds with signals processed, Redis status, and any errors.
-
-If `live_pipeline.log` shows the process exited or has errors, check and fix the issue, then restart:
-```bash
-cat pipeline.pid | xargs kill 2>/dev/null; rm -f pipeline.pid
-bash startup.sh
-```
-
-**Manual alternative** (only if startup.sh is missing):
-
-**Option A (recommended):** Start the integrated live pipeline:
-```bash
-python tools/live_pipeline.py --config config.json &
-```
-This reads `stream:channel:{connector_id}` from Redis and runs the full parse → enrich → infer → risk → execute chain in-process.
-
-**Option B:** Start the standalone Redis consumer + signal listener:
-```bash
-python tools/discord_redis_consumer.py --config config.json --output pending_signals.json &
-python tools/signal_listener.py --config config.json &
-```
-
-**Verify `config.json` contains the correct `connector_id`** (the UUID of the linked Discord connector, e.g. `04ca2bf7-...`). The Redis stream key is `stream:channel:{connector_id}` — this must match what the Phoenix ingestion daemon publishes. The channel name (`day-trades`) alone is not the stream key.
-
-After starting the consumer:
+This confirms `config.json` is valid and reports startup to Phoenix. If it reports errors, fix them before proceeding.
 
 ### Pre-Market (30 min before open)
 
@@ -176,20 +142,34 @@ After starting the consumer:
 4. Review all open positions: call `get_all_positions` via MCP
 5. For each option position: check theta decay, days to expiry, Greeks
 6. Set mode based on macro context; update `config.json`
-7. Notify user with morning briefing via `notify.py`
+7. Report morning briefing to Phoenix via `report_to_phoenix.py`
 
-### Market Hours — Signal Processing
+### Signal Polling Loop — YOUR MAIN JOB
 
-For each new `.json` file in `incoming_signals/`:
+You ARE the trading pipeline. No background process — you poll and process directly.
 
-1. **Parse** → `parse_signal.py`
-2. **Enrich** → `enrich_single.py` (200+ features)
-3. **Infer** → `inference.py` (ML model → TRADE/SKIP + confidence)
-4. **Apply judgment**: Consider model + rules + current portfolio + macro regime
-5. **If proceeding**: `risk_check.py` → `technical_analysis.py` → `execute_trade.py`
-6. **Record everything**: decision trail, reasoning, feature values
-7. **Notify**: `notify.py` with trade details and reasoning
-8. Move processed signal to `processed/`
+```
+LOOP FOREVER:
+  1. python3 tools/check_messages.py --config config.json
+  2. If count > 0, process each new message (see below)
+  3. sleep 5
+  4. Every ~60s, send heartbeat to Phoenix
+```
+
+**For each new message with count > 0:**
+
+1. **Parse** → `python3 tools/parse_signal.py --input '<message_content>' --output signal.json`
+2. **Check if backtesting models exist** → look for `models/` directory
+3. **If models available (full validation)**:
+   a. `python3 tools/enrich_single.py` — 200+ real-time features
+   b. `python3 tools/inference.py` — ML model → TRADE/SKIP + confidence
+   c. Apply your judgment: model + rules + portfolio + macro regime
+   d. `python3 tools/risk_check.py` — position limits, daily loss caps
+   e. `python3 tools/technical_analysis.py` — RSI, MACD, support/resistance
+   f. If all pass → `python3 tools/execute_trade.py` via MCP
+4. **If NO models available (no backtesting)**: add to watchlist via Robinhood MCP `add_to_watchlist`
+5. **Report** every decision to Phoenix via `python3 tools/report_to_phoenix.py`
+6. **Log** the decision: ticker, action taken, reasoning
 
 ### Sell Signal Routing
 
@@ -286,7 +266,7 @@ NEVER silently swallow errors. Every failure gets logged with full context.
 
 | Task | Approach | Tokens |
 |------|----------|--------|
-| Signal listener | Python daemon (zero tokens) | 0 |
+| Message polling | `check_messages.py` (zero tokens) | 0 |
 | Parse/Enrich/Infer/Risk | Python tools (zero tokens) | 0 |
 | MCP calls (quotes, positions, orders) | Direct tool calls | 0 |
 | Market research | Python tools | 0 |
