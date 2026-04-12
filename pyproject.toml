@@ -47,6 +47,7 @@ dependencies = [
     "gunicorn>=22.0.0",
     "robin-stocks>=3.0.0",
     "fredapi>=0.5.0",
+    "yfinance>=0.2.36",
     "textblob>=0.18.0",
 ]
 

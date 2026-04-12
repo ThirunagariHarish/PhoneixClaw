@@ -13,8 +13,15 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import numpy as np
-import yfinance as yf
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None  # type: ignore[assignment]
 from fastapi import APIRouter, Query
 
 logger = logging.getLogger(__name__)
