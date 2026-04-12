@@ -167,8 +167,14 @@ LOOP FOREVER:
    d. `python3 tools/risk_check.py` — position limits, daily loss caps
    e. `python3 tools/technical_analysis.py` — RSI, MACD, support/resistance
    f. If all pass → `python3 tools/execute_trade.py` via MCP
-4. **If NO models available (no backtesting)**: add to watchlist via Robinhood MCP `add_to_watchlist`
-5. **Report** every decision to Phoenix via `python3 tools/report_to_phoenix.py`
+4. **If NO models available (no backtesting)** — do BOTH of these steps in order:
+   a. **Call MCP tool `add_to_watchlist`** with `{"symbols": ["<TICKER>"]}` — this adds the ticker to the actual Robinhood watchlist
+   b. **Then report to Phoenix**: `python3 tools/report_to_phoenix.py --config config.json --action watchlist --data '{"ticker":"<TICKER>","reason":"<REASON>","author":"<AUTHOR>"}'`
+   ⚠️ Do NOT use `--action trade` to report a watchlist decision. Use `--action watchlist`. These are different endpoints writing to different tables.
+5. **Report** every decision to Phoenix via `python3 tools/report_to_phoenix.py`:
+   - Trade executed → `--action trade`
+   - Added to watchlist → `--action watchlist`
+   - Heartbeat → `--action heartbeat`
 6. **Log** the decision: ticker, action taken, reasoning
 
 ### Sell Signal Routing
