@@ -33,6 +33,16 @@ COLUMN_ENSURE = [
     # Phase P — runtime status + heartbeat activity marker (migration 027)
     ("agents", "runtime_status", "VARCHAR(16)"),
     ("agents", "last_activity_at", "TIMESTAMPTZ"),
+    # Migration 034 — trade_signals analyst columns
+    # Missing on databases deployed before 034 ran; causes 500 ProgrammingError
+    # on any INSERT/SELECT of the trade_signals table.
+    ("trade_signals", "analyst_persona", "VARCHAR(50)"),
+    ("trade_signals", "tool_signals_used", "JSONB"),
+    ("trade_signals", "risk_reward_ratio", "DOUBLE PRECISION"),
+    ("trade_signals", "take_profit", "DOUBLE PRECISION"),
+    ("trade_signals", "entry_price", "DOUBLE PRECISION"),
+    ("trade_signals", "stop_loss", "DOUBLE PRECISION"),
+    ("trade_signals", "pattern_name", "VARCHAR(100)"),
 ]
 
 

@@ -347,6 +347,27 @@ async def _ensure_prod_schema() -> None:
          "built_at TIMESTAMPTZ DEFAULT now())"),
         ("index idx_ctx_sessions_agent",
          "CREATE INDEX IF NOT EXISTS idx_ctx_sessions_agent ON context_sessions(agent_id)"),
+        # ------------------------------------------------------------------
+        # Migration 034 safety net: trade_signals analyst columns
+        # These columns were added by 034_add_analyst_agent.py but are not
+        # present on databases that were deployed before that migration ran.
+        # Any INSERT/SELECT on trade_signals fails with ProgrammingError when
+        # they are absent.  All are nullable so adding them is always safe.
+        # ------------------------------------------------------------------
+        ("trade_signals.analyst_persona",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS analyst_persona VARCHAR(50)"),
+        ("trade_signals.tool_signals_used",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS tool_signals_used JSONB"),
+        ("trade_signals.risk_reward_ratio",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS risk_reward_ratio DOUBLE PRECISION"),
+        ("trade_signals.take_profit",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS take_profit DOUBLE PRECISION"),
+        ("trade_signals.entry_price",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS entry_price DOUBLE PRECISION"),
+        ("trade_signals.stop_loss",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS stop_loss DOUBLE PRECISION"),
+        ("trade_signals.pattern_name",
+         "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS pattern_name VARCHAR(100)"),
     ]
 
     engine = get_engine()
