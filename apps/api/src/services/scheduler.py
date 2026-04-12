@@ -426,15 +426,19 @@ async def _job_consolidation_run() -> None:
 
 
 # Live-agent keepalive: how many seconds after a session ends before we re-spawn.
-# Default 300 s (5 min) — long enough to avoid tight crash-loops.
-_KEEPALIVE_RESTART_DELAY_SECONDS = int(os.environ.get("AGENT_KEEPALIVE_DELAY_SECONDS", "300"))
+# Default 30 s — the Claude model naturally reaches end-of-response and the SDK
+# generator completes; this is not a crash. Override via AGENT_KEEPALIVE_DELAY_SECONDS.
+_KEEPALIVE_RESTART_DELAY_SECONDS = int(os.environ.get("AGENT_KEEPALIVE_DELAY_SECONDS", "30"))
 # Set AGENT_KEEPALIVE_ENABLED=0 to disable entirely (e.g. overnight maintenance).
 _KEEPALIVE_ENABLED = os.environ.get("AGENT_KEEPALIVE_ENABLED", "1") != "0"
 
 _HEARTBEAT_STALE_MINUTES = int(os.environ.get("HEARTBEAT_STALE_MINUTES", "30"))
 
-# Circuit breaker: max restarts per agent per hour before we stop retrying.
+# Circuit breaker limits — separate for clean completions vs error/crash sessions.
+# Clean completions (model reached end of response naturally) are expected and safe
+# to restart frequently. Error/crash sessions need human review after a few attempts.
 _MAX_RESTARTS_PER_HOUR = int(os.environ.get("AGENT_MAX_RESTARTS_PER_HOUR", "3"))
+_MAX_CLEAN_RESTARTS_PER_HOUR = int(os.environ.get("AGENT_MAX_CLEAN_RESTARTS_PER_HOUR", "20"))
 _restart_history: dict[str, list[float]] = {}  # agent_id -> [timestamp, ...]
 
 DATA_DIR = Path(__file__).resolve().parents[4] / "data"
@@ -449,8 +453,12 @@ async def _job_live_agent_keepalive() -> None:
     ago, resumes the agent via gateway.resume_agent() (or cold-starts if no
     work directory exists).
 
-    Circuit breaker: max _MAX_RESTARTS_PER_HOUR (default 3) restarts per agent
-    per hour. If breached, the agent is skipped until cooldown.
+    Circuit breaker — two separate limits:
+      - completed sessions   → _MAX_CLEAN_RESTARTS_PER_HOUR (default 20/h)
+        The Claude model naturally reaches end-of-response; these restarts are
+        expected and must happen quickly so Discord signals are never missed.
+      - error/crash sessions → _MAX_RESTARTS_PER_HOUR (default 3/h)
+        These need human review (billing failure, OOM, etc.).
 
     Skipped when:
     - AGENT_KEEPALIVE_ENABLED=0
@@ -564,21 +572,24 @@ async def _job_live_agent_keepalive() -> None:
                     if stopped_at > cutoff:
                         continue  # too soon
 
-                agents_to_restart.append((agent.id, agent.name))
+                agents_to_restart.append((agent.id, agent.name, last_sess.status))
 
-        for agent_id, agent_name in agents_to_restart:
+        for agent_id, agent_name, last_sess_status in agents_to_restart:
             agent_key = str(agent_id)
 
-            # Circuit breaker: skip if already restarted too many times this hour
+            # Circuit breaker: use a higher limit for clean completions (model reached
+            # end of response naturally — expected behavior) vs error/crash sessions
+            # which need human review after a few attempts.
             now_ts = time.time()
             history = _restart_history.get(agent_key, [])
             history = [ts for ts in history if ts > now_ts - 3600]
             _restart_history[agent_key] = history
-            if len(history) >= _MAX_RESTARTS_PER_HOUR:
+            max_restarts = _MAX_CLEAN_RESTARTS_PER_HOUR if last_sess_status == "completed" else _MAX_RESTARTS_PER_HOUR
+            if len(history) >= max_restarts:
                 logger.warning(
                     "[keepalive] Circuit breaker: agent %s (%s) restarted %d times in the last hour "
-                    "(max %d) — skipping until cooldown",
-                    agent_name, agent_id, len(history), _MAX_RESTARTS_PER_HOUR,
+                    "(max %d, last_status=%s) — skipping until cooldown",
+                    agent_name, agent_id, len(history), max_restarts, last_sess_status,
                 )
                 continue
 
