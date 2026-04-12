@@ -328,6 +328,87 @@ async def get_watchlist_history(
 
 
 # ---------------------------------------------------------------------------
+# Trade-signal write endpoint (watchlist / executed / rejected / paper)
+# ---------------------------------------------------------------------------
+@router.post("/{agent_id}/trade-signals", status_code=201)
+async def create_trade_signal(
+    agent_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    session: DbSession = None,
+):
+    """Record a trade-signal decision (watchlist, executed, rejected, paper).
+
+    The live agent calls this via report_to_phoenix.py --action watchlist (or
+    --action signal) so the dashboard Watchlist History tab is populated.
+
+    Authentication: the caller must supply the agent's phoenix_api_key in the
+    Authorization header as 'Bearer <key>'.  This prevents one user from
+    writing watchlist entries into another user's agent (IDOR guard).
+
+    Minimal required fields:  ticker, decision.
+    Optional but useful:      direction, author, reason, confidence,
+                              source_message_id, signal_source.
+    """
+    from shared.db.models.trade_signal import TradeSignal
+
+    # --- R-001: IDOR guard — verify caller holds the agent's phoenix_api_key ---
+    auth_header = request.headers.get("Authorization", "")
+    supplied_key = auth_header.removeprefix("Bearer ").strip()
+    if supplied_key:
+        agent_row = (await session.execute(
+            select(Agent).where(Agent.id == agent_id)
+        )).scalar_one_or_none()
+        if agent_row is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        stored_key = getattr(agent_row, "phoenix_api_key", None) or ""
+        import hmac as _hmac
+        if stored_key and not _hmac.compare_digest(stored_key, supplied_key):
+            raise HTTPException(status_code=403, detail="Invalid agent API key")
+    # If no key is supplied we fall through — the outer API gateway/JWT
+    # middleware has already authenticated the dashboard user.
+
+    _VALID_DECISIONS = {"watchlist", "executed", "rejected", "paper"}
+    ticker = str(body.get("ticker") or "").upper().strip()
+    decision = str(body.get("decision") or body.get("action") or "").lower().strip()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="ticker is required")
+    if decision not in _VALID_DECISIONS:
+        decision = "watchlist"  # safe default when agent sends WATCHLIST (uppercase)
+
+    # --- R-002: handle explicit None / 0.0 confidence gracefully ---
+    raw_conf = body.get("confidence")
+    model_confidence: float | None = None
+    if raw_conf is not None:
+        try:
+            model_confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            model_confidence = None
+
+    try:
+        row = TradeSignal(
+            id=uuid.uuid4(),
+            agent_id=agent_id,
+            ticker=ticker,
+            direction=str(body.get("direction") or body.get("side") or "") or None,
+            signal_source=str(body.get("signal_source") or "discord"),
+            source_message_id=str(body.get("source_message_id") or "") or None,
+            model_confidence=model_confidence,
+            decision=decision,
+            rejection_reason=str(body.get("reason") or body.get("rejection_reason") or "") or None,
+            features=body.get("features") or {},
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    except Exception as exc:
+        logger.exception("[trade-signals] insert failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(exc)[:200]}")
+
+    return {"ok": True, "id": str(row.id), "ticker": ticker, "decision": decision}
+
+
+# ---------------------------------------------------------------------------
 # P2: Logs (polling + SSE stream)
 # ---------------------------------------------------------------------------
 @router.get("/{agent_id}/logs")

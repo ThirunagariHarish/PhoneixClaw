@@ -54,6 +54,46 @@ async def report_heartbeat(config: dict, status: dict):
         )
 
 
+async def report_signal(config: dict, signal: dict):
+    """POST a trade-signal (watchlist / executed / rejected / paper) to Phoenix.
+
+    Writes to trade_signals table so the Watchlist History tab in the dashboard
+    is populated.  The ``action`` / ``decision`` field controls which bucket
+    it lands in.  Defaults to 'watchlist' when the agent says WATCHLIST.
+    """
+    api_url = config.get("phoenix_api_url", "http://localhost:8011")
+    agent_id = config.get("agent_id", "")
+    if not agent_id:
+        _log.warning("report_signal: no agent_id in config, skipping")
+        return
+
+    decision = str(signal.get("action") or signal.get("decision") or "watchlist").lower()
+
+    payload = {
+        "ticker": signal.get("ticker", ""),
+        "decision": decision,
+        "direction": signal.get("direction") or signal.get("side") or "",
+        "reason": signal.get("reason") or signal.get("rejection_reason") or "",
+        "author": signal.get("author", ""),
+        "signal_source": signal.get("signal_source", "discord"),
+        "source_message_id": signal.get("source_message_id") or signal.get("message_id") or "",
+        "confidence": signal.get("confidence") or signal.get("model_confidence"),
+        "features": signal.get("features") or {},
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{api_url}/api/v2/agents/{agent_id}/trade-signals",
+            json=payload,
+            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+        )
+        if resp.status_code >= 400:
+            _log.warning(
+                "report_signal POST returned %d: %s",
+                resp.status_code, resp.text[:200],
+            )
+
+
 async def report_signal_event(config: dict, event_type: str, data: dict):
     """Post a structured log entry to Phoenix so the Logs tab shows signal activity."""
     api_url = config.get("phoenix_api_url", "http://localhost:8011")
@@ -107,23 +147,56 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--action", required=True, choices=["register", "trade", "heartbeat"])
-    parser.add_argument("--data", help="JSON file with data to report")
+    parser.add_argument("--action", required=True,
+                        choices=["register", "trade", "heartbeat", "watchlist", "signal"])
+    parser.add_argument("--data", help="JSON string or path to JSON file with data to report")
     args = parser.parse_args()
 
     import asyncio
     with open(args.config) as f:
         config = json.load(f)
 
+    def _load_data() -> dict:
+        if not args.data:
+            return {}
+        import os
+        # R-005: detect path-like strings that don't exist before trying json.loads
+        _looks_like_path = (
+            args.data.startswith("/")
+            or args.data.startswith("./")
+            or args.data.startswith(".\\")
+            or (len(args.data) > 2 and args.data[1] == ":" and args.data[2] in "/\\")
+        )
+        if _looks_like_path:
+            if not os.path.exists(args.data):
+                print(json.dumps({"ok": False, "error": f"Data file not found: {args.data}"}))
+                raise SystemExit(1)
+            with open(args.data) as fh:
+                return json.load(fh)
+        if os.path.exists(args.data):
+            with open(args.data) as fh:
+                return json.load(fh)
+        return json.loads(args.data)
+
     if args.action == "register":
         result = asyncio.run(register_agent(config))
         print(json.dumps(result, indent=2))
-    elif args.action == "trade" and args.data:
-        with open(args.data) as f:
-            trade = json.load(f)
+    elif args.action == "trade":
+        # R-003: require --data for --action trade to avoid posting empty trade rows
+        trade = _load_data()
+        if not trade:
+            print(json.dumps({"ok": False, "error": "--data is required for --action trade"}))
+            raise SystemExit(1)
         asyncio.run(report_trade(config, trade))
     elif args.action == "heartbeat":
-        asyncio.run(report_heartbeat(config, {}))
+        asyncio.run(report_heartbeat(config, _load_data()))
+    elif args.action in ("watchlist", "signal"):
+        signal = _load_data()
+        # Allow --action watchlist without explicitly setting decision in the data
+        if args.action == "watchlist" and "decision" not in signal and "action" not in signal:
+            signal["decision"] = "watchlist"
+        asyncio.run(report_signal(config, signal))
+        print(json.dumps({"ok": True, "action": args.action}))
 
 
 if __name__ == "__main__":
