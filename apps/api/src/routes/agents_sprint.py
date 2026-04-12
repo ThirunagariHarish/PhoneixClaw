@@ -388,6 +388,41 @@ async def get_agent_logs(
     return {"logs": rows, "count": len(rows)}
 
 
+class AgentLogBody(BaseModel):
+    level: str = "INFO"
+    source: str = "live_pipeline"
+    message: str
+    context: dict | None = None
+
+
+@router.post("/{agent_id}/logs")
+async def post_agent_log(
+    agent_id: uuid.UUID,
+    body: AgentLogBody,
+    session: DbSession = None,
+):
+    """Agent-auth endpoint: writes a structured log entry to agent_logs."""
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO agent_logs (agent_id, level, source, message, context, created_at) "
+                "VALUES (:aid, :level, :source, :msg, :ctx, NOW())"
+            ),
+            {
+                "aid": str(agent_id),
+                "level": body.level.upper()[:16],
+                "source": (body.source or "agent")[:64],
+                "msg": body.message[:4000],
+                "ctx": json.dumps(body.context or {}),
+            },
+        )
+        await session.commit()
+    except Exception as exc:
+        logger.warning("[agents_sprint] agent log insert failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:200]}
+    return {"ok": True}
+
+
 @router.get("/{agent_id}/logs/stream")
 async def stream_agent_logs(agent_id: uuid.UUID, request: Request):
     """SSE endpoint — tails agent_logs for the given agent.

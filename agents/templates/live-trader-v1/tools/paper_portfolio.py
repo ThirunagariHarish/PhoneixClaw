@@ -217,25 +217,10 @@ def _fetch_prices(tickers: list[str]) -> dict[str, float]:
 
 
 def _add_to_robinhood(ticker: str) -> None:
-    """Best-effort add to Robinhood watchlist via subprocess to MCP."""
+    """Best-effort add to Robinhood watchlist via MCP server."""
     try:
-        import subprocess
-        tools_dir = Path(__file__).resolve().parent
-        # Direct call to a CLI mode if available, or send JSON-RPC stdin
-        # For now, use a simple environment-based call to robin_stocks if installed
-        env = os.environ.copy()
-        try:
-            import robin_stocks.robinhood as r
-            if env.get("RH_USERNAME") and env.get("RH_PASSWORD"):
-                # Login is best-effort; may already be logged in
-                try:
-                    r.login(env["RH_USERNAME"], env["RH_PASSWORD"],
-                            mfa_code=None, store_session=True)
-                except Exception:
-                    pass
-                r.account.post_symbols_to_watchlist([ticker], "Phoenix Paper")
-        except ImportError:
-            pass
+        from robinhood_mcp_client import add_to_watchlist
+        add_to_watchlist(ticker)
     except Exception as e:
         print(f"  [paper_portfolio] add_to_watchlist failed: {e}", file=sys.stderr)
 
@@ -254,9 +239,14 @@ def _report_to_phoenix(event: str, data: dict) -> None:
     try:
         from report_to_phoenix import report_progress
         if event == "add":
-            report_progress("paper_trade_add",
-                            f"Paper {data.get('side', '?').upper()} {data.get('ticker', '?')} @ ${data.get('entry_price', 0)}",
-                            -1, {"paper_trade": data, "decision_status": "paper"})
+            side = data.get('side', '?').upper()
+            ticker = data.get('ticker', '?')
+            price = data.get('entry_price', 0)
+            report_progress(
+                "paper_trade_add",
+                f"Paper {side} {ticker} @ ${price}",
+                -1, {"paper_trade": data, "decision_status": "paper"},
+            )
         elif event == "close":
             report_progress("paper_trade_close",
                             f"Paper closed {data.get('ticker', '?')} — P&L: ${data.get('simulated_pnl', 0)}",

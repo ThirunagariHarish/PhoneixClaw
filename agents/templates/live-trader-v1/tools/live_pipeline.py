@@ -246,7 +246,7 @@ async def _redis_signal_stream(config: dict):
 
     from discord_redis_consumer import _load_cursor_data, _save_cursor
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = config.get("redis_url") or os.getenv("REDIS_URL", "redis://localhost:6379")
     connector_id = config.get("connector_id")
     channel_id = config.get("channel_id", connector_id)
     if not connector_id and not channel_id:
@@ -306,7 +306,7 @@ async def _redis_signal_stream(config: dict):
 
 async def run_pipeline(config: dict) -> None:
     """Main pipeline loop — consume signals, process, execute."""
-    from report_to_phoenix import report_heartbeat
+    from report_to_phoenix import report_heartbeat, report_signal_event
 
     signals_processed = 0
     trades_today = 0
@@ -343,16 +343,35 @@ async def run_pipeline(config: dict) -> None:
         log.info("Signal #%d: %s", signals_processed, signal.get("content", "")[:80])
 
         try:
+            await report_signal_event(config, "signal_received", {
+                "content": signal.get("content", "")[:200],
+                "author": signal.get("author", ""),
+                "message_id": signal.get("message_id", ""),
+            })
+        except Exception:
+            pass
+
+        try:
             decision = await process_signal(signal, config)
             decision = _json_safe(decision)
             decision["signal_raw"] = signal.get("content", "")
 
             Path("decision.json").write_text(json.dumps(decision, indent=2, default=str))
 
+            ticker = decision.get("parsed_signal", {}).get("ticker", "?")
+            direction = decision.get("parsed_signal", {}).get("direction", "?")
+
+            try:
+                await report_signal_event(config, "signal_decided", {
+                    "ticker": ticker,
+                    "decision": decision["decision"],
+                    "reason": decision.get("reason", "")[:200],
+                })
+            except Exception:
+                pass
+
             if decision["decision"] == "EXECUTE":
                 trades_today += 1
-                ticker = decision.get("parsed_signal", {}).get("ticker", "?")
-                direction = decision.get("parsed_signal", {}).get("direction", "?")
                 log.info("EXECUTE: %s %s", direction, ticker)
 
                 try:
@@ -366,11 +385,8 @@ async def run_pipeline(config: dict) -> None:
                 except Exception as e:
                     log.error("Trade execution failed: %s", e, exc_info=True)
             elif decision["decision"] == "WATCHLIST":
-                ticker = decision.get("parsed_signal", {}).get("ticker", "?")
                 log.info("WATCHLIST (outside RTH or policy): %s — %s", ticker, decision.get("reason"))
             else:
-                direction = decision.get("parsed_signal", {}).get("direction")
-                ticker = decision.get("parsed_signal", {}).get("ticker")
                 log.info("REJECT: %s — %s", ticker, decision.get("reason"))
                 if direction in ("sell", "close", "trim") and ticker:
                     _route_sell_signal(ticker, signal, decision)

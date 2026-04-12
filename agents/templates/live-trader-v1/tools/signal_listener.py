@@ -34,7 +34,7 @@ async def listen(config: dict, output_dir: Path) -> None:
         log.error("redis-py not installed — pip install redis")
         return
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = config.get("redis_url") or os.getenv("REDIS_URL", "redis://localhost:6379")
     connector_id = config.get("connector_id")
     channel_id = config.get("channel_id", connector_id)
 

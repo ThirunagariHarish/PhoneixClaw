@@ -51,6 +51,38 @@ async def report_heartbeat(config: dict, status: dict):
         )
 
 
+async def report_signal_event(config: dict, event_type: str, data: dict):
+    """Post a structured log entry to Phoenix so the Logs tab shows signal activity."""
+    api_url = config.get("phoenix_api_url", "http://localhost:8011")
+    agent_id = config.get("agent_id", "")
+    if not agent_id:
+        return
+    message = f"[{event_type}] "
+    if event_type == "signal_received":
+        author = data.get("author", "unknown")
+        content = data.get("content", "")[:200]
+        message += f"New signal from {author}: {content}"
+    elif event_type == "signal_decided":
+        ticker = data.get("ticker", "?")
+        decision = data.get("decision", "?")
+        reason = data.get("reason", "")[:200]
+        message += f"{decision} on {ticker}" + (f" — {reason}" if reason else "")
+    else:
+        message += json.dumps(data, default=str)[:300]
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            f"{api_url}/api/v2/agents/{agent_id}/logs",
+            json={
+                "level": "INFO",
+                "source": "live_pipeline",
+                "message": message,
+                "context": {"event": event_type, **data},
+            },
+            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)

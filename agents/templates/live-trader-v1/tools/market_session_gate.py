@@ -55,10 +55,11 @@ def outside_rth_watchlist_payload(
     ticker = (parsed.get("ticker") or "").strip().upper()
     if ticker:
         try:
-            from paper_portfolio import _add_to_robinhood
+            from robinhood_mcp_client import add_to_watchlist
 
-            _add_to_robinhood(ticker)
-            steps.append({"step": "robinhood_watchlist", "status": "ok", "ticker": ticker})
+            result = add_to_watchlist(ticker, config=config)
+            wl_status = "error" if "error" in result else "ok"
+            steps.append({"step": "robinhood_watchlist", "status": wl_status, "ticker": ticker})
         except Exception as exc:
             log.debug("Robinhood watchlist add skipped: %s", exc)
             steps.append({"step": "robinhood_watchlist", "status": "skipped", "error": str(exc)[:120]})

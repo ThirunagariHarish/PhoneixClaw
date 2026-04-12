@@ -1185,6 +1185,8 @@ class AgentGateway:
         primary_connector_id = str(connector_ids[0]) if connector_ids else ""
         agent_config["connector_id"] = primary_connector_id
 
+        agent_config["redis_url"] = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
         # Paper mode flag — paper agents never receive broker credentials
         agent_config["paper_mode"] = agent.status == "PAPER"
 

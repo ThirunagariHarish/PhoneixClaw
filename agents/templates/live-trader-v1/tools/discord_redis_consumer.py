@@ -106,7 +106,7 @@ def _config(config_path: str = "config.json") -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def consume(connector_id: str, output_path: str) -> int:
+async def consume(connector_id: str, output_path: str, redis_url: str = "") -> int:
     """Consume messages from the Redis stream indefinitely until _shutdown is set.
 
     Returns the total number of messages written during this run.
@@ -120,7 +120,7 @@ async def consume(connector_id: str, output_path: str) -> int:
         print("[redis_consumer] redis-py not installed", file=sys.stderr)
         return 0
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
     try:
         r = aioredis.from_url(redis_url, decode_responses=True)
     except Exception as exc:
@@ -241,7 +241,8 @@ def main():
         print("[redis_consumer] No connector_id or channel_id configured", file=sys.stderr)
         sys.exit(1)
 
-    total = asyncio.run(consume(connector_id, args.output))
+    redis_url = cfg.get("redis_url") or ""
+    total = asyncio.run(consume(connector_id, args.output, redis_url=redis_url))
     print(json.dumps({"connector_id": connector_id, "messages": total}))
 
 
