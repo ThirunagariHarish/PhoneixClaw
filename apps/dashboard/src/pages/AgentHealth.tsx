@@ -386,12 +386,19 @@ export default function AgentHealthPage() {
 
   // Agent actions
   const restartMutation = useMutation({
-    mutationFn: (agentId: string) => api.post(`/api/v2/agents/${agentId}/restart`),
+    mutationFn: async (agentId: string) => {
+      // Try resume first (for paused agents), fall back to activate (for created/stopped)
+      try {
+        return await api.post(`/api/v2/agents/${agentId}/resume`)
+      } catch {
+        return await api.post(`/api/v2/agents/${agentId}/activate`)
+      }
+    },
     onSuccess: () => {
       toast.success('Agent restart requested')
       qc.invalidateQueries({ queryKey: ['agent-health-agents'] })
     },
-    onError: () => toast.error('Failed to restart agent'),
+    onError: () => toast.error('Failed to restart agent — check agent configuration'),
   })
 
   const pauseMutation = useMutation({

@@ -34,7 +34,8 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import ChatWidget from '@/components/ChatWidget'
-import { KillSwitchButton } from '@/components/KillSwitch'
+// KillSwitch moved to Home page — import kept for reference
+// import { KillSwitchButton } from '@/components/KillSwitch'
 import { TokenMonitor } from '@/components/TokenMonitor'
 
 const SIDEBAR_COLLAPSED_KEY = 'phoenix-sidebar-collapsed'
@@ -328,7 +329,6 @@ export default function AppShell() {
           {!collapsed && <span className="font-semibold truncate">Phoenix Claw</span>}
           {!collapsed && (
             <div className="ml-auto flex items-center gap-1">
-              <KillSwitchButton variant="topbar" />
             </div>
           )}
           {!collapsed && (
@@ -471,7 +471,6 @@ export default function AppShell() {
         </Sheet>
         <img src="/phoenix-logo.png" alt="" className="h-7 w-7" />
         <span className="font-semibold flex-1 truncate">Phoenix Claw</span>
-        <KillSwitchButton variant="topbar" />
         <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications() } }}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="relative h-9 w-9">

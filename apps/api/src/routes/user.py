@@ -1,10 +1,11 @@
 """
-User profile routes: get and update profile, preferences.
+User profile routes: get and update profile, preferences, password.
 """
 
 import uuid
 from typing import Optional
 
+import bcrypt
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -69,3 +70,27 @@ async def update_profile(request: Request, body: ProfileUpdateRequest, session: 
         "email": user.email,
         "timezone": user.timezone or "UTC",
     }
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.put("/password")
+async def change_password(request: Request, body: PasswordChangeRequest, session: DbSession):
+    user_id = _get_user_id(request)
+    result = await session.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not bcrypt.checkpw(body.current_password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 8 characters")
+
+    user.hashed_password = bcrypt.hashpw(body.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    await session.commit()
+    return {"message": "Password updated successfully"}

@@ -12,6 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { KillSwitchButton } from '@/components/KillSwitch'
 import {
   Home as HomeIcon, TrendingUp, TrendingDown, DollarSign, Briefcase, Bot,
   ArrowRight, Plus, Eye, FlaskConical, Zap, Clock, ArrowUpRight, ArrowDownRight,
@@ -404,6 +405,9 @@ function QuickActions() {
               {action.label}
             </Button>
           ))}
+          <div className="pt-2 border-t border-border mt-2">
+            <KillSwitchButton variant="card" />
+          </div>
         </div>
       </CardContent>
     </Card>
