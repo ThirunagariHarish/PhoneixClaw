@@ -16,8 +16,11 @@ Show the current state of this live trading agent.
 
 4. Read the last 5 entries from `trades.log` for recent activity.
 
-5. Check if the Discord consumer is running:
-   - Look for `tools/discord_redis_consumer.py` process or `stream_cursor.json` PID file
+5. Check if the signal consumer is running:
+   - Look for `tools/live_pipeline.py` process first: `pgrep -af live_pipeline`
+   - If not found, check for `tools/discord_redis_consumer.py`: `pgrep -af discord_redis_consumer`
+   - Also check for `stream_cursor.json` which indicates a consumer has run
+   - Report **RUNNING** if either process is active; **STOPPED** only if neither is found
 
 6. Report heartbeat status:
    - Run: `python3 tools/report_to_phoenix.py --event heartbeat`
@@ -29,5 +32,5 @@ Agent: {agent_id} | Channel: {channel_name} | Analyst: {analyst_name}
 Mode: {mode} | Paused: {yes/no}
 Open Positions: {count} | Total Exposure: ${amount}
 Last Trade: {time} | Last Signal: {time}
-Discord Consumer: {running/stopped}
+Signal Consumer: {running/stopped} (live_pipeline or discord_redis_consumer)
 ```

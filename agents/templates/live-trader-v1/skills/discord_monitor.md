@@ -4,7 +4,9 @@
 Monitor a specific Discord channel for trade signals from the assigned analyst. Detect buy/sell/close messages in real time and hand them off to the decision engine.
 
 ## Trigger
-Runs continuously as a persistent daemon process via `tools/discord_redis_consumer.py` (terminated by SIGTERM when the agent session ends).
+Runs continuously as a persistent daemon process. **Preferred:** `tools/live_pipeline.py --config config.json` (integrated pipeline). **Alternative:** `tools/discord_redis_consumer.py --config config.json --output pending_signals.json` (standalone, writes to file).
+
+Both consume from Redis `stream:channel:{connector_id}` where `connector_id` is the UUID from `config.json`. The Phoenix API ingestion daemon publishes to this stream; the agent does **not** connect to Discord directly.
 
 ## Behaviour
 

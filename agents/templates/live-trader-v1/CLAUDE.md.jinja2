@@ -122,18 +122,29 @@ All tools are in `tools/`. Run via `python tools/<name>.py <args>`.
 - `agent_comms.py` — Inter-agent message passing
 
 ### Hot Loop (latency-critical)
-- `live_pipeline.py` — In-process async pipeline for maximum speed
+- `live_pipeline.py` — In-process async pipeline for maximum speed. **Preferred way** to consume signals from Redis.
 
 ## Operation Loop
 
-### Startup
+### Startup — CRITICAL: start the signal consumer
 
-1. Start signal listener in background:
-   ```bash
-   python tools/signal_listener.py --config config.json &
-   ```
-2. Verify `incoming_signals/` receives files
-3. Report startup to Phoenix
+The agent **must** start one of these on startup; heartbeat alone is insufficient:
+
+**Option A (recommended):** Start the integrated live pipeline:
+```bash
+python tools/live_pipeline.py --config config.json &
+```
+This reads `stream:channel:{connector_id}` from Redis and runs the full parse → enrich → infer → risk → execute chain in-process.
+
+**Option B:** Start the standalone Redis consumer + signal listener:
+```bash
+python tools/discord_redis_consumer.py --config config.json --output pending_signals.json &
+python tools/signal_listener.py --config config.json &
+```
+
+**Verify `config.json` contains the correct `connector_id`** (the UUID of the linked Discord connector, e.g. `04ca2bf7-...`). The Redis stream key is `stream:channel:{connector_id}` — this must match what the Phoenix ingestion daemon publishes. The channel name (`day-trades`) alone is not the stream key.
+
+After starting the consumer:
 
 ### Pre-Market (30 min before open)
 

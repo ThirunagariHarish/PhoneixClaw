@@ -22,6 +22,43 @@ from shared.db.models.connector import Connector, ConnectorAgent
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Discord channel-ID normalisation
+# ---------------------------------------------------------------------------
+
+def discord_channel_ids_from_config(config: dict | None) -> list[str]:
+    """Extract Discord channel IDs from any shape the connector config may use.
+
+    Priority:
+      1. ``channel_ids`` (list[str])          — canonical form
+      2. ``channel_id`` (str)                 — legacy single-channel
+      3. ``selected_channels`` (list[dict])   — Connectors UI wizard format
+    """
+    if not config:
+        return []
+    cids = config.get("channel_ids")
+    if isinstance(cids, list) and cids:
+        return [str(c) for c in cids if c]
+
+    single = config.get("channel_id")
+    if single:
+        return [str(single)]
+
+    selected = config.get("selected_channels")
+    if isinstance(selected, list) and selected:
+        out: list[str] = []
+        for entry in selected:
+            if isinstance(entry, dict):
+                ch = entry.get("channel_id")
+                if ch:
+                    out.append(str(ch))
+            elif isinstance(entry, str) and entry:
+                out.append(entry)
+        return out
+
+    return []
+
+
 def parse_connector_ids_from_config(config: dict | None) -> set[uuid.UUID]:
     """Return valid UUIDs from ``config[\"connector_ids\"]`` (strings or UUIDs)."""
     out: set[uuid.UUID] = set()

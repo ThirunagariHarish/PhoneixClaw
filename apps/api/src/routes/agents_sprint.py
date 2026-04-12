@@ -30,9 +30,13 @@ from pydantic import BaseModel
 from sqlalchemy import and_, select, text
 
 from apps.api.src.deps import DbSession
-from apps.api.src.services.feed_connector_resolution import resolve_agent_connector_ids_for_feed
+from apps.api.src.services.feed_connector_resolution import (
+    discord_channel_ids_from_config,
+    resolve_agent_connector_ids_for_feed,
+)
 from shared.db.models.agent import Agent
 from shared.db.models.channel_message import ChannelMessage
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/agents", tags=["agents_sprint"])
@@ -126,11 +130,7 @@ async def backfill_channel_messages(
                 errors.append(f"Connector {cid}: no token")
                 continue
 
-            channel_ids = (conn.config or {}).get("channel_ids", [])
-            if not channel_ids:
-                cid_single = (conn.config or {}).get("channel_id")
-                if cid_single:
-                    channel_ids = [cid_single]
+            channel_ids = discord_channel_ids_from_config(conn.config)
 
             if not channel_ids:
                 errors.append(f"Connector {cid}: no channel_ids configured")
@@ -140,7 +140,7 @@ async def backfill_channel_messages(
             headers = {"Authorization": f"Bot {token}" if len(token) < 100 else token}
 
             async with httpx.AsyncClient(timeout=15) as http:
-                for ch_id in channel_ids[:5]:
+                for ch_id in channel_ids[:20]:
                     try:
                         resp = await http.get(
                             f"https://discord.com/api/v10/channels/{ch_id}/messages",
@@ -684,8 +684,10 @@ async def spawn_typed(body: SpawnTypedBody, session: DbSession = None):
         if hasattr(gateway, "create_specialized_agent"):
             # Create the Agent DB record first — gateway.create_specialized_agent
             # expects the record to already exist so it can read name/config.
+            from datetime import datetime
+            from datetime import timezone as _tz
+
             from shared.db.engine import get_session as _get_session
-            from datetime import datetime, timezone as _tz
             new_id = uuid.uuid4()
             now = datetime.now(_tz.utc)
             async for db in _get_session():

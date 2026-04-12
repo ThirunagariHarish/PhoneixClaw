@@ -291,8 +291,9 @@ async def start_ingestion() -> None:
                 continue
             cfg = dict(c.config or {})
             cfg["token"] = token
-            if not cfg.get("channel_ids") and cfg.get("channel_id"):
-                cfg["channel_ids"] = [cfg["channel_id"]]
+            from apps.api.src.services.feed_connector_resolution import discord_channel_ids_from_config
+            cfg["channel_ids"] = discord_channel_ids_from_config(cfg)
+            cfg.setdefault("guild_id", cfg.get("server_id", ""))
             connectors_to_start.append((str(c.id), cfg))
 
     for conn_id, cfg in connectors_to_start:
@@ -360,8 +361,9 @@ async def refresh_ingestion() -> dict:
                 continue
             cfg = dict(c.config or {})
             cfg["token"] = token
-            if not cfg.get("channel_ids") and cfg.get("channel_id"):
-                cfg["channel_ids"] = [cfg["channel_id"]]
+            from apps.api.src.services.feed_connector_resolution import discord_channel_ids_from_config
+            cfg["channel_ids"] = discord_channel_ids_from_config(cfg)
+            cfg.setdefault("guild_id", cfg.get("server_id", ""))
             try:
                 connector = DiscordConnector(cid, cfg)
                 task = asyncio.create_task(_ingest_loop(cid, connector))
