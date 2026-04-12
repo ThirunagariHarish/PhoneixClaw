@@ -34,9 +34,17 @@ class RobinhoodMCPClient:
         env = os.environ.copy()
         creds = self._config.get("robinhood_credentials", self._config.get("robinhood", {}))
         if isinstance(creds, dict):
-            env["RH_USERNAME"] = creds.get("username", "")
-            env["RH_PASSWORD"] = creds.get("password", "")
-            env["RH_TOTP_SECRET"] = creds.get("totp_secret", "")
+            # Only override env vars when the config actually supplies a value.
+            # Previously, empty-string default values clobbered valid RH_*
+            # env vars that were already set in the container/parent process —
+            # causing "robinhood_login ✅, everything else ❌" because the
+            # subprocess lost the real credentials.
+            if creds.get("username"):
+                env["RH_USERNAME"] = creds["username"]
+            if creds.get("password"):
+                env["RH_PASSWORD"] = creds["password"]
+            if creds.get("totp_secret"):
+                env["RH_TOTP_SECRET"] = creds["totp_secret"]
         if self._config.get("paper_mode"):
             env["PAPER_MODE"] = "true"
         # Always set HOME to the agent work-dir (parent of tools/) so the
