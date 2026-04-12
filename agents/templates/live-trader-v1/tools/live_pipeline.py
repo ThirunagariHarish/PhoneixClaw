@@ -60,11 +60,12 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     ticker = parsed.get("ticker")
     direction = parsed.get("direction")
     if not ticker:
-        reasoning.append("No ticker found in signal")
+        snippet = raw_signal.get("content", "")[:100]
+        reasoning.append(f"No ticker found in signal: '{snippet}'")
         return _build_result("REJECT", "no_ticker", steps, reasoning, parsed,
                              source_message_id=raw_signal.get("message_id"))
     if not direction:
-        reasoning.append("No trade direction found")
+        reasoning.append(f"No trade direction found for {ticker}")
         return _build_result("REJECT", "no_direction", steps, reasoning, parsed,
                              source_message_id=raw_signal.get("message_id"))
 
@@ -120,6 +121,24 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     except Exception as e:
         steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
         reasoning.append(f"Inference failed: {e}")
+
+    # No-models gate: if no trained models exist, route to watchlist for observation
+    models_dir = Path(config.get("models_dir", "models"))
+    has_models = models_dir.exists() and any(models_dir.glob("*_model.pkl"))
+
+    if not has_models:
+        reasoning.append("No trained models available — adding to watchlist for observation")
+        try:
+            from robinhood_mcp_client import add_to_watchlist
+            add_to_watchlist(ticker, config=config)
+            steps.append({"step": "watchlist_add", "status": "ok", "ticker": ticker})
+        except Exception as exc:
+            steps.append({"step": "watchlist_add", "status": "skipped", "error": str(exc)[:120]})
+        return _build_result(
+            "WATCHLIST", "no_backtesting_data", steps, reasoning, parsed,
+            prediction, None,
+            source_message_id=raw_signal.get("message_id"),
+        )
 
     # Step 4: Risk check
     portfolio = {"open_positions": 0, "daily_pnl_pct": 0}

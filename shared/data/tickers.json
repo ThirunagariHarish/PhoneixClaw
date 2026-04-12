@@ -21,7 +21,7 @@
     "CI", "CL", "CME", "CMG", "COF", "CTAS", "D", "DE", "DG", "DLTR",
     "DOW", "DUK", "DVN", "DXCM", "EA", "ECL", "EL", "EMR", "ENPH",
     "EOG", "EQR", "ES", "EW", "FANG", "FAST", "FDX", "FI", "FISV",
-    "FTNT", "GD", "GE", "GILD", "GIS", "GM", "GNRC", "GRMN", "GWW",
+    "FTNT", "GD", "GE", "GILD", "GIS", "GNRC", "GRMN", "GWW",
     "HCA", "HOLX", "HUM", "ICE", "IDXX", "IFF", "ILMN", "INTU", "ISRG",
     "ITW", "JBHT", "JCI", "KDP", "KEY", "KHC", "KLAC", "KMB", "KMI",
     "KR", "KVUE", "LHX", "LMT", "LRCX", "LULU", "LVS", "MAR", "MCK",
@@ -44,6 +44,11 @@
     "DOCS", "ESTC", "FLNC", "FOUR", "FRSH", "GLOB", "HEI", "IREN",
     "JOBY", "LMND", "LUNR", "MP", "NBIX", "NTRA", "ONON", "OWL",
     "PCOR", "RELY", "RXRX", "S", "SEDG", "TMDX", "UPST", "VRT",
-    "WULF", "XPEV"
+    "WULF", "XPEV",
+    "AFRM", "ASTS", "BWXT", "CAVA", "COHR", "CORZ", "CVNA", "DJT",
+    "EXPE", "GDDY", "GERN", "IQ", "KULR", "LAZR", "MGNI", "MSOS",
+    "NKLA", "OKLO", "OSCR", "PSNY", "QS", "RDDT", "RDW", "RGTI",
+    "SAVE", "SIRI", "SKLZ", "SMR", "SPCE", "SWN", "TEM", "TNXP",
+    "TRIP", "TTOO", "VKTX", "VST", "W", "WOLF"
   ]
 }

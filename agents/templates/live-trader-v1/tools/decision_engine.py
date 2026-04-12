@@ -219,6 +219,24 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
         steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
         reasoning.append(f"Inference failed: {e}")
 
+    # No-models gate: if no trained models exist, route to watchlist for observation
+    models_dir = Path(config.get("models_dir", "models"))
+    has_models = models_dir.exists() and any(models_dir.glob("*_model.pkl"))
+
+    if not has_models:
+        reasoning.append("No trained models available — adding to watchlist for observation")
+        try:
+            from robinhood_mcp_client import add_to_watchlist
+            add_to_watchlist(ticker, config=config)
+            steps.append({"step": "watchlist_add", "status": "ok", "ticker": ticker})
+        except Exception as exc:
+            steps.append({"step": "watchlist_add", "status": "skipped", "error": str(exc)[:120]})
+        decision = _build_decision(
+            "WATCHLIST", "no_backtesting_data", steps, reasoning, parsed,
+            enriched, prediction,
+        )
+        return decision
+
     # Risk check
     portfolio = {"open_positions": 0, "daily_pnl_pct": 0}
     portfolio_path = Path("portfolio.json")

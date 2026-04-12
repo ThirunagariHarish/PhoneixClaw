@@ -227,16 +227,18 @@ def _load_known_tickers() -> set[str]:
 
 
 def _is_valid_ticker(symbol: str) -> bool:
-    """Check if a symbol looks like a valid ticker."""
+    """Check if a symbol looks like a valid ticker.
+
+    Accepts any 2-5 char uppercase alphabetic token that isn't a common English
+    word. The known-tickers list is used for confidence scoring, not as a gate.
+    """
     if symbol in _COMMON_WORDS:
         return False
-    known = _load_known_tickers()
-    if known and symbol in known:
-        return True
-    if len(symbol) <= 1:
+    if len(symbol) <= 1 or len(symbol) > 5:
         return False
-    # If we have no known tickers file, accept 2-5 char uppercase strings
-    return len(known) == 0
+    if not symbol.isalpha() or not symbol.isupper():
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -757,6 +759,8 @@ def parse_signal_compat(raw_signal: dict) -> dict:
 
     if parsed.ticker:
         result["ticker"] = parsed.ticker
+    else:
+        logger.warning("No ticker extracted from: %s", content[:200])
     if parsed.entry_price is not None:
         result["signal_price"] = parsed.entry_price
     if parsed.direction:
