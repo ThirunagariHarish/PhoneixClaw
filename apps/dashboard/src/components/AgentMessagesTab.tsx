@@ -38,7 +38,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (successTimerRef.current) clearTimeout(successTimerRef.current) }, [])
 
-  const { data, isLoading, refetch, isFetching } = useQuery<{ messages: Msg[]; count: number }>({
+  const { data, isLoading, refetch, isFetching } = useQuery<{ messages: Msg[]; count: number; has_connectors: boolean }>({
     queryKey: ['channel-messages', agentId],
     queryFn: async () =>
       (await api.get(`/api/v2/agents/${agentId}/channel-messages?limit=200`)).data,
@@ -73,6 +73,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   })
 
   const messages = data?.messages ?? []
+  const hasConnectors = data?.has_connectors ?? false
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
 
@@ -81,14 +82,18 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
       <Card>
         <CardContent className="p-8 text-center space-y-4">
           <div className="text-muted-foreground text-sm">
-            No channel messages yet. Link a Discord/Reddit connector to start seeing the feed.
+            {hasConnectors
+              ? 'No messages yet — waiting for new activity in the connected channel.'
+              : 'No channel messages yet. Link a Discord/Reddit connector to start seeing the feed.'}
           </div>
 
           {!linking ? (
             <div className="flex justify-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setLinking(true)}>
-                <Plug className="h-4 w-4 mr-1.5" /> Link Connector
-              </Button>
+              {!hasConnectors && (
+                <Button variant="outline" size="sm" onClick={() => setLinking(true)}>
+                  <Plug className="h-4 w-4 mr-1.5" /> Link Connector
+                </Button>
+              )}
               <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
                 <RefreshCw className={`h-4 w-4 mr-1.5 ${isFetching ? 'animate-spin' : ''}`} /> Refresh
               </Button>

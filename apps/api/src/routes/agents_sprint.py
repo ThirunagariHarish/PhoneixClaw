@@ -59,7 +59,7 @@ async def get_channel_messages(
     sub_rows = (await session.execute(sub_q)).all()
     connector_ids = [r[0] for r in sub_rows]
     if not connector_ids:
-        return {"messages": [], "count": 0}
+        return {"messages": [], "count": 0, "has_connectors": False}
 
     q = (
         select(ChannelMessage)
@@ -83,7 +83,7 @@ async def get_channel_messages(
         }
         for m in rows
     ]
-    return {"messages": messages, "count": len(messages)}
+    return {"messages": messages, "count": len(messages), "has_connectors": True}
 
 
 @router.post("/{agent_id}/channel-messages/backfill")
