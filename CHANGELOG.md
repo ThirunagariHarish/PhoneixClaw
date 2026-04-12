@@ -5,6 +5,37 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.4] - 2026-04-12 — Fix Robinhood Suspicious-Login / Session Revocation Bug
+
+**Patch release.** Eliminates the "suspicious login detected" Robinhood push
+notifications that fired on every trade execution and Discord message, blocking
+millisecond-latency trade paths. Three coordinated root causes are resolved: the
+context fetcher no longer revokes the shared session on every portfolio poll; the MCP
+subprocess now restores a persisted session pickle via a zero-network fast-path instead
+of calling `rh.login()` fresh on every invocation; and the session pickle is written to
+the agent's persistent work directory instead of the ephemeral Docker `/root` overlay.
+One commit; all existing tests green.
+
+### Fixed
+
+- **`apps/api/src/services/robinhood_context_fetcher.py`** — Removed the
+  `rh.authentication.logout()` call that executed after every portfolio fetch inside
+  `_fetch_sync()`. This call was revoking the shared OAuth token used by the live
+  agent's MCP server, triggering Robinhood's suspicious-device-approval flow on the
+  next login attempt.
+- **`agents/templates/live-trader-v1/tools/robinhood_mcp.py`** — Added
+  `_try_restore_session_from_pickle()` zero-network fast-path: the subprocess now
+  restores an existing session from the persisted pickle before falling back to a full
+  `rh.login()`. `HOME` is self-corrected to the agent's persistent work-dir on startup
+  so the pickle survives container restarts. Re-auth on HTTP 401 is now handled inside
+  `_retry()` with a thread-local guard to prevent recursive re-auth loops. No-MFA
+  fallback login retries reduced from 3 to 1 (was generating up to 6 push notifications
+  per trade execution). `.tokens/` directory created with `chmod 0700`; chmod failures
+  are logged as warnings rather than silently suppressed.
+- **`agents/templates/live-trader-v1/tools/robinhood_mcp_client.py`** — `HOME` is now
+  explicitly set to the agent work-dir in the subprocess environment so the MCP server
+  and its client agree on the pickle location across all launch paths.
+
 ## [1.15.3] - 2026-04-08 — Live Portfolio Context & MCP Tools in Agent Chat
 
 **Patch release.** Chat sessions for live agents (status `RUNNING` / `APPROVED`) now

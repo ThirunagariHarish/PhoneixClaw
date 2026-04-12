@@ -118,7 +118,11 @@ class RobinhoodContextFetcher:
         return await loop.run_in_executor(None, self._fetch_sync, creds)
 
     def _fetch_sync(self, creds: dict) -> LivePortfolioContext:  # noqa: PLR0912
-        """Synchronous portion: login → fetch positions + account → logout."""
+        """Synchronous portion: login → fetch positions + account.
+
+        NOTE: never call rh.logout() here — it would revoke the shared session
+        token used by the live agent's MCP server (robinhood_mcp.py).
+        """
         try:
             import robin_stocks.robinhood as rh  # noqa: PLC0415
         except ImportError as exc:
@@ -204,8 +208,9 @@ class RobinhoodContextFetcher:
             logger.warning("[rh_ctx_fetcher] robin_stocks fetch failed: %s", exc)
             return LivePortfolioContext(last_updated_at=_now_iso(), error=_sanitize_error(exc, creds))
 
-        finally:
-            try:
-                rh.authentication.logout()
-            except Exception:
-                pass
+        # NOTE: do NOT call rh.authentication.logout() here.  The session pickle
+        # is shared with the live-agent's MCP server (robinhood_mcp.py).  Logging
+        # out revokes the access_token server-side, which forces every subsequent
+        # _ensure_login() call to perform a full re-authentication and triggers
+        # Robinhood's "suspicious login" device-approval push notification.
+        # The 24-hour session (expiresIn=86400) expires naturally without logout.

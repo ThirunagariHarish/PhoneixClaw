@@ -39,8 +39,10 @@ class RobinhoodMCPClient:
             env["RH_TOTP_SECRET"] = creds.get("totp_secret", "")
         if self._config.get("paper_mode"):
             env["PAPER_MODE"] = "true"
-        if "HOME" not in env or not env["HOME"]:
-            env["HOME"] = str(Path.cwd())
+        # Always set HOME to the agent work-dir (parent of tools/) so the
+        # session pickle at ~/.tokens/{name}.pickle lands on the agent's
+        # persistent volume and survives container restarts.
+        env["HOME"] = str(_MCP_SCRIPT.parent.parent)
         return env
 
     def start(self) -> None:

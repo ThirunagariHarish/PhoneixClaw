@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,19 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.0
 
 PAPER_MODE = os.environ.get("PAPER_MODE", "").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# Session-pickle home directory — must be the agent's persistent work-dir,
+# NOT the ephemeral container /root.  Override HOME at process startup so that
+# both the Claude Code-managed MCP server (settings.json) and any subprocess
+# started by execute_trade.py see the same .tokens/ path.  The agent work-dir
+# is the parent of this tools/ directory.
+# Guard: skip the override when running directly from the template source tree
+# (e.g. during development) so pickle files don't accumulate in the repo.
+# ---------------------------------------------------------------------------
+_AGENT_WORK_DIR = str(Path(__file__).resolve().parent.parent)
+if "templates" not in Path(__file__).resolve().parts:
+    os.environ["HOME"] = _AGENT_WORK_DIR
 
 # ---------------------------------------------------------------------------
 # Rate limiter — max 1 order per RATE_LIMIT_SECONDS
@@ -150,6 +164,8 @@ def _paper_cancel_order(order_id: str) -> dict:
 
 _rh = None
 _rh_logged_in = False
+# Thread-local flag used by _retry to prevent recursive re-auth calls.
+_in_retry_reauth = threading.local()
 
 
 def _get_rh():
@@ -160,13 +176,39 @@ def _get_rh():
     return _rh
 
 
+_AUTH_ERROR_KEYWORDS = ("401", "unauthorized", "unauthenticated")
+
+
 def _retry(fn, *args, **kwargs):
+    global _rh_logged_in
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:
             last_exc = exc
+            err_str = str(exc).lower()
+            # On 401/Unauthorized, reset the auth flag AND attempt a silent
+            # re-auth before the next retry so that subsequent attempts use
+            # a fresh session instead of replaying against a dead token.
+            # The thread-local guard prevents infinite recursion when _retry
+            # is called from within _ensure_login itself (e.g. for rh.login).
+            if any(kw in err_str for kw in _AUTH_ERROR_KEYWORDS):
+                _rh_logged_in = False
+                log.warning("Auth error on attempt %d — session marked for renewal", attempt)
+                if (
+                    attempt < MAX_RETRIES
+                    and not PAPER_MODE
+                    and not getattr(_in_retry_reauth, "active", False)
+                ):
+                    _in_retry_reauth.active = True
+                    try:
+                        _ensure_login()
+                        log.info("Re-authenticated on attempt %d", attempt)
+                    except Exception as reauth_exc:
+                        log.warning("Re-auth failed during retry: %s", reauth_exc)
+                    finally:
+                        _in_retry_reauth.active = False
             wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
             log.warning("Retry %d/%d after error: %s (backoff %.1fs)", attempt, MAX_RETRIES, exc, wait)
             time.sleep(wait)
@@ -224,18 +266,112 @@ def _ensure_token_dir() -> None:
     """Ensure the .tokens/ directory exists for session pickle persistence.
 
     robin_stocks stores session pickles in ~/.tokens/ by default.
-    We create it in CWD and try to set HOME so pickles land in the
-    agent's workspace and survive restarts without re-authenticating.
+    We create it under HOME (the agent's persistent work-dir) so pickles
+    survive container restarts without re-authenticating.
+    Mode 0o700 (owner-only) limits exposure of the session pickle files.
     """
     from pathlib import Path as _P
-    tokens_dir = _P(".tokens")
-    tokens_dir.mkdir(exist_ok=True)
     home_tokens = _P.home() / ".tokens"
-    if not home_tokens.exists():
-        try:
-            home_tokens.mkdir(exist_ok=True)
-        except OSError:
-            pass
+    home_tokens.mkdir(parents=True, exist_ok=True)
+    try:
+        home_tokens.chmod(0o700)
+    except OSError as chmod_exc:
+        log.warning(
+            "Could not set .tokens/ to mode 0700 (%s) — pickle may be world-readable; "
+            "ensure the directory is protected at the filesystem level.",
+            chmod_exc,
+        )
+
+
+def _try_restore_session_from_pickle(rh: Any, pickle_name: str) -> bool:
+    """Restore a live session directly from the robin_stocks pickle file.
+
+    Returns True if the session was restored successfully (NO network call).
+    Returns False if the pickle is missing, unreadable, or the token has
+    expired (with a 5-minute buffer so we don't use a nearly-stale token).
+
+    This is a zero-network-call fast-path that prevents Robinhood from seeing
+    repeated login events and triggering "suspicious login" device-approval
+    push notifications.
+
+    Expiry handling:
+      - robin_stocks >= 3.x writes ``expires_in`` (duration in seconds).
+      - Some versions write ``expires_at`` (absolute UNIX timestamp).
+      - We support both; when only ``expires_in`` is present we compute
+        ``expires_at`` from the pickle file's mtime + expires_in.
+      - If neither is present we cannot validate expiry and return False so
+        ``rh.login()`` handles the session safely.
+    """
+    import os as _os
+    import pickle as _pickle
+    from pathlib import Path as _P
+
+    pickle_path = _P.home() / ".tokens" / f"{pickle_name}.pickle"
+    if not pickle_path.exists():
+        log.debug("No session pickle at %s", pickle_path)
+        return False
+
+    # Security: ensure the pickle is owned by the current process user so we
+    # don't deserialise a file dropped by another user on a shared volume.
+    try:
+        stat = pickle_path.stat()
+        if stat.st_uid != _os.getuid():
+            log.warning(
+                "Session pickle %s is owned by uid %d, current uid %d — refusing to load",
+                pickle_path,
+                stat.st_uid,
+                _os.getuid(),
+            )
+            return False
+    except AttributeError:
+        # os.getuid() not available on Windows (dev machine) — skip ownership check
+        pass
+    except Exception as sec_exc:
+        log.warning("Could not check pickle ownership: %s — skipping restore", sec_exc)
+        return False
+
+    try:
+        with open(pickle_path, "rb") as fh:
+            data = _pickle.load(fh)
+
+        access_token: str = data.get("access_token", "")
+        if not access_token:
+            log.debug("Pickle has no access_token — skipping restore")
+            return False
+
+        # Determine absolute expiry time, supporting both pickle formats
+        expires_at: float = float(data.get("expires_at", 0) or 0)
+        if not expires_at:
+            expires_in = float(data.get("expires_in", 0) or 0)
+            if expires_in > 0:
+                # Approximate absolute expiry from file mtime + duration
+                expires_at = pickle_path.stat().st_mtime + expires_in
+            else:
+                # No expiry information — cannot validate; force full re-auth
+                log.debug("Pickle has no expiry info — will re-authenticate")
+                return False
+
+        # Require at least 5 minutes of remaining validity
+        if time.time() >= expires_at - 300:
+            log.info(
+                "Session pickle expired (%.0f s ago) — will re-authenticate",
+                time.time() - expires_at,
+            )
+            return False
+
+        # Restore the session token — identical to what robin_stocks does internally
+        rh.SESSION.headers.update({"Authorization": f"Bearer {access_token}"})
+        remaining_h = (expires_at - time.time()) / 3600
+        log.info(
+            "Session restored from pickle (pickle=%s, ~%.1fh remaining)",
+            pickle_name,
+            remaining_h,
+        )
+        return True
+
+    except Exception as exc:
+        log.warning("Failed to restore session from pickle %s: %s", pickle_path, exc)
+        return False
 
 
 def _ensure_login() -> None:
@@ -257,16 +393,20 @@ def _ensure_login() -> None:
 
     _ensure_token_dir()
 
-    # Strategy 1: Try loading existing session from pickle (no 2FA needed)
-    # robin_stocks checks ~/.tokens/<pickle_name>.pickle automatically
-    # when store_session=True. We use a stable pickle_name derived from
-    # the username so sessions persist across process restarts.
+    # Stable pickle name so sessions persist across process restarts.
     pickle_name = f"phoenix_{username.split('@')[0]}" if username else ""
 
-    # Strategy 2: Generate TOTP code if secret is available.
-    # This avoids device-approval push notifications entirely.
-    # User must switch Robinhood 2FA from "Device Approval" to
-    # "Authenticator App" and store the TOTP secret in the connector.
+    # Strategy 1: Restore from valid pickle — ZERO network calls.
+    # This is the primary path for every call after the first daily login.
+    # It prevents Robinhood from seeing repeated login events and avoids
+    # triggering "suspicious login" device-approval push notifications.
+    if _try_restore_session_from_pickle(rh, pickle_name):
+        _rh_logged_in = True
+        return
+
+    # Strategy 2: Full login with TOTP — avoids device-approval notifications.
+    # Requires Robinhood 2FA set to "Authenticator App" (not "Device Approval").
+    # Store the TOTP base32 secret in the connector credentials (totp_secret field).
     mfa_code = None
     if totp_secret:
         try:
@@ -274,12 +414,11 @@ def _ensure_login() -> None:
             mfa_code = pyotp.TOTP(totp_secret).now()
             log.info("Generated TOTP code for %s", username)
         except Exception as exc:
-            log.warning("TOTP generation failed: %s — will attempt session pickle or device approval", exc)
+            log.warning("TOTP generation failed: %s — will attempt device approval", exc)
 
-    # Strategy 3: Long-lived session — expiresIn=86400 (24h) means once
-    # authenticated, the pickle is valid for a full trading day.
-    # Combined with store_session=True, subsequent logins within 24h
-    # reuse the cached token with zero 2FA.
+    # Strategy 3: rh.login() with store_session=True writes the pickle so the
+    # next process restart uses Strategy 1 (no network call).
+    # expiresIn=86400 requests a 24-hour token — valid for a full trading day.
     try:
         _retry(
             rh.login,
@@ -291,21 +430,22 @@ def _ensure_login() -> None:
             pickle_name=pickle_name,
         )
     except Exception as first_err:
-        # If TOTP was provided but login still failed, retry without
-        # mfa_code in case the session pickle is valid (race condition
-        # where TOTP expired during network delay).
+        # If TOTP was provided but login failed (e.g. wrong secret or clock skew),
+        # attempt once without mfa_code so the pickle-restore path can succeed on
+        # the next invocation even if this attempt requires device approval.
+        # We do NOT retry in a loop here to avoid sending multiple push notifications.
         if mfa_code:
-            log.warning("Login with TOTP failed (%s), retrying with session pickle only", first_err)
+            log.warning("Login with TOTP failed (%s), retrying once without MFA code", first_err)
             try:
-                _retry(
-                    rh.login,
+                rh.login(
                     username,
                     password,
                     store_session=True,
                     expiresIn=86400,
                     pickle_name=pickle_name,
                 )
-            except Exception:
+            except Exception as second_err:
+                log.warning("No-MFA fallback also failed: %s", second_err)
                 raise first_err
         else:
             raise
