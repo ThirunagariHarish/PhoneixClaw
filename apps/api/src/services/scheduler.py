@@ -7,6 +7,8 @@ Jobs:
   - 17:00 ET weekdays  → daily_summary (WhatsApp summary across all agents)
   - every 1 min        → live_agent_keepalive (re-spawn RUNNING/PAPER agents whose session ended)
   - every 5 min        → heartbeat_check (mark stale sessions)
+  - 03:00 ET daily     → nightly_retention (purge old logs/notifications)
+  - 03:15 ET daily     → channel_messages_daily_cleanup (delete yesterday's feed messages)
 
 Single-worker guard: only the worker with RUN_SCHEDULER=1 (or the first
 worker that acquires the advisory lock) owns the scheduler.
@@ -236,6 +238,46 @@ async def _job_nightly_retention() -> None:
 
     except Exception:
         logger.exception("[scheduler] Nightly retention failed")
+
+
+async def _job_channel_messages_daily_cleanup() -> None:
+    """Delete channel_messages older than today (UTC midnight).
+
+    The feed only shows today's messages, so rows from previous days are stale.
+    Also removes dead_letter_messages older than 7 days.
+    Runs at 3:15 AM ET daily, right after nightly retention.
+    """
+    try:
+        from sqlalchemy import text
+
+        from shared.db.engine import get_session
+
+        now_utc = datetime.now(timezone.utc)
+        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        async for session in get_session():
+            result = await session.execute(
+                text("DELETE FROM channel_messages WHERE posted_at < :cutoff"),
+                {"cutoff": today_start},
+            )
+            deleted = getattr(result, "rowcount", 0) or 0
+
+            dlq_deleted = 0
+            try:
+                dlq_result = await session.execute(
+                    text("DELETE FROM dead_letter_messages WHERE created_at < NOW() - INTERVAL '7 days'"),
+                )
+                dlq_deleted = getattr(dlq_result, "rowcount", 0) or 0
+            except Exception:
+                pass
+
+            await session.commit()
+            logger.info(
+                "[scheduler] channel_messages daily cleanup: %d rows deleted (cutoff=%s), dead_letter: %d",
+                deleted, today_start.isoformat(), dlq_deleted,
+            )
+    except Exception:
+        logger.exception("[scheduler] channel_messages daily cleanup failed")
 
 
 async def _job_agent_cron_fire(cron_id: str, agent_id: str, action_type: str,
@@ -666,6 +708,16 @@ def start_scheduler() -> "AsyncIOScheduler | None":
         trigger=CronTrigger(hour=3, minute=0, timezone=_ET_TZ),
         id="nightly_retention",
         name="Nightly Retention Cleanup",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 3:15 AM ET daily — channel_messages daily reset (feed shows only today)
+    _scheduler.add_job(
+        _job_channel_messages_daily_cleanup,
+        trigger=CronTrigger(hour=3, minute=15, timezone=_ET_TZ),
+        id="channel_messages_daily_cleanup",
+        name="Channel Messages Daily Cleanup",
         replace_existing=True,
         misfire_grace_time=3600,
     )

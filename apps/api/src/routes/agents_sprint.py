@@ -90,11 +90,11 @@ async def get_channel_messages(
     since: datetime | None = None,
     session: DbSession = None,
 ):
-    """Return raw Discord/Reddit/Twitter messages for this agent's connectors.
+    """Return today's Discord/Reddit/Twitter messages for this agent's connectors.
 
-    Uses the same ``connector_id`` values as ingestion (``channel_messages`` +
-    Redis ``stream:channel:{id}``): active ``connector_agents`` union
-    ``agent.config[\"connector_ids\"]``, with optional repair of missing link rows.
+    Automatically filters to messages posted today (UTC midnight) or after the
+    agent's ``created_at`` — whichever is later.  Old messages are purged nightly
+    by the ``channel_messages_daily_cleanup`` scheduler job.
     """
     connector_ids = await resolve_agent_connector_ids_for_feed(session, agent_id)
     if not connector_ids:
@@ -106,15 +106,37 @@ async def get_channel_messages(
             "ingestion": None,
         }
 
+    # Resolve the effective floor: max(today midnight UTC, agent.created_at, caller `since`)
+    now_utc = datetime.now(timezone.utc)
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    effective_since = today_start
+
+    try:
+        agent_row = (await session.execute(
+            select(Agent.created_at).where(Agent.id == agent_id)
+        )).scalar_one_or_none()
+        if agent_row is not None:
+            agent_born = agent_row if isinstance(agent_row, datetime) else agent_row
+            if agent_born.tzinfo is None:
+                agent_born = agent_born.replace(tzinfo=timezone.utc)
+            if agent_born > effective_since:
+                effective_since = agent_born
+    except Exception:
+        pass
+
+    if since and since > effective_since:
+        effective_since = since
+
     try:
         q = (
             select(ChannelMessage)
-            .where(ChannelMessage.connector_id.in_(connector_ids))
+            .where(
+                ChannelMessage.connector_id.in_(connector_ids),
+                ChannelMessage.posted_at >= effective_since,
+            )
             .order_by(ChannelMessage.posted_at.desc())
             .limit(limit)
         )
-        if since:
-            q = q.where(ChannelMessage.posted_at >= since)
         rows = (await session.execute(q)).scalars().all()
     except Exception as exc:
         logger.exception("[channel-messages] Query failed (table may not exist): %s", exc)
@@ -137,9 +159,30 @@ async def get_channel_messages(
             "message_type": m.message_type,
             "tickers": m.tickers_mentioned or [],
             "posted_at": m.posted_at.isoformat() if m.posted_at else None,
+            "platform_message_id": m.platform_message_id or "",
         }
         for m in rows
     ]
+
+    # Batch lookup: which feed messages have trade decisions?
+    decisions: dict[str, dict] = {}
+    try:
+        from shared.db.models.trade_signal import TradeSignal
+        pmids = [m.platform_message_id for m in rows if m.platform_message_id]
+        if pmids:
+            sigs = (await session.execute(
+                select(TradeSignal)
+                .where(TradeSignal.source_message_id.in_(pmids), TradeSignal.agent_id == agent_id)
+            )).scalars().all()
+            for s in sigs:
+                decisions[s.source_message_id] = {
+                    "decision": s.decision,
+                    "ticker": s.ticker,
+                    "confidence": round(s.model_confidence, 3) if s.model_confidence else None,
+                    "rejection_reason": s.rejection_reason,
+                }
+    except Exception as exc:
+        logger.debug("[channel-messages] trade_signals lookup failed: %s", exc)
 
     ingestion_info = _get_ingestion_status_for_connectors(connector_ids)
 
@@ -149,6 +192,8 @@ async def get_channel_messages(
         "connector_ids": [str(x) for x in connector_ids],
         "has_connectors": True,
         "ingestion": ingestion_info,
+        "decisions": decisions,
+        "since": effective_since.isoformat(),
     }
 
 
@@ -239,6 +284,47 @@ async def backfill_channel_messages(
             errors.append(f"Connector {cid}: {str(conn_exc)[:100]}")
 
     return {"backfilled": total_backfilled, "errors": errors if errors else None}
+
+
+# ---------------------------------------------------------------------------
+# Watchlist history (trade_signals where decision = 'watchlist')
+# ---------------------------------------------------------------------------
+@router.get("/{agent_id}/watchlist-history")
+async def get_watchlist_history(
+    agent_id: uuid.UUID,
+    limit: int = Query(100, le=500),
+    session: DbSession = None,
+):
+    """Return trade signals that were added to the watchlist for this agent."""
+    try:
+        from shared.db.models.trade_signal import TradeSignal
+
+        q = (
+            select(TradeSignal)
+            .where(TradeSignal.agent_id == agent_id, TradeSignal.decision == "watchlist")
+            .order_by(TradeSignal.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await session.execute(q)).scalars().all()
+    except Exception as exc:
+        logger.exception("[watchlist-history] Query failed: %s", exc)
+        return {"items": [], "count": 0, "error": f"Database error: {str(exc)[:200]}"}
+
+    items = [
+        {
+            "id": str(s.id),
+            "ticker": s.ticker,
+            "direction": s.direction,
+            "confidence": round(s.model_confidence, 3) if s.model_confidence else None,
+            "signal_source": s.signal_source,
+            "rejection_reason": s.rejection_reason,
+            "source_message_id": s.source_message_id,
+            "entry_price": s.entry_price,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in rows
+    ]
+    return {"items": items, "count": len(items)}
 
 
 # ---------------------------------------------------------------------------

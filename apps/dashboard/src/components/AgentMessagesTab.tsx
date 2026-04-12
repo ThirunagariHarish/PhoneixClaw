@@ -1,12 +1,14 @@
 /**
  * P3: Raw channel messages tab. Polls /api/v2/agents/{id}/channel-messages.
  * Auto-backfills on first load when connectors exist but no messages yet.
+ * Shows decision status icons (traded/watchlisted/rejected/paper) per message.
  */
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { CheckCircle2, XCircle, Eye, FlaskConical } from 'lucide-react'
 
 interface Msg {
   id: string
@@ -16,6 +18,14 @@ interface Msg {
   message_type: string
   tickers: string[]
   posted_at: string | null
+  platform_message_id?: string
+}
+
+interface Decision {
+  decision: string
+  ticker: string
+  confidence?: number | null
+  rejection_reason?: string | null
 }
 
 interface AgentDetail {
@@ -36,6 +46,35 @@ function feedLooksConfigured(agent: AgentDetail | undefined): boolean {
   return false
 }
 
+function DecisionBadge({ decision }: { decision: Decision }) {
+  const d = decision.decision
+  if (d === 'executed')
+    return (
+      <Badge className="text-[10px] gap-1 bg-emerald-600/20 text-emerald-400 border-emerald-600/40 hover:bg-emerald-600/30">
+        <CheckCircle2 className="h-3 w-3" /> Traded
+      </Badge>
+    )
+  if (d === 'watchlist')
+    return (
+      <Badge className="text-[10px] gap-1 bg-amber-600/20 text-amber-400 border-amber-600/40 hover:bg-amber-600/30">
+        <Eye className="h-3 w-3" /> Watchlisted
+      </Badge>
+    )
+  if (d === 'rejected')
+    return (
+      <Badge className="text-[10px] gap-1 bg-red-600/20 text-red-400 border-red-600/40 hover:bg-red-600/30">
+        <XCircle className="h-3 w-3" /> Rejected
+      </Badge>
+    )
+  if (d === 'paper')
+    return (
+      <Badge className="text-[10px] gap-1 bg-blue-600/20 text-blue-400 border-blue-600/40 hover:bg-blue-600/30">
+        <FlaskConical className="h-3 w-3" /> Paper
+      </Badge>
+    )
+  return null
+}
+
 export function AgentMessagesTab({ agentId }: { agentId: string }) {
   const backfillAttemptedRef = useRef<boolean>(false)
   const [backfillWarning, setBackfillWarning] = useState<string | null>(null)
@@ -52,6 +91,8 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     has_connectors?: boolean
     ingestion?: { running?: boolean; summary?: string } | null
     error?: string
+    since?: string
+    decisions?: Record<string, Decision>
   }>({
     queryKey: ['channel-messages', agentId],
     queryFn: async () =>
@@ -82,6 +123,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   })
 
   const messages = data?.messages ?? []
+  const decisions = data?.decisions ?? {}
   const resolvedConnectorCount = Array.isArray(data?.connector_ids) ? data.connector_ids.length : 0
   const hasConnectors =
     data?.has_connectors === true ||
@@ -107,7 +149,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
             {backfillMut.isPending && hasConnectors
               ? 'Fetching latest messages from Discord…'
               : hasConnectors
-                ? 'No messages yet for this agent\'s connector(s). The ingestion service may still be catching up, or the channel may be quiet.'
+                ? 'No messages today for this agent\'s connector(s). The feed resets daily and only shows today\'s activity.'
                 : 'No channel messages yet. A Discord connector must be linked to this agent during setup.'}
           </div>
           {ingestion && !ingestion.running && (
@@ -132,7 +174,10 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">{messages.length} messages (newest first)</span>
+        <span className="text-xs text-muted-foreground">
+          {messages.length} message{messages.length !== 1 ? 's' : ''} today
+          {data?.since ? ` (since ${new Date(data.since).toLocaleString()})` : ' (newest first)'}
+        </span>
         {ingestion && (
           <span className={`text-xs ${ingestion.running ? (ingestion.summary?.includes('stopped') ? 'text-amber-500' : 'text-emerald-500') : 'text-rose-500'}`}>
             {ingestion.summary || (ingestion.running ? 'Ingesting' : 'Ingestion stopped')}
@@ -144,29 +189,36 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
         <p className="text-xs text-amber-500 px-1">{backfillWarning}</p>
       )}
 
-      {messages.map((m) => (
-        <Card key={m.id}>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">{m.author || 'unknown'}</span>
-                <Badge variant="outline" className="text-xs">
-                  #{m.channel || 'general'}
-                </Badge>
-                {m.tickers?.map((t) => (
-                  <Badge key={t} className="text-xs">
-                    ${t}
+      {messages.map((m) => {
+        const dec = m.platform_message_id ? decisions[m.platform_message_id] : undefined
+        return (
+          <Card key={m.id}>
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">{m.author || 'unknown'}</span>
+                  <Badge variant="outline" className="text-xs">
+                    #{m.channel || 'general'}
                   </Badge>
-                ))}
+                  {m.tickers?.map((t) => (
+                    <Badge key={t} className="text-xs">
+                      ${t}
+                    </Badge>
+                  ))}
+                  {dec && <DecisionBadge decision={dec} />}
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {m.posted_at ? new Date(m.posted_at).toLocaleString() : ''}
+                </span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                {m.posted_at ? new Date(m.posted_at).toLocaleString() : ''}
-              </span>
-            </div>
-            <div className="text-sm whitespace-pre-wrap">{m.content}</div>
-          </CardContent>
-        </Card>
-      ))}
+              <div className="text-sm whitespace-pre-wrap">{m.content}</div>
+              {dec?.rejection_reason && (
+                <p className="text-[10px] text-muted-foreground mt-1">Reason: {dec.rejection_reason}</p>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })}
     </div>
   )
 }

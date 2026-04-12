@@ -27,7 +27,7 @@ import {
   ChevronDown, ChevronUp, Check, X, Eye,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
-  Loader2,
+  Loader2, CheckCircle2, XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -297,6 +297,41 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
    ================================================================ */
 /* TradeTimeline replaced by DecisionTrailVisualizer component */
 
+interface WatchlistHistoryItem {
+  id: string
+  ticker: string
+  direction?: string
+  confidence?: number | null
+  signal_source?: string
+  rejection_reason?: string | null
+  entry_price?: number | null
+  created_at?: string | null
+}
+
+function TradeDecisionBadge({ trade }: { trade: Trade }) {
+  const ds = trade.decision_status
+  const st = trade.status
+  if (ds === 'rejected' || st === 'rejected' || st === 'skipped')
+    return (
+      <Badge className="text-[10px] gap-0.5 bg-red-600/20 text-red-400 border-red-600/40 hover:bg-red-600/30 whitespace-nowrap">
+        <XCircle className="h-3 w-3" /> Rejected
+      </Badge>
+    )
+  if (st === 'watchlisted' || st === 'watching')
+    return (
+      <Badge className="text-[10px] gap-0.5 bg-amber-600/20 text-amber-400 border-amber-600/40 hover:bg-amber-600/30 whitespace-nowrap">
+        <Eye className="h-3 w-3" /> Watchlisted
+      </Badge>
+    )
+  if (ds === 'accepted' || st === 'executed' || st === 'open' || st === 'closed' || st === 'active')
+    return (
+      <Badge className="text-[10px] gap-0.5 bg-emerald-600/20 text-emerald-400 border-emerald-600/40 hover:bg-emerald-600/30 whitespace-nowrap">
+        <CheckCircle2 className="h-3 w-3" /> Approved
+      </Badge>
+    )
+  return null
+}
+
 function TradesTab({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [timelineOpen, setTimelineOpen] = useState<string | null>(null)
@@ -305,6 +340,12 @@ function TradesTab({ id }: { id: string }) {
     queryKey: ['trades', id],
     queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/live-trades`)).data } catch { return [] } },
     refetchInterval: 10000,
+  })
+
+  const { data: watchlistData } = useQuery<{ items: WatchlistHistoryItem[]; count: number }>({
+    queryKey: ['watchlist-history', id],
+    queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/watchlist-history?limit=50`)).data } catch { return { items: [], count: 0 } } },
+    refetchInterval: 30000,
   })
 
   const filtered = filter === 'all' ? trades : trades.filter(t => {
@@ -411,6 +452,7 @@ function TradesTab({ id }: { id: string }) {
                       {reasoningSummary(t) ?? '—'}
                     </span>
                     <StatusBadge status={t.status} />
+                    <TradeDecisionBadge trade={t} />
                     <button
                       className="p-1 rounded hover:bg-primary/10 transition-colors"
                       title="View decision trail"
@@ -468,6 +510,35 @@ function TradesTab({ id }: { id: string }) {
         </div>
       </div>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Watchlist History */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Eye className="h-4 w-4 text-amber-500" /> Watchlist History
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!watchlistData?.items?.length ? (
+            <p className="text-sm text-muted-foreground text-center py-6">No watchlisted signals yet.</p>
+          ) : (
+            <div className="space-y-1">
+              {watchlistData.items.map(w => (
+                <div key={w.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50">
+                  <div className="w-16 text-xs text-muted-foreground">{w.created_at ? new Date(w.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}</div>
+                  <span className="font-mono font-semibold text-sm w-16 truncate">{w.ticker}</span>
+                  <Badge variant={w.direction === 'buy' ? 'default' : 'destructive'} className="text-[10px] uppercase w-10 justify-center">{w.direction || '—'}</Badge>
+                  <span className="text-xs w-12 text-right">{w.confidence != null ? `${(w.confidence * 100).toFixed(0)}%` : '—'}</span>
+                  {w.entry_price != null && <span className="font-mono text-xs w-14 text-right">${w.entry_price.toFixed(2)}</span>}
+                  <span className="text-[10px] text-muted-foreground truncate max-w-[160px]" title={w.rejection_reason ?? ''}>{w.rejection_reason || w.signal_source || '—'}</span>
+                  <Badge className="text-[10px] gap-0.5 bg-amber-600/20 text-amber-400 border-amber-600/40"><Eye className="h-3 w-3" /> Watchlisted</Badge>
+                  <span className="text-[10px] text-muted-foreground ml-auto">{w.created_at ? new Date(w.created_at).toLocaleTimeString() : ''}</span>
                 </div>
               ))}
             </div>

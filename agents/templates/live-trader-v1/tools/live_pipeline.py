@@ -61,10 +61,12 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     direction = parsed.get("direction")
     if not ticker:
         reasoning.append("No ticker found in signal")
-        return _build_result("REJECT", "no_ticker", steps, reasoning, parsed)
+        return _build_result("REJECT", "no_ticker", steps, reasoning, parsed,
+                             source_message_id=raw_signal.get("message_id"))
     if not direction:
         reasoning.append("No trade direction found")
-        return _build_result("REJECT", "no_direction", steps, reasoning, parsed)
+        return _build_result("REJECT", "no_direction", steps, reasoning, parsed,
+                             source_message_id=raw_signal.get("message_id"))
 
     try:
         from market_session_gate import outside_rth_watchlist_payload
@@ -79,22 +81,10 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
                 parsed,
                 gate["prediction"],
                 None,
+                source_message_id=raw_signal.get("message_id"),
             )
             result["market_status"] = gate["market_status"]
             result["execution"] = {"deferred": True, "reason": "outside_regular_session"}
-            try:
-                from log_trade_signal import log_signal
-
-                log_signal(
-                    ticker=parsed["ticker"],
-                    direction=parsed.get("direction"),
-                    decision="watchlist",
-                    rejection_reason=gate["reason"],
-                    features=gate["enriched"],
-                    source_message_id=raw_signal.get("message_id"),
-                )
-            except Exception:
-                pass
             return result
     except Exception as exc:
         log.debug("market_session_gate skipped: %s", exc)
@@ -146,11 +136,13 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         if not risk_result.get("approved"):
             reasoning.append(f"Risk rejected: {risk_result.get('rejection_reason')}")
             return _build_result("REJECT", risk_result.get("rejection_reason", "risk_failed"),
-                                 steps, reasoning, parsed, prediction, risk_result)
+                                 steps, reasoning, parsed, prediction, risk_result,
+                                 source_message_id=raw_signal.get("message_id"))
         reasoning.append("Risk check passed")
     except Exception as e:
         steps.append({"step": "risk_check", "status": "failed", "error": str(e)[:200]})
-        return _build_result("REJECT", "risk_check_error", steps, reasoning, parsed, prediction)
+        return _build_result("REJECT", "risk_check_error", steps, reasoning, parsed, prediction,
+                             source_message_id=raw_signal.get("message_id"))
 
     # Step 5: TA confirmation
     ta_result = None
@@ -163,10 +155,12 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         ta_conf = ta_result.get("confidence", 0)
         if direction == "buy" and ta_verdict == "bearish" and ta_conf > 0.5:
             reasoning.append("TA strongly contradicts buy signal")
-            return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result)
+            return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result,
+                                 source_message_id=raw_signal.get("message_id"))
         if direction == "sell" and ta_verdict == "bullish" and ta_conf > 0.5:
             reasoning.append("TA strongly contradicts sell signal")
-            return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result)
+            return _build_result("REJECT", "ta_misalignment", steps, reasoning, parsed, prediction, risk_result,
+                                 source_message_id=raw_signal.get("message_id"))
         reasoning.append(f"TA: {ta_verdict} (conf={ta_conf:.2f})")
     except Exception as e:
         steps.append({"step": "ta_confirmation", "status": "skipped", "error": str(e)[:200]})
@@ -175,19 +169,52 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     # Step 6: Model must say TRADE
     if prediction.get("prediction") != "TRADE":
         reasoning.append(f"Model says SKIP (confidence={prediction.get('confidence', 0):.3f})")
-        return _build_result("REJECT", "model_skip", steps, reasoning, parsed, prediction, risk_result)
+        return _build_result("REJECT", "model_skip", steps, reasoning, parsed, prediction, risk_result,
+                             source_message_id=raw_signal.get("message_id"))
 
     # Step 7: Build execution params and approve
     exec_params = _build_execution_params(parsed, enriched, prediction, risk_params, ta_result)
     reasoning.append(f"APPROVED: {direction.upper()} {ticker}")
-    result = _build_result("EXECUTE", None, steps, reasoning, parsed, prediction, risk_result)
+    result = _build_result("EXECUTE", None, steps, reasoning, parsed, prediction, risk_result,
+                           source_message_id=raw_signal.get("message_id"))
     result["execution"] = exec_params
     return result
 
 
+def _log_to_phoenix(decision: str, reason: str | None,
+                    parsed: dict | None, prediction: dict | None,
+                    source_message_id: str | None) -> None:
+    """Best-effort log every decision to trade_signals via Phoenix API."""
+    try:
+        from log_trade_signal import log_signal
+    except ImportError:
+        return
+    if not parsed or not parsed.get("ticker"):
+        return
+    canonical = {
+        "execute": "executed", "reject": "rejected",
+        "watchlist": "watchlist", "paper": "paper",
+    }.get((decision or "").lower(), "rejected")
+    try:
+        log_signal(
+            ticker=parsed["ticker"],
+            direction=parsed.get("direction"),
+            decision=canonical,
+            predicted_prob=(prediction or {}).get("confidence"),
+            model_confidence=(prediction or {}).get("confidence"),
+            rejection_reason=reason,
+            features={},
+            source_message_id=source_message_id,
+        )
+    except Exception:
+        pass
+
+
 def _build_result(decision: str, reason: str | None, steps: list, reasoning: list,
                   parsed: dict | None = None, prediction: dict | None = None,
-                  risk_result: dict | None = None) -> dict:
+                  risk_result: dict | None = None,
+                  source_message_id: str | None = None) -> dict:
+    _log_to_phoenix(decision, reason, parsed, prediction, source_message_id)
     result: dict = {
         "decision": decision,
         "reason": reason,

@@ -351,7 +351,8 @@ def _log_signal_to_phoenix(decision: str, reason: str | None,
         log_signal(ticker=parsed["ticker"], direction=parsed.get("direction"),
                    decision=canonical, predicted_prob=(prediction or {}).get("confidence"),
                    model_confidence=(prediction or {}).get("confidence"),
-                   rejection_reason=reason, features=features)
+                   rejection_reason=reason, features=features,
+                   source_message_id=parsed.get("message_id"))
     except Exception:
         pass
 
