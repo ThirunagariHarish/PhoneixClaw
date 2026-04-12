@@ -43,6 +43,43 @@ router = APIRouter(prefix="/api/v2/agents", tags=["agents_sprint"])
 portfolio_router = APIRouter(prefix="/api/v2/portfolio", tags=["portfolio"])
 
 
+def _get_ingestion_status_for_connectors(connector_ids: list[uuid.UUID]) -> dict:
+    """Return ingestion health for the given connector UUIDs."""
+    try:
+        from apps.api.src.services.message_ingestion import get_ingestion_status
+        status = get_ingestion_status()
+        if not status.get("running"):
+            return {"running": False, "connectors": [], "summary": "Ingestion service is not running"}
+
+        cid_strs = {str(c) for c in connector_ids}
+        matched = [
+            c for c in status.get("connectors", [])
+            if c.get("connector_id") in cid_strs
+        ]
+        alive_count = sum(1 for c in matched if c.get("alive"))
+        dead = [c for c in matched if not c.get("alive")]
+
+        if not matched:
+            return {
+                "running": True,
+                "connectors": [],
+                "summary": "No ingestion tasks found for this agent's connectors",
+            }
+        if dead:
+            return {
+                "running": True,
+                "connectors": matched,
+                "summary": f"{len(dead)} of {len(matched)} connector task(s) stopped",
+            }
+        return {
+            "running": True,
+            "connectors": matched,
+            "summary": f"{alive_count} connector(s) actively ingesting",
+        }
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # P3: Raw channel messages
 # ---------------------------------------------------------------------------
@@ -66,6 +103,7 @@ async def get_channel_messages(
             "count": 0,
             "connector_ids": [],
             "has_connectors": False,
+            "ingestion": None,
         }
 
     q = (
@@ -90,11 +128,15 @@ async def get_channel_messages(
         }
         for m in rows
     ]
+
+    ingestion_info = _get_ingestion_status_for_connectors(connector_ids)
+
     return {
         "messages": messages,
         "count": len(messages),
         "connector_ids": [str(x) for x in connector_ids],
         "has_connectors": True,
+        "ingestion": ingestion_info,
     }
 
 

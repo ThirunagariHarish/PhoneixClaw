@@ -969,29 +969,33 @@ async def activity_feed(agent_id: str, session: DbSession, limit: int = 100):
 @router.get("/graph")
 async def get_agent_graph(session: DbSession):
     """Phase 3.1: Agent topology graph data for dashboard visualization."""
-    from shared.db.models.agent_message import AgentMessage
-
-    agents_result = await session.execute(select(Agent))
-    all_agents = list(agents_result.scalars().all())
-
-    nodes = []
-    for agent in all_agents:
-        manifest = agent.manifest or {}
-        nodes.append({
-            "id": str(agent.id),
-            "name": agent.name,
-            "status": agent.status,
-            "type": agent.type,
-            "character": manifest.get("identity", {}).get("character", "unknown"),
-            "tools": manifest.get("tools", []),
-            "channels": [agent.channel_name] if agent.channel_name else [],
-            "win_rate": agent.win_rate,
-            "total_trades": agent.total_trades,
-        })
-
-    # Recent edges from agent_messages (last 24h)
+    nodes: list[dict] = []
     edges_dict: dict[tuple, dict] = {}
+
     try:
+        agents_result = await session.execute(select(Agent))
+        all_agents = list(agents_result.scalars().all())
+
+        for agent in all_agents:
+            manifest = agent.manifest or {}
+            nodes.append({
+                "id": str(agent.id),
+                "name": agent.name,
+                "status": agent.status,
+                "type": agent.type,
+                "character": manifest.get("identity", {}).get("character", "unknown"),
+                "tools": manifest.get("tools", []),
+                "channels": [agent.channel_name] if agent.channel_name else [],
+                "win_rate": agent.win_rate,
+                "total_trades": agent.total_trades,
+            })
+    except Exception as exc:
+        logger.exception("[graph] Failed to load agents: %s", exc)
+        return {"nodes": [], "edges": [], "error": f"Failed to load agents: {str(exc)[:200]}"}
+
+    try:
+        from shared.db.models.agent_message import AgentMessage
+
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         msgs_result = await session.execute(
             select(AgentMessage)
@@ -1016,7 +1020,6 @@ async def get_agent_graph(session: DbSession):
     except Exception as exc:
         logger.debug("[graph] agent_messages edges skipped: %s", exc)
 
-    # P8: Synthetic edges when agents share a connector (Discord channel → agent)
     try:
         from shared.db.models.connector import ConnectorAgent
         ca_res = await session.execute(select(ConnectorAgent))
@@ -1040,8 +1043,6 @@ async def get_agent_graph(session: DbSession):
                         }
     except Exception as exc:
         logger.debug("[graph] shared-connector edges skipped: %s", exc)
-
-    # Note: parent→child edges removed — Agent model has no parent_agent_id column
 
     return {"nodes": nodes, "edges": list(edges_dict.values())}
 

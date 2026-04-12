@@ -982,16 +982,18 @@ class AgentGateway:
             home_export +
             smart_context_prefix +
             "You are now live. Read CLAUDE.md for your full instructions. "
-            "Start the operation loop: run pre-market analysis, start the Discord listener, "
-            "and begin monitoring for trade signals. Report all activity to Phoenix."
+            "FIRST: run `bash startup.sh` to start the signal consumer (live_pipeline.py). "
+            "This is mandatory — without it you will not receive any Discord signals. "
+            "Then start the operation loop: run pre-market analysis and begin monitoring for trade signals. "
+            "Report all activity to Phoenix."
         )
         if resume:
             prompt = (
                 home_export +
                 smart_context_prefix +
-                "Resume your live trading session. Check your current positions in positions.json, "
-                "restart the Discord listener, and continue monitoring. "
-                "Report your resumed status to Phoenix."
+                "Resume your live trading session. Check your current positions in positions.json. "
+                "FIRST: run `bash startup.sh` to restart the signal consumer if not already running. "
+                "Then continue monitoring. Report your resumed status to Phoenix."
             )
 
         # Smart Context Builder (feature-flagged)
@@ -1179,8 +1181,8 @@ class AgentGateway:
         }
 
         # Resolve primary connector_id for Redis stream key alignment (Story 2.1)
-        connector_ids = agent.config.get("connector_ids") or [] if agent.config else []
-        primary_connector_id = connector_ids[0] if connector_ids else ""
+        connector_ids = (agent.config.get("connector_ids") or []) if agent.config else []
+        primary_connector_id = str(connector_ids[0]) if connector_ids else ""
         agent_config["connector_id"] = primary_connector_id
 
         # Paper mode flag — paper agents never receive broker credentials
@@ -1217,6 +1219,14 @@ class AgentGateway:
         # over config.json; MCP server reads env vars first, then config.json fallback).
         _write_claude_settings(work_dir, rh_creds, paper_mode=agent_config.get("paper_mode", True))
         self._render_claude_md(agent, manifest, work_dir)
+
+        # Copy startup.sh for auto-starting the signal consumer
+        startup_src = LIVE_TEMPLATE / "startup.sh"
+        if startup_src.exists():
+            startup_dst = work_dir / "startup.sh"
+            shutil.copy2(startup_src, startup_dst)
+            startup_dst.chmod(0o755)
+
         return work_dir
 
     def _render_claude_md(self, agent: Agent, manifest: dict, work_dir: Path) -> None:

@@ -128,7 +128,15 @@ All tools are in `tools/`. Run via `python tools/<name>.py <args>`.
 
 ### Startup — CRITICAL: start the signal consumer
 
-The agent **must** start one of these on startup; heartbeat alone is insufficient:
+**IMMEDIATE FIRST ACTION** — run `bash startup.sh` before anything else:
+```bash
+bash startup.sh
+```
+This automatically starts `live_pipeline.py` in the background and verifies `connector_id` is set. Without this, you will receive NO signals from Discord.
+
+If `startup.sh` reports `connector_id is empty`, the agent was misconfigured. Report to Phoenix and stop.
+
+**Manual alternative** (only if startup.sh is missing):
 
 **Option A (recommended):** Start the integrated live pipeline:
 ```bash

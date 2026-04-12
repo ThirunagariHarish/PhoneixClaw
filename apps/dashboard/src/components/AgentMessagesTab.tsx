@@ -50,6 +50,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     count: number
     connector_ids?: string[]
     has_connectors?: boolean
+    ingestion?: { running?: boolean; summary?: string } | null
   }>({
     queryKey: ['channel-messages', agentId],
     queryFn: async () =>
@@ -81,6 +82,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     data?.has_connectors === true ||
     resolvedConnectorCount > 0 ||
     feedLooksConfigured(agentData)
+  const ingestion = data?.ingestion
 
   useEffect(() => {
     if (!isLoading && hasConnectors && messages.length === 0 && !backfillAttemptedRef.current) {
@@ -102,6 +104,15 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
                 ? 'No messages yet for this agent\'s connector(s). The ingestion service may still be catching up, or the channel may be quiet.'
                 : 'No channel messages yet. A Discord connector must be linked to this agent during setup.'}
           </div>
+          {ingestion && !ingestion.running && (
+            <p className="text-xs text-rose-500">Ingestion service is not running. Messages cannot be received until it starts.</p>
+          )}
+          {ingestion?.running && ingestion.summary && ingestion.summary.includes('stopped') && (
+            <p className="text-xs text-amber-500">Warning: {ingestion.summary}</p>
+          )}
+          {ingestion?.running && ingestion.summary && ingestion.summary.includes('No ingestion') && (
+            <p className="text-xs text-amber-500">{ingestion.summary}. Try refreshing ingestion via the scheduler.</p>
+          )}
           {backfillWarning && (
             <p className="text-xs text-amber-500">{backfillWarning}</p>
           )}
@@ -113,6 +124,11 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">{messages.length} messages (newest first)</span>
+        {ingestion && (
+          <span className={`text-xs ${ingestion.running ? (ingestion.summary?.includes('stopped') ? 'text-amber-500' : 'text-emerald-500') : 'text-rose-500'}`}>
+            {ingestion.summary || (ingestion.running ? 'Ingesting' : 'Ingestion stopped')}
+          </span>
+        )}
       </div>
 
       {backfillWarning && (

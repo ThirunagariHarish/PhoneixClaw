@@ -42,6 +42,7 @@ interface AgentEdge {
 interface GraphData {
   nodes: AgentNode[]
   edges: AgentEdge[]
+  error?: string
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -153,6 +154,7 @@ export default function AgentGraphPage() {
   const liveCount = nodeArr.filter((n) => ['RUNNING', 'APPROVED'].includes(n.status)).length
   const paperCount = nodeArr.filter((n) => n.status === 'PAPER').length
   const totalEdges = edgeArr.length
+  const backendError = graphData?.error
 
   return (
     <div className="space-y-4">
@@ -172,6 +174,12 @@ export default function AgentGraphPage() {
           ))}
         </div>
       </div>
+
+      {backendError && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-400">
+          Graph partially loaded: {backendError}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-3">
         <Card><CardHeader className="pb-1"><CardTitle className="text-xs text-muted-foreground">Live Agents</CardTitle></CardHeader><CardContent className="pt-0"><p className="text-2xl font-bold">{liveCount}</p></CardContent></Card>
