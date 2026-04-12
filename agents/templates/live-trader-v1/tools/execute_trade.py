@@ -11,6 +11,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -46,6 +47,9 @@ class MCPClient:
             env["RH_TOTP_SECRET"] = creds.get("totp_secret", "")
         if self.config.get("paper_mode"):
             env["PAPER_MODE"] = "true"
+        # Ensure HOME is set so robin_stocks session pickles land in the workspace
+        if "HOME" not in env or not env["HOME"]:
+            env["HOME"] = str(Path.cwd())
         self.proc = subprocess.Popen(
             [sys.executable, str(TOOLS_DIR / "robinhood_mcp.py")],
             stdin=subprocess.PIPE,
@@ -175,6 +179,43 @@ def execute(decision_path: str, config_path: str):
     if verdict not in ("EXECUTE", "PAPER"):
         log.info("Decision is %s — nothing to execute", verdict)
         return {"status": "skipped", "reason": verdict}
+
+    cfg_allow_rth_override = config.get("allow_execute_outside_regular_session") is True
+    env_block_outside_rth = os.getenv("PHOENIX_BLOCK_EXECUTE_OUTSIDE_RTH", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if env_block_outside_rth and not cfg_allow_rth_override:
+        try:
+            from shared.utils.market_calendar import get_market_status, is_market_open
+
+            if not is_market_open():
+                ms = get_market_status()
+                log.info("Outside regular session (%s) — order not sent (use watchlist path).", ms["session"])
+                return {
+                    "status": "deferred",
+                    "reason": "outside_regular_session",
+                    "market_status": ms,
+                }
+        except Exception as exc:
+            log.debug("Regular-session gate skipped: %s", exc)
+
+    # Signal deduplication: skip if we already executed this exact signal
+    signal_id = decision.get("signal_id") or decision.get("signal", {}).get("message_id", "")
+    if signal_id:
+        dedup_path = Path("executed_signals.json")
+        try:
+            executed = json.loads(dedup_path.read_text()) if dedup_path.exists() else []
+        except Exception:
+            executed = []
+        if signal_id in executed:
+            log.warning("Signal %s already executed — dedup skip", signal_id)
+            return {"status": "skipped", "reason": "duplicate_signal", "signal_id": signal_id}
+        executed.append(signal_id)
+        # Keep last 200 signal IDs
+        dedup_path.write_text(json.dumps(executed[-200:]))
+        log.info("Signal %s accepted (dedup check passed)", signal_id)
 
     execution = decision.get("execution", {})
     # decision_engine uses "parsed_signal", live_pipeline uses "signal"

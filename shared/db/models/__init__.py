@@ -8,6 +8,7 @@ from shared.db.models.agent_message import AgentMessage
 from shared.db.models.agent_metric import AgentMetric
 from shared.db.models.agent_session import AgentSession
 from shared.db.models.agent_trade import AgentTrade
+from shared.db.models.analyst_profile import AnalystProfile
 from shared.db.models.api_key import ApiKeyEntry
 from shared.db.models.audit_log import AuditLog
 from shared.db.models.base import Base
@@ -16,6 +17,7 @@ from shared.db.models.consolidation import ConsolidationRun
 from shared.db.models.context_session import ContextSession
 from shared.db.models.dev_incident import DevIncident
 from shared.db.models.error_log import ErrorLog
+from shared.db.models.invitation import Invitation
 from shared.db.models.learning_session import LearningSession
 from shared.db.models.notification import Notification
 from shared.db.models.polymarket import (
@@ -98,4 +100,6 @@ __all__ = [
     "WikiCategory",
     "ConsolidationRun",
     "ContextSession",
+    "AnalystProfile",
+    "Invitation",
 ]

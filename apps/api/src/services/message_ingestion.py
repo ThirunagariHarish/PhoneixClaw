@@ -13,6 +13,7 @@ no longer run their own Discord clients — they consume from Redis.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _tasks: dict[str, asyncio.Task] = {}
 _redis = None
 _running = False
+_MAX_RETRIES = 3
 
 
 async def _get_redis():
@@ -140,13 +142,71 @@ async def _persist_message(connector_id: str, msg) -> bool:
                                 "tickers": getattr(msg, "tickers", []) or [],
                             },
                         ))
-                    except Exception:
-                        pass
+                    except Exception as trigger_exc:
+                        logger.warning(
+                            "[ingestion] trigger publish failed for agent %s: %s",
+                            sub.agent_id, trigger_exc,
+                        )
             break
     except Exception as exc:
-        logger.debug("[ingestion] trigger fan-out skipped: %s", exc)
+        logger.warning("[ingestion] trigger fan-out failed: %s", exc)
 
     return True
+
+
+async def _send_to_dead_letter(connector_id: str, msg, error: str, attempts: int) -> None:
+    """Write a failed message to the dead_letter_messages table."""
+    try:
+        from shared.db.engine import get_session
+        from sqlalchemy import text
+
+        payload = {
+            "connector_id": connector_id,
+            "channel": getattr(msg, "channel", "") or "",
+            "author": getattr(msg, "author", "") or "",
+            "content": getattr(msg, "content", "") or "",
+            "error": error[:500],
+            "attempts": attempts,
+            "timestamp": (msg.timestamp.isoformat() if hasattr(msg, "timestamp") and msg.timestamp
+                          else datetime.now(timezone.utc).isoformat()),
+        }
+
+        async for session in get_session():
+            await session.execute(
+                text("""
+                    INSERT INTO dead_letter_messages (id, connector_id, payload, error, attempts, created_at)
+                    VALUES (gen_random_uuid(), :connector_id, :payload::jsonb, :error, :attempts, NOW())
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "connector_id": connector_id,
+                    "payload": json.dumps(payload, default=str),
+                    "error": error[:500],
+                    "attempts": attempts,
+                },
+            )
+            await session.commit()
+        logger.warning("[ingestion] Dead-lettered message from connector %s: %s", connector_id, error[:100])
+    except Exception as dlq_err:
+        logger.error("[ingestion] Dead letter write ALSO failed: %s", dlq_err)
+
+
+async def _persist_with_retry(connector_id: str, msg) -> bool:
+    """Persist a message with retries, dead-lettering on final failure."""
+    last_error = ""
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            success = await _persist_message(connector_id, msg)
+            if success:
+                return True
+            last_error = "DB write returned False"
+        except Exception as exc:
+            last_error = str(exc)[:200]
+        if attempt < _MAX_RETRIES:
+            await asyncio.sleep(1.0 * attempt)
+
+    await _send_to_dead_letter(connector_id, msg, last_error, _MAX_RETRIES)
+    return False
 
 
 async def _ingest_loop(connector_id: str, connector) -> None:
@@ -160,7 +220,7 @@ async def _ingest_loop(connector_id: str, connector) -> None:
             async for msg in connector.stream_messages():
                 if not _running:
                     break
-                await _persist_message(connector_id, msg)
+                await _persist_with_retry(connector_id, msg)
             # If we exit the loop normally, try to reconnect
             if _running:
                 logger.warning("[ingestion] Connector %s stream ended, reconnecting in %ds",

@@ -587,7 +587,10 @@ def start_scheduler() -> "AsyncIOScheduler | None":
         return None
 
     if not _should_run_scheduler():
-        logger.info("[scheduler] Not starting (RUN_SCHEDULER != '1' and WEB_CONCURRENCY > 1)")
+        logger.warning(
+            "SCHEDULER DISABLED — not the leader. "
+            "Set RUN_SCHEDULER=1 to force, or ensure WEB_CONCURRENCY=1."
+        )
         return None
 
     if _scheduler is not None and _scheduler.running:
@@ -694,10 +697,10 @@ def start_scheduler() -> "AsyncIOScheduler | None":
         logger.debug("[scheduler] agent_crons scheduling skipped: %s", exc)
 
     jobs = _scheduler.get_jobs()
+    job_names = ", ".join(j.name for j in jobs)
     logger.info(
-        "[scheduler] Started with %d jobs: %s",
-        len(jobs),
-        ", ".join(f"{j.id}@{j.next_run_time}" for j in jobs),
+        "SCHEDULER RUNNING: %d jobs registered — %s",
+        len(jobs), job_names,
     )
     return _scheduler
 

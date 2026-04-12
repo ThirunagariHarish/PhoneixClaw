@@ -66,6 +66,39 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         reasoning.append("No trade direction found")
         return _build_result("REJECT", "no_direction", steps, reasoning, parsed)
 
+    try:
+        from market_session_gate import outside_rth_watchlist_payload
+
+        gate = outside_rth_watchlist_payload(parsed, config, steps, reasoning)
+        if gate:
+            result = _build_result(
+                "WATCHLIST",
+                gate["reason"],
+                steps,
+                reasoning,
+                parsed,
+                gate["prediction"],
+                None,
+            )
+            result["market_status"] = gate["market_status"]
+            result["execution"] = {"deferred": True, "reason": "outside_regular_session"}
+            try:
+                from log_trade_signal import log_signal
+
+                log_signal(
+                    ticker=parsed["ticker"],
+                    direction=parsed.get("direction"),
+                    decision="watchlist",
+                    rejection_reason=gate["reason"],
+                    features=gate["enriched"],
+                    source_message_id=raw_signal.get("message_id"),
+                )
+            except Exception:
+                pass
+            return result
+    except Exception as exc:
+        log.debug("market_session_gate skipped: %s", exc)
+
     # Step 2: Enrich
     enriched = parsed.copy()
     try:
@@ -256,10 +289,22 @@ async def run_pipeline(config: dict) -> None:
         while True:
             await asyncio.sleep(60)
             try:
+                try:
+                    from shared.utils.market_calendar import get_market_status
+
+                    ms = get_market_status()
+                    hb_extra = {
+                        "market_session": ms["session"],
+                        "market_regular_open": ms["regular_session_open"],
+                        "market_summary": ms["summary"][:240],
+                    }
+                except Exception:
+                    hb_extra = {}
                 await report_heartbeat(config, {
                     "status": "listening",
                     "signals_processed": signals_processed,
                     "trades_today": trades_today,
+                    **hb_extra,
                 })
             except Exception:
                 pass
@@ -293,6 +338,9 @@ async def run_pipeline(config: dict) -> None:
                         _route_sell_signal(ticker, signal, decision)
                 except Exception as e:
                     log.error("Trade execution failed: %s", e, exc_info=True)
+            elif decision["decision"] == "WATCHLIST":
+                ticker = decision.get("parsed_signal", {}).get("ticker", "?")
+                log.info("WATCHLIST (outside RTH or policy): %s — %s", ticker, decision.get("reason"))
             else:
                 direction = decision.get("parsed_signal", {}).get("direction")
                 ticker = decision.get("parsed_signal", {}).get("ticker")
@@ -327,7 +375,27 @@ def _route_sell_signal(ticker: str, raw_signal: dict, decision: dict) -> None:
         "reasoning": decision.get("reasoning", []),
     }
     (sell_dir / "sell_signal.json").write_text(json.dumps(sell_signal, indent=2, default=str))
-    log.info("Sell signal routed for %s", ticker)
+    log.info("Sell signal routed for %s (file)", ticker)
+
+    # Also POST to Phoenix API so in-process micro-agents receive the signal
+    try:
+        config_path = Path("config.json")
+        if config_path.exists():
+            cfg = json.loads(config_path.read_text())
+            api_url = cfg.get("phoenix_api_url", "http://localhost:8011")
+            agent_id = cfg.get("agent_id", "")
+            if agent_id:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"{api_url}/api/v2/agents/{agent_id}/route-sell-signal",
+                    data=json.dumps(sell_signal).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=5)
+                log.info("Sell signal routed for %s (API)", ticker)
+    except Exception as e:
+        log.warning("API sell-signal routing failed (non-fatal): %s", e)
 
 
 def main() -> None:

@@ -29,6 +29,13 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     # OpenAI (for fallback chains)
     "gpt-4o": {"input": 2.50, "output": 10.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    # OpenRouter model slugs (used by ModelRouter Tier 2 calls)
+    "anthropic/claude-3-haiku": {"input": 0.25, "output": 1.25},
+    "anthropic/claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "openai/gpt-4o": {"input": 2.50, "output": 10.0},
+    "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "deepseek/deepseek-chat": {"input": 0.14, "output": 0.28},
+    "meta-llama/llama-3-8b-instruct": {"input": 0.05, "output": 0.15},
 }
 
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0}  # Sonnet baseline

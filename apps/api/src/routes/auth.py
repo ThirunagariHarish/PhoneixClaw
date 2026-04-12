@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from jose import JWTError, jwt
 from sqlalchemy import select
 
@@ -22,6 +22,7 @@ from apps.api.src.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from shared.db.models.invitation import Invitation
 from shared.db.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -79,22 +80,56 @@ def _decode_token(token: str) -> dict:
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(req: RegisterRequest, session: DbSession):
+    # --- Invitation validation (BEFORE email check to prevent enumeration) ---
+    bootstrap_code = auth_settings.phoenix_admin_invite_code
+    is_bootstrap = bool(bootstrap_code) and req.invitation_code == bootstrap_code
+    invitation = None
+
+    if not is_bootstrap:
+        # Look up the invitation code in the DB
+        inv_result = await session.execute(
+            select(Invitation).where(Invitation.code == req.invitation_code, Invitation.used_by.is_(None))
+        )
+        invitation = inv_result.scalar_one_or_none()
+        if not invitation:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid or already-used invitation code",
+            )
+        if invitation.expires_at and invitation.expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invitation code has expired",
+            )
+
+    # --- Now check email uniqueness ---
     result = await session.execute(select(User).where(User.email == req.email))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
     if len(req.password) < 8:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Password must be at least 8 characters",
         )
+
     user = User(
         id=uuid.uuid4(),
         email=req.email,
         hashed_password=_hash_password(req.password),
         name=req.name,
-        email_verified=True,  # Skip email verification for M1.3; add later
+        email_verified=True,
+        is_admin=is_bootstrap,
+        role="admin" if is_bootstrap else "trader",
+        permissions=ADMIN_PERMISSIONS if is_bootstrap else DEFAULT_PERMISSIONS,
     )
     session.add(user)
+
+    # Mark invitation as used in the same transaction
+    if invitation:
+        invitation.used_by = user.id
+        invitation.used_at = datetime.now(timezone.utc)
+
     await session.commit()
     return {"status": "created", "message": "Account created. You can log in."}
 

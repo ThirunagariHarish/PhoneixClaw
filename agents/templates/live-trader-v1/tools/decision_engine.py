@@ -166,6 +166,27 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
         reasoning.append("No trade direction found in signal")
         return _build_decision("REJECT", "no_direction", steps, reasoning, parsed)
 
+    try:
+        from market_session_gate import outside_rth_watchlist_payload
+
+        gate = outside_rth_watchlist_payload(parsed, config, steps, reasoning)
+        if gate:
+            decision = _build_decision(
+                "WATCHLIST",
+                gate["reason"],
+                steps,
+                reasoning,
+                parsed,
+                gate["enriched"],
+                gate["prediction"],
+                None,
+            )
+            decision["market_status"] = gate["market_status"]
+            decision["execution"] = {"deferred": True, "reason": "outside_regular_session"}
+            return decision
+    except Exception as exc:
+        log.debug("market_session_gate skipped: %s", exc)
+
     # Enrich
     enriched = parsed.copy()
     try:
@@ -317,8 +338,12 @@ def _log_signal_to_phoenix(decision: str, reason: str | None,
     if not parsed or not parsed.get("ticker"):
         return
     decision_lower = (decision or "").lower()
-    canonical = {"execute": "executed", "reject": "rejected",
-                 "watchlist": "watchlist", "paper": "paper"}.get(decision_lower, "rejected")
+    canonical = {
+        "execute": "executed",
+        "reject": "rejected",
+        "watchlist": "watchlist",
+        "paper": "paper",
+    }.get(decision_lower, "rejected")
     features = dict(enriched or {})
     if parsed.get("signal_price") is not None:
         features["signal_price"] = parsed["signal_price"]

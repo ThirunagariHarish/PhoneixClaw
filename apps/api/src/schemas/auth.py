@@ -9,6 +9,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     name: str | None = None
+    invitation_code: str
 
 
 class LoginRequest(BaseModel):

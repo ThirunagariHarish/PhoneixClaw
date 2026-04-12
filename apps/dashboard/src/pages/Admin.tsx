@@ -19,7 +19,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Key, Shield, RotateCw, Eye, EyeOff, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Key, Shield, RotateCw, Eye, EyeOff, Plus, Pencil, Trash2, Copy, Ticket } from 'lucide-react'
 
 interface User {
   id: string
@@ -43,6 +43,17 @@ interface AuditEntry {
   action: string
   resource: string
   timestamp: string
+}
+
+interface InvitationEntry {
+  id: string
+  code: string
+  created_by: string | null
+  used_by: string | null
+  status: 'available' | 'used' | 'expired'
+  created_at: string | null
+  expires_at: string | null
+  used_at: string | null
 }
 
 const ROLES = ['admin', 'manager', 'trader', 'viewer']
@@ -85,6 +96,8 @@ export default function AdminPage() {
   const [addForm, setAddForm] = useState({ email: '', password: '', name: '', role: 'trader' })
   const [editForm, setEditForm] = useState({ name: '', role: 'trader', is_active: true })
   const [formError, setFormError] = useState('')
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null)
+  const [generateDialogOpen, setGenerateDialogOpen] = useState(false)
 
   const { data: users = [] } = useQuery<User[]>({
     queryKey: ['admin-users'],
@@ -190,6 +203,38 @@ export default function AdminPage() {
     },
   })
 
+  const { data: invitations = [] } = useQuery<InvitationEntry[]>({
+    queryKey: ['admin-invitations'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/admin/invitations')
+        return Array.isArray(res.data) ? res.data : []
+      } catch {
+        return []
+      }
+    },
+  })
+
+  async function handleGenerateInvitation() {
+    try {
+      const res = await api.post('/api/v2/admin/invitations')
+      setGeneratedCode(res.data.code)
+      setGenerateDialogOpen(true)
+      queryClient.invalidateQueries({ queryKey: ['admin-invitations'] })
+    } catch {
+      setFormError('Failed to generate invitation')
+    }
+  }
+
+  async function handleDeleteInvitation(id: string) {
+    try {
+      await api.delete(`/api/v2/admin/invitations/${id}`)
+      queryClient.invalidateQueries({ queryKey: ['admin-invitations'] })
+    } catch {
+      setFormError('Failed to delete invitation')
+    }
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader icon={Shield} title="Admin" description="User management, API keys, and audit log" />
@@ -206,6 +251,7 @@ export default function AdminPage() {
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="keys">API Key Vault</TabsTrigger>
           <TabsTrigger value="audit">Audit Log</TabsTrigger>
+          <TabsTrigger value="invitations">Invitations</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
         </TabsList>
 
@@ -249,6 +295,52 @@ export default function AdminPage() {
         <TabsContent value="audit" className="mt-4">
           <div className="overflow-x-auto">
             <DataTable columns={auditColumns} data={audit as (AuditEntry & Record<string, unknown>)[]} emptyMessage="No audit entries" />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="invitations" className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <Button onClick={handleGenerateInvitation}>
+              <Ticket className="h-4 w-4 mr-2" />
+              Generate Invitation
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left">
+                  <th className="pb-2 font-medium">Code</th>
+                  <th className="pb-2 font-medium">Created By</th>
+                  <th className="pb-2 font-medium">Status</th>
+                  <th className="pb-2 font-medium">Created At</th>
+                  <th className="pb-2 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invitations.length === 0 && (
+                  <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">No invitations</td></tr>
+                )}
+                {invitations.map((inv) => (
+                  <tr key={inv.id} className="border-b border-border/50">
+                    <td className="py-2 font-mono text-xs">{inv.code}</td>
+                    <td className="py-2">{inv.created_by ?? '--'}</td>
+                    <td className="py-2">
+                      <Badge variant={inv.status === 'available' ? 'default' : inv.status === 'used' ? 'secondary' : 'destructive'}>
+                        {inv.status}
+                      </Badge>
+                    </td>
+                    <td className="py-2">{inv.created_at ? new Date(inv.created_at).toLocaleString() : '--'}</td>
+                    <td className="py-2">
+                      {inv.status === 'available' && (
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteInvitation(inv.id)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </TabsContent>
 
@@ -343,6 +435,24 @@ export default function AdminPage() {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setUserToDelete(null)}>Cancel</Button>
             <Button variant="destructive" onClick={() => userToDelete && handleDeleteUser(userToDelete)}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={generateDialogOpen} onOpenChange={setGenerateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Invitation Code Generated</DialogTitle>
+            <DialogDescription>Share this code with the person you want to invite. It can only be used once.</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 p-3 rounded-lg border border-input bg-muted">
+            <code className="flex-1 font-mono text-sm break-all">{generatedCode}</code>
+            <Button size="sm" variant="ghost" onClick={() => { if (generatedCode) navigator.clipboard.writeText(generatedCode) }}>
+              <Copy className="h-4 w-4" />
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setGenerateDialogOpen(false)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

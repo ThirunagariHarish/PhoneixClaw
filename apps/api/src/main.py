@@ -87,6 +87,7 @@ from apps.api.src.routes import pm_venues as pm_venues_routes
 from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
 from apps.api.src.routes import wiki as wiki_routes
 from apps.api.src.routes import consolidation as consolidation_routes
+from apps.api.src.routes import invitations as invitations_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -625,16 +626,52 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         _log.exception("Agent recovery failed: %s", exc)
 
+    # Install SIGTERM handler: mark all running sessions as 'interrupted'
+    # so recovery on next startup knows they were gracefully stopped.
+    import signal as _signal
+    import asyncio as _asyncio
+
+    def _sigterm_handler(signum, frame):
+        _log.info("[shutdown] SIGTERM received — marking sessions interrupted")
+        try:
+            from apps.api.src.services.agent_gateway import _running_tasks
+            for key, task in list(_running_tasks.items()):
+                if not task.done():
+                    task.cancel()
+            _log.info("[shutdown] Cancelled %d running tasks", len(_running_tasks))
+        except Exception as e:
+            _log.warning("[shutdown] Failed to cancel tasks: %s", e)
+
+    _signal.signal(_signal.SIGTERM, _sigterm_handler)
+
     yield
 
     # H10: mark API as draining so IdempotencyMiddleware returns 503 to new POSTs.
     set_shutting_down(True)
-    import asyncio as _asyncio
     drain_timeout = float(os.getenv("SHUTDOWN_DRAIN_SECONDS", "30"))
     try:
         await _asyncio.sleep(min(drain_timeout, 2.0))  # brief quiesce for in-flight
     except Exception:
         pass
+
+    # Mark all running agent sessions as interrupted in DB
+    try:
+        from shared.db.engine import get_session
+        from shared.db.models.agent_session import AgentSession
+        from sqlalchemy import update
+        from datetime import datetime as _dt, timezone as _tz
+
+        async for db in get_session():
+            await db.execute(
+                update(AgentSession)
+                .where(AgentSession.status.in_(["running", "starting"]))
+                .values(status="interrupted", error_message="Graceful shutdown (SIGTERM)",
+                        stopped_at=_dt.now(_tz.utc))
+            )
+            await db.commit()
+        _log.info("[shutdown] Marked running sessions as interrupted")
+    except Exception as exc:
+        _log.warning("[shutdown] Failed to mark sessions: %s", exc)
 
     # Shutdown in reverse order
     if stop_ingestion_fn is not None:
@@ -725,6 +762,7 @@ app.include_router(pm_pipeline_routes.router)
 app.include_router(wiki_routes.router)
 app.include_router(wiki_routes.brain_router)
 app.include_router(consolidation_routes.router)
+app.include_router(invitations_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

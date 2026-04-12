@@ -5,7 +5,13 @@ Async retry decorator for Phoenix v2.
 import asyncio
 import functools
 from collections.abc import Awaitable, Callable
-from typing import ParamSpec, TypeVar
+import sys
+
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec, TypeVar
+else:
+    from typing import TypeVar
+    from typing_extensions import ParamSpec
 
 P = ParamSpec("P")
 T = TypeVar("T")

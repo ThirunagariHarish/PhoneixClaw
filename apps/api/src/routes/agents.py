@@ -572,6 +572,30 @@ async def list_position_agents(agent_id: str):
     return {"agent_id": agent_id, "position_agents": agents, "count": len(agents)}
 
 
+class RouteSellSignalPayload(BaseModel):
+    ticker: str
+    content: str = ""
+    author: str = ""
+    timestamp: str = ""
+    decision: str = ""
+    reasoning: list[str] = Field(default_factory=list)
+
+
+@router.post("/{agent_id}/route-sell-signal")
+async def route_sell_signal(agent_id: str, payload: RouteSellSignalPayload):
+    """Route an analyst sell signal to active position monitors for a ticker.
+
+    Called by live_pipeline.py when a sell/close signal is processed, ensuring
+    position micro-agents receive the signal even though they run in separate
+    working directories.
+    """
+    from apps.api.src.services.agent_gateway import gateway
+    result = await gateway.route_sell_signal_to_monitors(
+        uuid.UUID(agent_id), payload.ticker, payload.model_dump()
+    )
+    return result
+
+
 @router.put("/{agent_id}/pending-improvements")
 async def stage_pending_improvements(agent_id: str, payload: dict, session: DbSession):
     """Supervisor agent stages improvements for user approval.

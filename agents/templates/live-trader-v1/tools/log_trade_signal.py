@@ -58,6 +58,8 @@ KEY_FEATURES = [
     "days_to_fomc", "days_to_earnings", "is_opex_week",
     "gex_value", "iv_rank", "options_put_call_ratio",
     "signal_price", "entry_price",
+    "market_regular_session_open", "market_extended_session_open", "market_session",
+    "market_status_label", "market_is_trading_day", "market_next_regular_open_et",
 ]
 
 
@@ -80,8 +82,8 @@ def _sanitize_features(features: dict) -> dict:
                 if not math.isnan(v) and not math.isinf(v):
                     sanitized[k] = round(float(v), 6)
             else:
-                s = str(v)[:50]
-                sanitized[k] = s
+                lim = 500 if k.startswith("market_") else 50
+                sanitized[k] = str(v)[:lim]
         except Exception:
             continue
     return sanitized

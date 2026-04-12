@@ -8,6 +8,7 @@ import argparse
 import calendar
 import json
 import logging
+import os
 import sys
 import warnings
 from datetime import date, datetime, timezone
@@ -651,6 +652,7 @@ def enrich_signal(signal: dict) -> dict:
     # ── 9. Options Data (Unusual Whales / yfinance) ───────────────────
     try:
         import asyncio
+
         from shared.unusual_whales.client import UnusualWhalesClient
         uw = UnusualWhalesClient()
         _loop = asyncio.new_event_loop()
@@ -709,6 +711,175 @@ def enrich_signal(signal: dict) -> dict:
             (ic * intraday["Volume"]).sum() / intraday["Volume"].sum()
         ) if intraday["Volume"].sum() > 0 else np.nan
         attrs["price_vs_vwap"] = (ic.iloc[-1] - attrs["intraday_vwap"]) / attrs["intraday_vwap"] if attrs["intraday_vwap"] else np.nan
+
+    # ── 11. Time Series Dynamics (full parity with backtest enrich.py) ──
+    try:
+        from agents.backtesting.tools.enrich import _compute_time_series_features
+
+        attrs.update(_compute_time_series_features(close, hist["Volume"].astype(float)))
+    except Exception:
+        try:
+            returns = close.pct_change().dropna()
+            if len(returns) >= 20:
+                for lag in range(1, 6):
+                    if len(returns) > lag + 5:
+                        corr = returns.autocorr(lag=lag)
+                        attrs[f"autocorr_lag_{lag}"] = round(float(corr), 4) if not np.isnan(corr) else 0.0
+                abs_ret = returns.abs()
+                if len(abs_ret) > 5:
+                    vc = abs_ret.autocorr(lag=1)
+                    attrs["volatility_clustering"] = round(float(vc), 4) if not np.isnan(vc) else 0.0
+                rolling_mean = returns.rolling(20).mean()
+                rolling_std = returns.rolling(20).std()
+                if len(rolling_std.dropna()) > 0 and rolling_std.iloc[-1] > 0:
+                    z = float(rolling_mean.iloc[-1] / rolling_std.iloc[-1])
+                    attrs["regime_label"] = 2 if z > 1 else (0 if z < -1 else 1)
+                for w in [5, 20]:
+                    if len(returns) >= w:
+                        attrs[f"trend_persistence_{w}d"] = round(float((returns.iloc[-w:] > 0).sum()) / w, 4)
+                recent_20 = returns.iloc[-20:] if len(returns) >= 20 else returns
+                attrs["return_skewness_20d"] = round(float(recent_20.skew()), 4)
+                attrs["return_kurtosis_20d"] = round(float(recent_20.kurtosis()), 4)
+        except Exception:
+            pass
+
+    # ── 11b. Intraday seasonality (5m bars) ───────────────────────────────
+    try:
+        intraday = _get(ticker, period="5d", interval="5m")
+        if not intraday.empty and len(intraday) >= 60:
+            ic = intraday["Close"].astype(float)
+            rets = ic.pct_change().dropna()
+            if len(rets) >= 30:
+                hours = pd.to_datetime(rets.index).hour
+                by_h = rets.groupby(hours).std()
+                if len(by_h) > 1 and float(by_h.mean()) > 1e-10:
+                    attrs["intraday_seasonality_score"] = round(float(by_h.std(ddof=0) / by_h.mean()), 4)
+    except Exception:
+        pass
+
+    # ── 12. FRED Macro Features ───────────────────────────────────────
+    try:
+        from shared.data.fred_client import get_fred_client
+        fred = get_fred_client()
+        fred_features = fred.get_macro_features(entry_date)
+        attrs.update(fred_features)
+    except Exception:
+        pass
+
+    # ── 13. Event reactions + analyst_profiles (DB) ─────────────────────
+    try:
+        from agents.backtesting.tools.enrich import _compute_event_reactions
+
+        cache_ev: dict = {"daily_SPY": _safe_download("SPY", period="2y", interval="1d")}
+        ev = _compute_event_reactions(ticker, entry_date, close, cache_ev)
+        attrs.update(ev)
+    except Exception:
+        pass
+
+    try:
+        from agents.backtesting.tools.enrich import _load_analyst_profiles_map
+        from shared.utils.analyst_profile_builder import get_analyst_features_for_trade
+
+        aname = signal.get("analyst")
+        if not aname:
+            trail = signal.get("decision_trail")
+            if isinstance(trail, dict):
+                aname = trail.get("analyst") or trail.get("author")
+            elif isinstance(trail, str):
+                try:
+                    tr = json.loads(trail)
+                    aname = tr.get("analyst") or tr.get("author")
+                except (json.JSONDecodeError, TypeError):
+                    aname = None
+        if aname and (os.getenv("DATABASE_URL") or os.getenv("SEED_DB_URL")):
+            profs = _load_analyst_profiles_map()
+            prof = profs.get(str(aname).strip())
+            if prof:
+                trade_row = {**signal, "entry_time": signal.get("entry_time"), "pnl_pct": signal.get("pnl_pct")}
+                attrs.update(get_analyst_features_for_trade(prof, trade_row))
+    except Exception:
+        pass
+
+    # ── 14. Gap Analysis Features ────────────────────────────────────
+    if os.environ.get("FEATURE_GAP_ANALYSIS", "true").lower() == "true":
+        try:
+            from shared.data.gap_analysis import compute_gap_features
+            gap_feats = compute_gap_features(hist)
+            attrs.update(gap_feats)
+        except Exception:
+            pass
+
+    # ── 15. Extended Unusual Whales Features ──────────────────────────
+    if os.environ.get("FEATURE_UW_EXTENDED", "true").lower() == "true":
+        try:
+            import asyncio as _asyncio
+
+            from shared.unusual_whales.client import UnusualWhalesClient
+            _uw = UnusualWhalesClient()
+            _loop = _asyncio.new_event_loop()
+            try:
+                uw_ext = _loop.run_until_complete(_uw.get_all_extended_features(ticker, as_of_date=entry_date))
+                attrs.update(uw_ext)
+            finally:
+                _loop.run_until_complete(_uw.close())
+                _loop.close()
+        except Exception:
+            _uw_ext_keys = [
+                "darkpool_volume_pct", "darkpool_block_count",
+                "darkpool_avg_block_size", "darkpool_net_sentiment",
+                "darkpool_lit_ratio",
+                "congress_buy_count_30d", "congress_sell_count_30d",
+                "congress_net_trades_30d", "congress_total_value_30d",
+                "insider_uw_buy_count_90d", "insider_uw_sell_count_90d",
+                "insider_uw_net_shares_90d", "insider_uw_buy_sell_ratio",
+                "insider_uw_latest_days_ago",
+                "short_interest_pct", "short_interest_days_to_cover",
+                "short_utilization", "short_interest_change_30d",
+                "institutional_ownership_pct", "institutional_count",
+                "institutional_net_change_qtr", "top10_concentration",
+                "iv_term_structure_slope", "iv_skew_25d",
+                "vol_surface_atm_30d", "vol_surface_atm_60d",
+                "vol_smile_curvature", "iv_term_spread_30_60",
+            ]
+            for _k in _uw_ext_keys:
+                attrs[_k] = np.nan
+
+    # ── 16. Company Events Features ─────────────────────────────────────
+    if os.environ.get("FEATURE_COMPANY_EVENTS", "true").lower() == "true":
+        try:
+            from shared.data.company_events import get_company_events_client
+            _ce_client = get_company_events_client()
+            ce_feats = _ce_client.get_event_features(ticker, entry_date)
+            attrs.update(ce_feats)
+        except Exception:
+            pass
+
+    # ── 17. News & Headlines Sentiment (~25-30 features) ──────────────
+    if os.environ.get("FEATURE_NEWS_SENTIMENT", "true").lower() == "true":
+        try:
+            from shared.data.news_client import get_news_features
+            news_feats = get_news_features(ticker, entry_date)
+            attrs.update(news_feats)
+        except Exception:
+            pass
+
+    # ── 18. Data Source Expansion (SEC, Polygon, Source Manager) ────────
+    if os.environ.get("FEATURE_DATA_EXPANSION", "true").lower() == "true":
+        try:
+            from shared.data.source_manager import get_source_manager
+            sm = get_source_manager()
+            sm_feats = sm.get_all_features(ticker, entry_date)
+            attrs.update(sm_feats)
+        except Exception:
+            pass
+
+    # ── Market session (always visible on enriched signals) ─────────────
+    try:
+        from shared.utils.market_calendar import get_market_status
+
+        attrs.update(get_market_status()["features_flat"])
+    except Exception:
+        pass
 
     # ── Merge original signal fields ─────────────────────────────────────
     result = {**signal, **attrs}

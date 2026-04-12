@@ -22,11 +22,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Session types that we KNOW how to resume safely
+# Session types that we KNOW how to resume safely — expanded for three-tier
 RESUMABLE_TYPES = {"analyst", "live_trader"}
-# Sub-agents (position monitors) are tied to live positions; on restart we
-# re-spawn them only if their parent analyst comes back. We don't auto-resume
-# directly because the position state is owned by the parent.
+# Tier 2 agents that can be re-spawned cheaply (no Claude SDK needed)
+RESPAWNABLE_TYPES = {"position_monitor", "supervisor", "morning_briefing",
+                     "eod_analysis", "daily_summary", "trade_feedback", "backtester"}
 
 
 async def recover_agents_on_startup() -> dict:
@@ -115,14 +115,13 @@ async def recover_agents_on_startup() -> dict:
         summary["errors"].append(f"gateway import failed: {exc}")
         return summary
 
+    # Resume Tier 3 (Claude SDK) agents: analyst / live_trader
     for s in sessions_to_recover:
         if s["agent_type"] not in RESUMABLE_TYPES:
             continue
         if s.get("session_role") in ("position_monitor",):
-            # Position monitors are owned by the parent analyst
             continue
 
-        # Verify the working dir still exists
         wd = s.get("working_dir")
         if wd and not Path(wd).exists():
             logger.warning("[recovery] Skipping resume of %s — working_dir gone: %s",
@@ -139,6 +138,48 @@ async def recover_agents_on_startup() -> dict:
                 summary["errors"].append(f"resume {s['agent_id']}: {status}")
         except Exception as exc:
             summary["errors"].append(f"resume {s['agent_id']}: {str(exc)[:200]}")
+
+    # Respawn Tier 2 position monitors (PositionMicroAgent)
+    for s in sessions_to_recover:
+        if s.get("session_role") != "position_monitor":
+            continue
+        if not s.get("position_ticker"):
+            continue
+
+        wd = s.get("working_dir")
+        if not wd or not Path(wd).exists():
+            continue
+
+        try:
+            position_file = Path(wd) / "position.json"
+            config_file = Path(wd) / "config.json"
+            if not position_file.exists():
+                continue
+
+            import json as _json
+            position = _json.loads(position_file.read_text())
+            config = _json.loads(config_file.read_text()) if config_file.exists() else {}
+
+            from apps.api.src.services.position_micro_agent import PositionMicroAgent
+            import asyncio as _asyncio
+
+            new_session_id = uuid.uuid4()
+            agent = PositionMicroAgent(
+                agent_id=s["agent_id"],
+                session_id=new_session_id,
+                position=position,
+                config=config,
+                work_dir=Path(wd),
+            )
+
+            from apps.api.src.services.agent_gateway import _running_tasks
+            task_key = f"{s['agent_id']}:{position.get('position_id', s['position_ticker'])}"
+            task = _asyncio.create_task(agent.run())
+            _running_tasks[task_key] = task
+            summary["resumed"] += 1
+            logger.info("[recovery] Re-spawned position micro-agent for %s", s["position_ticker"])
+        except Exception as exc:
+            summary["errors"].append(f"respawn position {s.get('position_ticker')}: {str(exc)[:200]}")
 
     summary["completed_at"] = datetime.now(timezone.utc).isoformat()
     logger.info(

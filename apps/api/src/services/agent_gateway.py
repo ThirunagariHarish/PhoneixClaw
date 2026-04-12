@@ -18,6 +18,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select, text
 
@@ -63,6 +64,28 @@ _SYSTEM_AGENT_NAMES: dict[str, str] = {
 
 _running_tasks: dict[str, asyncio.Task] = {}
 
+# Track live PositionMicroAgent instances for sell signal routing
+_micro_agents: dict[str, Any] = {}  # key = "{agent_id}:{position_id}" -> PositionMicroAgent
+
+
+def _analyst_profile_to_dict(prof: Any) -> dict:
+    """Convert an AnalystProfile ORM instance to a plain dict for JSON serialization."""
+    return {
+        "analyst_name": prof.analyst_name,
+        "win_rate_10": prof.win_rate_10,
+        "win_rate_20": prof.win_rate_20,
+        "avg_hold_hours": prof.avg_hold_hours,
+        "median_exit_pnl": prof.median_exit_pnl,
+        "exit_pnl_p25": prof.exit_pnl_p25,
+        "exit_pnl_p75": prof.exit_pnl_p75,
+        "avg_exit_hour": prof.avg_exit_hour,
+        "preferred_exit_dow": prof.preferred_exit_dow,
+        "drawdown_tolerance": prof.drawdown_tolerance,
+        "post_earnings_sell_rate": prof.post_earnings_sell_rate,
+        "conviction_score": prof.conviction_score,
+        "profile_data": prof.profile_data or {},
+    }
+
 
 def _get_api_url() -> str:
     """Return the Phoenix API base URL for intra-cluster curl calls.
@@ -101,6 +124,12 @@ _ROBINHOOD_CHAT_TOOLS: list[str] = [
     "mcp__robinhood__place_stock_order",
     "mcp__robinhood__place_option_order",
     "mcp__robinhood__smart_limit_order",
+    "mcp__robinhood__add_to_watchlist",
+    "mcp__robinhood__remove_from_watchlist",
+    "mcp__robinhood__place_order_with_stop_loss",
+    "mcp__robinhood__cancel_and_close",
+    "mcp__robinhood__modify_stop_loss",
+    "mcp__robinhood__place_order_with_buffer",
 ]
 
 
@@ -487,7 +516,7 @@ class AgentGateway:
         work_dir: Path,
         session_row_id: uuid.UUID,
     ) -> None:
-        """Original backtester body — wrapped by _run_backtester for the semaphore."""
+        """Backtester body — uses Tier 1 orchestrator or falls back to Claude SDK."""
         _chown_to_phoenix(work_dir)
 
         # Transition backtest from PENDING → RUNNING now that we're actually executing
@@ -498,6 +527,37 @@ class AgentGateway:
             if bt and bt.status == "PENDING":
                 bt.status = "RUNNING"
                 await db.commit()
+
+        # Three-tier: use BacktestOrchestrator (Tier 1) instead of Claude SDK
+        use_orchestrator = os.getenv("BACKTEST_TIER", "orchestrator") != "sdk"
+        if use_orchestrator:
+            try:
+                from apps.api.src.services.backtest_orchestrator import BacktestOrchestrator
+
+                enabled_algos = config.get("enabled_algorithms")
+                orch = BacktestOrchestrator(
+                    agent_id=agent_id,
+                    session_id=session_row_id,
+                    work_dir=work_dir,
+                    config=config,
+                    enabled_algorithms=enabled_algos,
+                )
+                result = await orch.run()
+
+                status = result.get("status", "failed")
+                async for db in _get_session():
+                    if status == "completed":
+                        await _mark_backtest_completed(db, agent_id, backtest_id)
+                        await self._auto_create_analyst(agent_id, config, work_dir)
+                    else:
+                        await _mark_backtest_failed(
+                            db, agent_id, backtest_id, "backtest-orchestrator",
+                            f"Failed at step {result.get('failed_step')}"
+                        )
+                _running_tasks.pop(str(agent_id), None)
+                return
+            except Exception as e:
+                logger.warning("BacktestOrchestrator failed, falling back to Claude SDK: %s", e)
 
         use_claude = _can_use_claude_sdk()
 
@@ -754,6 +814,8 @@ class AgentGateway:
                         logger.warning("Failed to load manifest %s: %s", mp, e)
 
             if manifest:
+                # Default consolidation_enabled=true so wiki pipeline activates
+                manifest.setdefault("consolidation_enabled", True)
                 agent.manifest = manifest
                 identity = manifest.get("identity", {})
                 if identity.get("character"):
@@ -1377,13 +1439,11 @@ class AgentGateway:
             if src.exists():
                 shutil.copy2(src, work_dir / "tools" / inherited)
 
-        # Write position.json
         position_data.setdefault("position_id", position_id)
         position_data.setdefault("status", "open")
         position_data.setdefault("opened_at", datetime.now(timezone.utc).isoformat())
-        (work_dir / "position.json").write_text(json.dumps(position_data, indent=2, default=str))
 
-        # Build config from parent agent
+        # Build config from parent agent; persist analyst_exit_profile in position.json for tools
         async for db in _get_session():
             parent = (await db.execute(
                 select(Agent).where(Agent.id == parent_agent_id)
@@ -1391,6 +1451,31 @@ class AgentGateway:
             if not parent:
                 logger.error("Parent agent %s not found", parent_agent_id)
                 return ""
+
+            analyst_exit_profile: dict = {}
+            try:
+                from shared.db.models.analyst_profile import AnalystProfile as _AnalystProfile
+                aname = position_data.get("analyst")
+                trail = position_data.get("decision_trail")
+                if not aname and isinstance(trail, dict):
+                    aname = trail.get("analyst") or trail.get("author")
+                elif not aname and isinstance(trail, str):
+                    try:
+                        tr = json.loads(trail or "{}")
+                        aname = tr.get("analyst") or tr.get("author")
+                    except (json.JSONDecodeError, TypeError):
+                        aname = None
+                if aname:
+                    prof = (await db.execute(
+                        select(_AnalystProfile).where(_AnalystProfile.analyst_name == str(aname).strip())
+                    )).scalar_one_or_none()
+                    if prof:
+                        analyst_exit_profile = _analyst_profile_to_dict(prof)
+            except Exception as e:
+                logger.debug("analyst_exit_profile load skipped: %s", e)
+
+            position_data["analyst_exit_profile"] = analyst_exit_profile
+            (work_dir / "position.json").write_text(json.dumps(position_data, indent=2, default=str))
 
             api_url = _get_api_url()
             position_config = {
@@ -1457,9 +1542,62 @@ class AgentGateway:
         work_dir: Path,
         session_row_id: uuid.UUID,
     ) -> None:
-        """Run the position monitor as a Claude Code session."""
+        """Run the position monitor as a Tier 2 micro-agent (or Claude SDK fallback)."""
         task_key = f"{parent_agent_id}:{position_id}"
 
+        # Three-tier: use PositionMicroAgent (Tier 1+2) instead of Claude SDK
+        use_micro = os.getenv("POSITION_MONITOR_TIER", "micro") != "sdk"
+        if use_micro:
+            try:
+                from apps.api.src.services.position_micro_agent import PositionMicroAgent
+
+                position_file = work_dir / "position.json"
+                position = json.loads(position_file.read_text()) if position_file.exists() else {}
+                config_file = work_dir / "config.json"
+                config = json.loads(config_file.read_text()) if config_file.exists() else {}
+
+                # Prefer analyst_exit_profile written at spawn; else load from DB
+                analyst_patterns = dict(position.get("analyst_exit_profile") or {})
+                if not analyst_patterns:
+                    try:
+                        analyst_name = position.get("analyst") or config.get("analyst_name", "")
+                        if not analyst_name:
+                            trail = position.get("decision_trail", {})
+                            if isinstance(trail, str):
+                                trail = json.loads(trail) if trail else {}
+                            analyst_name = trail.get("analyst", trail.get("author", ""))
+                        if analyst_name:
+                            from shared.db.models.analyst_profile import AnalystProfile
+                            async for db in _get_session():
+                                from sqlalchemy import select as _sel
+                                prof = (await db.execute(
+                                    _sel(AnalystProfile).where(AnalystProfile.analyst_name == analyst_name)
+                                )).scalar_one_or_none()
+                                if prof:
+                                    analyst_patterns = _analyst_profile_to_dict(prof)
+                    except Exception as e:
+                        logger.debug("Could not load analyst profile: %s", e)
+
+                agent = PositionMicroAgent(
+                    agent_id=parent_agent_id,
+                    session_id=session_row_id,
+                    position=position,
+                    config=config,
+                    work_dir=work_dir,
+                    analyst_patterns=analyst_patterns,
+                )
+                _micro_agents[task_key] = agent
+                try:
+                    result = await agent.run()
+                    logger.info("PositionMicroAgent %s finished: %s", session_row_id, result.get("status"))
+                finally:
+                    _micro_agents.pop(task_key, None)
+                    _running_tasks.pop(task_key, None)
+                return
+            except Exception as e:
+                logger.warning("PositionMicroAgent failed, falling back to Claude SDK: %s", e)
+
+        # Fallback: Claude SDK (Tier 3)
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
@@ -1528,6 +1666,7 @@ class AgentGateway:
             if task and not task.done():
                 task.cancel()
             _running_tasks.pop(task_key, None)
+            _micro_agents.pop(task_key, None)
 
             sess.status = "stopped"
             sess.stopped_at = datetime.now(timezone.utc)
@@ -1559,6 +1698,38 @@ class AgentGateway:
                     "config": s.config,
                 })
         return result
+
+    async def route_sell_signal_to_monitors(
+        self, agent_id: uuid.UUID, ticker: str, signal: dict
+    ) -> dict:
+        """Route an analyst sell signal to all active position monitors for a ticker.
+
+        Fixes the routing gap where receive_sell_signal() was never called.
+        """
+        routed_to: list[str] = []
+        missed: list[str] = []
+
+        for key, micro in list(_micro_agents.items()):
+            if not key.startswith(str(agent_id)):
+                continue
+            if getattr(micro, "ticker", "").upper() == ticker.upper():
+                try:
+                    micro.receive_sell_signal(signal)
+                    routed_to.append(key)
+                    logger.info("Sell signal routed to monitor %s for %s", key, ticker)
+                except Exception as e:
+                    logger.warning("Failed to route sell signal to %s: %s", key, e)
+                    missed.append(key)
+
+        if not routed_to and not missed:
+            logger.info("No active position monitors for %s/%s — sell signal unroutable", agent_id, ticker)
+
+        return {
+            "ticker": ticker,
+            "routed_to": routed_to,
+            "missed": missed,
+            "total_monitors": len(_micro_agents),
+        }
 
     # ------------------------------------------------------------------
     # Supervisor agent (Phase 4)
@@ -1627,7 +1798,34 @@ class AgentGateway:
         return str(session_row_id)
 
     async def _run_supervisor(self, work_dir: Path, session_row_id: uuid.UUID, task_key: str) -> None:
-        """Run the supervisor as a Claude Code session."""
+        """Run the supervisor as Tier 1+2 scheduled runner (or Claude SDK fallback)."""
+        use_runner = os.getenv("SCHEDULED_AGENT_TIER", "runner") != "sdk"
+        if use_runner:
+            try:
+                from apps.api.src.services.auto_research import run_auto_research
+                from apps.api.src.services.scheduled_agent_runner import ScheduledAgentRunner
+
+                runner = ScheduledAgentRunner(
+                    agent_type="supervisor",
+                    agent_id=_SUPERVISOR_AGENT_UUID,
+                    session_id=session_row_id,
+                    work_dir=work_dir,
+                )
+                result = await runner.run()
+
+                # Run auto-research after supervisor pipeline
+                try:
+                    research_result = await run_auto_research()
+                    logger.info("Auto-research completed: %s", research_result.get("agents_analyzed"))
+                except Exception as e:
+                    logger.warning("Auto-research failed (non-fatal): %s", e)
+
+                _running_tasks.pop(task_key, None)
+                return
+            except Exception as e:
+                logger.warning("ScheduledAgentRunner failed for supervisor, falling back to SDK: %s", e)
+
+        # Fallback: Claude SDK (Tier 3)
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
@@ -1748,7 +1946,24 @@ class AgentGateway:
     async def _run_morning_briefing(self, work_dir: Path,
                                      session_row_id: uuid.UUID,
                                      task_key: str) -> None:
-        """Run the morning briefing as a one-shot Claude Code session."""
+        """Run the morning briefing as Tier 1+2 runner (or Claude SDK fallback)."""
+        use_runner = os.getenv("SCHEDULED_AGENT_TIER", "runner") != "sdk"
+        if use_runner:
+            try:
+                from apps.api.src.services.scheduled_agent_runner import ScheduledAgentRunner
+
+                runner = ScheduledAgentRunner(
+                    agent_type="morning_briefing",
+                    agent_id=_MORNING_BRIEFING_AGENT_UUID,
+                    session_id=session_row_id,
+                    work_dir=work_dir,
+                )
+                await runner.run()
+                _running_tasks.pop(task_key, None)
+                return
+            except Exception as e:
+                logger.warning("ScheduledAgentRunner failed for morning_briefing, falling back to SDK: %s", e)
+
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:
@@ -1885,8 +2100,34 @@ class AgentGateway:
         prompt: str,
         agent_type: str,
     ) -> None:
-        """Run a one-shot Claude Code session. Shared by daily_summary, eod,
-        trade_feedback. 30-min hard timeout matches the backtester."""
+        """Run a one-shot scheduled agent as Tier 1+2 runner (or Claude SDK fallback)."""
+        use_runner = os.getenv("SCHEDULED_AGENT_TIER", "runner") != "sdk"
+        # Map gateway agent_type names to ScheduledAgentRunner pipeline keys
+        runner_type_map = {
+            "eod_analysis": "eod_analysis",
+            "daily_summary": "daily_summary",
+            "trade_feedback": "trade_feedback",
+        }
+        runner_key = runner_type_map.get(agent_type)
+        if use_runner and runner_key:
+            try:
+                from apps.api.src.services.scheduled_agent_runner import AGENT_PIPELINES, ScheduledAgentRunner
+
+                if runner_key in AGENT_PIPELINES:
+                    # Resolve agent_id from the task_key (format: "type:date")
+                    agent_id = _SUPERVISOR_AGENT_UUID  # System-level agents share UUID
+                    runner = ScheduledAgentRunner(
+                        agent_type=runner_key,
+                        agent_id=agent_id,
+                        session_id=session_row_id,
+                        work_dir=work_dir,
+                    )
+                    await runner.run()
+                    _running_tasks.pop(task_key, None)
+                    return
+            except Exception as e:
+                logger.warning("ScheduledAgentRunner failed for %s, falling back to SDK: %s", agent_type, e)
+
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query
         except ImportError:

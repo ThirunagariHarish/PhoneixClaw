@@ -46,9 +46,14 @@ dependencies = [
     "croniter>=2.0.0",
     "gunicorn>=22.0.0",
     "robin-stocks>=3.0.0",
+    "fredapi>=0.5.0",
+    "textblob>=0.18.0",
 ]
 
 [project.optional-dependencies]
+ibkr = [
+    "ib_insync>=0.9.86",
+]
 seed = [
     "psycopg2-binary>=2.9.0",
     "pandas>=2.0.0",

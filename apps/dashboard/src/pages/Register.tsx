@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Eye, EyeOff, ArrowRight } from 'lucide-react'
 
 export default function Register() {
+  const [invitationCode, setInvitationCode] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
@@ -23,7 +24,7 @@ export default function Register() {
     e.preventDefault()
     setLocalError('')
     try {
-      await register(email, password, name)
+      await register(email, password, name, invitationCode)
       navigate('/', { replace: true })
     } catch {
       setLocalError('Registration failed. Try again.')
@@ -55,6 +56,23 @@ export default function Register() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="invitationCode" className="text-white/70 text-xs font-medium uppercase tracking-wider">Invitation Code</Label>
+              <div className={`rounded-xl transition-all duration-300 ${focused === 'invitationCode' ? 'login-input-glow' : ''}`}>
+                <input
+                  id="invitationCode"
+                  type="text"
+                  value={invitationCode}
+                  onChange={(e) => setInvitationCode(e.target.value)}
+                  onFocus={() => setFocused('invitationCode')}
+                  onBlur={() => setFocused(null)}
+                  placeholder="Enter your invitation code"
+                  required
+                  autoComplete="off"
+                  className={inputClass}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="name" className="text-white/70 text-xs font-medium uppercase tracking-wider">Name</Label>
               <div className={`rounded-xl transition-all duration-300 ${focused === 'name' ? 'login-input-glow' : ''}`}>

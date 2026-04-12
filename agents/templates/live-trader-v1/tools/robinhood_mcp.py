@@ -518,21 +518,46 @@ def _tool_get_account(_args: dict) -> dict:
 def _tool_get_order_status(args: dict) -> dict:
     _ensure_login()
     order_id = args["order_id"]
+    is_option = args.get("is_option", False)
     if PAPER_MODE:
         order = _paper_orders.get(order_id)
         if not order:
             return {"error": f"Order {order_id} not found"}
         return {"order_id": order_id, "state": order["state"], "fill_price": order.get("fill_price")}
     rh = _get_rh()
-    info = _retry(rh.orders.get_stock_order_info, order_id)
-    return {
-        "order_id": order_id,
-        "state": info.get("state", "unknown"),
-        "fill_price": info.get("average_price"),
-        "filled_quantity": info.get("cumulative_quantity"),
-        "created_at": info.get("created_at"),
-        "updated_at": info.get("updated_at"),
-    }
+    # Try stock order first, fall back to option order
+    info = None
+    if not is_option:
+        try:
+            info = _retry(rh.orders.get_stock_order_info, order_id)
+            if info and info.get("state"):
+                return {
+                    "order_id": order_id,
+                    "type": "stock",
+                    "state": info.get("state", "unknown"),
+                    "fill_price": info.get("average_price"),
+                    "filled_quantity": info.get("cumulative_quantity"),
+                    "created_at": info.get("created_at"),
+                    "updated_at": info.get("updated_at"),
+                }
+        except Exception:
+            pass
+    # Try option order lookup
+    try:
+        info = _retry(rh.orders.get_option_order_info, order_id)
+        if info and info.get("state"):
+            return {
+                "order_id": order_id,
+                "type": "option",
+                "state": info.get("state", "unknown"),
+                "fill_price": info.get("price") or info.get("premium"),
+                "filled_quantity": info.get("processed_quantity") or info.get("quantity"),
+                "created_at": info.get("created_at"),
+                "updated_at": info.get("updated_at"),
+            }
+    except Exception:
+        pass
+    return {"order_id": order_id, "state": "unknown", "error": "Could not find order in stock or option orders"}
 
 
 # -- New composite tools ---------------------------------------------------
@@ -576,6 +601,19 @@ def _tool_place_order_with_stop_loss(args: dict) -> dict:
 
     main_id = main_order.get("id", "")
     main_status = _poll_order_status(main_id) if main_id else {"state": main_order.get("state", "unknown")}
+
+    is_option_trade = bool(option_type and strike and expiry)
+    if is_option_trade:
+        # robin_stocks doesn't support stop-loss for options; record intent only
+        return {
+            "main_order_id": main_id,
+            "main_state": main_status.get("state"),
+            "main_fill_price": main_status.get("fill_price"),
+            "stop_order_id": None,
+            "stop_state": "not_supported_for_options",
+            "stop_price_target": stop_price,
+            "note": "Option stop-loss tracked by position monitor agent, not as a broker order",
+        }
 
     _order_limiter.acquire()
     stop_order = _retry(rh.orders.order_sell_stop_loss, ticker, quantity, stop_price)
@@ -754,9 +792,12 @@ def _tool_add_to_watchlist(args: dict) -> dict:
     watchlist_name = args.get("watchlist_name", DEFAULT_WATCHLIST_NAME)
 
     if PAPER_MODE:
-        # Even in PAPER_MODE we want to call Robinhood API to actually add symbols
-        # to the user's watchlist (per V2 spec). Fall through if RH lib available.
-        pass
+        return {
+            "status": "added_paper",
+            "symbols": symbols,
+            "watchlist_name": watchlist_name,
+            "paper_mode": True,
+        }
 
     try:
         rh = _get_rh()
@@ -1042,11 +1083,19 @@ def _tool_get_order_history(args: dict) -> dict:
     if order_type in ("all", "stock"):
         stock_orders = _retry(rh.orders.get_all_stock_orders) or []
         for o in stock_orders[:limit]:
+            ticker = "?"
+            instrument_url = o.get("instrument", "")
+            if instrument_url:
+                try:
+                    instr = _retry(rh.stocks.get_instrument_by_url, instrument_url)
+                    ticker = instr.get("symbol", "?") if instr else "?"
+                except Exception:
+                    ticker = o.get("instrument_id", "?")
             result.append({
                 "id": o.get("id", ""),
                 "type": "stock",
                 "side": o.get("side", ""),
-                "ticker": o.get("instrument_id", ""),
+                "ticker": ticker,
                 "quantity": o.get("quantity", ""),
                 "price": o.get("price") or o.get("average_price"),
                 "state": o.get("state", ""),

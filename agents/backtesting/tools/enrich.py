@@ -12,11 +12,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -479,7 +479,6 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
         gc_high = high.iloc[-21:]
         gc_low = low.iloc[-21:]
         gc_open = opn.iloc[-21:]
-        n = len(gc_close) - 1
         hl = np.log(gc_high.iloc[1:].values / gc_low.iloc[1:].values) ** 2
         co = np.log(gc_close.iloc[1:].values / gc_open.iloc[1:].values) ** 2
         attrs["garman_klass_vol"] = float(np.sqrt((0.5 * hl - (2 * np.log(2) - 1) * co).mean()) * np.sqrt(252))
@@ -617,7 +616,6 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     c = calendar.Calendar()
     fridays = [d for d in c.itermonthdays2(yr, mo) if d[0] != 0 and d[1] == 4]
     opex_day = fridays[2][0] if len(fridays) >= 3 else 20
-    from datetime import date
     opex_date = date(yr, mo, opex_day)
     attrs["days_to_opex"] = (opex_date - entry_date).days if hasattr(entry_date, "year") else 0
     attrs["is_opex_week"] = float(abs(attrs["days_to_opex"]) <= 5)
@@ -645,30 +643,33 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
             attrs["sentiment_bearish"] = np.nan
 
     # Earnings calendar (yfinance) — cached per ticker
+    # Use earnings_dates (historical + future) instead of .calendar (which only
+    # returns the NEXT upcoming earnings as of today, causing temporal leakage).
     try:
         fund_key = f"_fundamentals_{ticker}"
         if fund_key not in cache:
             import yfinance as yf
             yf_ticker = yf.Ticker(ticker)
             cache[fund_key] = {
-                "calendar": yf_ticker.calendar,
+                "earnings_dates": yf_ticker.earnings_dates,
                 "recommendations": yf_ticker.recommendations,
             }
         fund = cache[fund_key]
-        cal = fund["calendar"]
-        if cal is not None:
-            earn_date = None
-            if isinstance(cal, dict):
-                earn_date = cal.get("Earnings Date")
-                if isinstance(earn_date, list) and earn_date:
-                    earn_date = earn_date[0]
-            elif isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.index:
-                earn_date = cal.loc["Earnings Date"].iloc[0]
-            if earn_date:
-                earn_dt = pd.Timestamp(earn_date).date()
-                attrs["days_to_earnings"] = (earn_dt - entry_date).days
+        edates = fund["earnings_dates"]
+        if edates is not None and hasattr(edates, "index") and len(edates.index) > 0:
+            # earnings_dates index is a DatetimeIndex of earnings dates.
+            # Find the closest earnings date >= entry_date (what the trader would see).
+            ed_index = edates.index.tz_localize(None) if edates.index.tz is not None else edates.index
+            future_dates = [d.date() for d in ed_index if d.date() >= entry_date]
+            if future_dates:
+                next_earnings = min(future_dates)
+                attrs["days_to_earnings"] = (next_earnings - entry_date).days
                 attrs["earnings_within_7d"] = float(abs(attrs["days_to_earnings"]) <= 7)
                 attrs["earnings_within_14d"] = float(abs(attrs["days_to_earnings"]) <= 14)
+            else:
+                attrs["days_to_earnings"] = np.nan
+                attrs["earnings_within_7d"] = np.nan
+                attrs["earnings_within_14d"] = np.nan
         recs = fund["recommendations"]
         if recs is not None and not recs.empty:
             if hasattr(recs.index, 'date'):
@@ -709,9 +710,8 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
         "2026-05-12", "2026-06-10", "2026-07-14", "2026-08-12",
         "2026-09-11", "2026-10-13", "2026-11-10", "2026-12-10",
     ]
-    from datetime import date as date_cls
     for name, dates in [("fomc", fomc_dates), ("cpi", cpi_dates)]:
-        future = [d for d in (date_cls.fromisoformat(d) for d in dates) if d >= entry_date]
+        future = [d for d in (date.fromisoformat(d) for d in dates) if d >= entry_date]
         if future:
             days_away = (future[0] - entry_date).days
             attrs[f"days_to_{name}"] = days_away
@@ -729,7 +729,7 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
         "2026-05-08", "2026-06-05", "2026-07-02", "2026-08-07",
         "2026-09-04", "2026-10-02", "2026-11-06", "2026-12-04",
     ]
-    nfp_future = [d for d in (date_cls.fromisoformat(d) for d in nfp_dates) if d >= entry_date]
+    nfp_future = [d for d in (date.fromisoformat(d) for d in nfp_dates) if d >= entry_date]
     if nfp_future:
         nfp_away = (nfp_future[0] - entry_date).days
         attrs["days_to_nfp"] = nfp_away
@@ -739,70 +739,90 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
     if hasattr(entry_date, "month") and entry_date.month in (3, 6, 9, 12):
         fridays_qw = [d for d in c.itermonthdays2(yr, entry_date.month) if d[0] != 0 and d[1] == 4]
         qw_day = fridays_qw[2][0] if len(fridays_qw) >= 3 else 20
-        qw_date = date_cls(yr, entry_date.month, qw_day)
+        qw_date = date(yr, entry_date.month, qw_day)
         attrs["is_quad_witching_week"] = float(abs((qw_date - entry_date).days) <= 5)
     else:
         attrs["is_quad_witching_week"] = 0.0
 
     # ── Category 8: Options Data (cached per ticker) ──────────────────
-    uw_key = f"_uw_{ticker}"
-    if uw_key not in cache:
-        try:
-            import asyncio
-            from shared.unusual_whales.client import UnusualWhalesClient
-            if "_uw_client" not in cache:
-                cache["_uw_client"] = UnusualWhalesClient()
-                cache["_uw_loop"] = asyncio.new_event_loop()
-            uw = cache["_uw_client"]
-            _loop = cache["_uw_loop"]
-            uw_data = {}
-            uw_data["flow"] = _loop.run_until_complete(uw.get_options_flow(ticker=ticker))
-            uw_data["gex"] = _loop.run_until_complete(uw.get_gex(ticker))
-            try:
-                uw_data["chain"] = _loop.run_until_complete(uw.get_option_chain(ticker))
-            except Exception:
-                uw_data["chain"] = None
-            cache[uw_key] = uw_data
-        except Exception:
-            cache[uw_key] = None
+    # Unusual Whales API only returns real-time/current options data.
+    # For backtesting, if the trade date is more than 5 days in the past,
+    # we set all options features to NaN to avoid temporal data leakage.
+    _options_features_nan = [
+        "options_total_premium_50", "options_call_premium_pct",
+        "options_put_call_ratio", "options_flow_count",
+        "gex_value", "gex_positive",
+        "iv_current", "iv_rank", "iv_percentile",
+        "avg_delta", "avg_gamma", "avg_theta", "avg_vega",
+    ]
+    _today = date.today() if not hasattr(date, "today") else date.today()
+    _entry_as_date = entry_date if isinstance(entry_date, date) else pd.Timestamp(entry_date).date()
+    _days_ago = (_today - _entry_as_date).days
 
-    uw_data = cache.get(uw_key)
-    if uw_data:
-        flow = uw_data.get("flow")
-        if flow:
-            total_premium = sum(float(f.premium or 0) for f in flow[:50])
-            call_premium = sum(float(f.premium or 0) for f in flow[:50]
-                               if f.option_type == "CALL")
-            put_premium = total_premium - call_premium
-            attrs["options_total_premium_50"] = total_premium
-            attrs["options_call_premium_pct"] = call_premium / total_premium if total_premium > 0 else 0.5
-            attrs["options_put_call_ratio"] = put_premium / call_premium if call_premium > 0 else np.nan
-            attrs["options_flow_count"] = len(flow)
-        gex = uw_data.get("gex")
-        if gex and gex.total_gex is not None:
-            attrs["gex_value"] = float(gex.total_gex)
-            attrs["gex_positive"] = float(attrs.get("gex_value", 0) > 0)
-        chain = uw_data.get("chain")
-        contracts = chain.contracts if chain else []
-        if contracts:
-            ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
-            if ivs:
-                current_iv = ivs[0]
-                iv_min, iv_max = min(ivs), max(ivs)
-                attrs["iv_current"] = current_iv
-                attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
-                                    if iv_max > iv_min else 0.5)
-                attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
-            entry_price = float(row.get("entry_price", 0))
-            atm = [c for c in contracts if entry_price > 0 and
-                   abs(c.strike - entry_price) < entry_price * 0.05]
-            if not atm:
-                atm = contracts[:5]
-            if atm:
-                attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
-                attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
-                attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
-                attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
+    if _days_ago > 5:
+        # Historical trade -- UW data would be current, not point-in-time. Use NaN.
+        for _opt_feat in _options_features_nan:
+            attrs[_opt_feat] = np.nan
+    else:
+        uw_key = f"_uw_{ticker}"
+        if uw_key not in cache:
+            try:
+                import asyncio
+
+                from shared.unusual_whales.client import UnusualWhalesClient
+                if "_uw_client" not in cache:
+                    cache["_uw_client"] = UnusualWhalesClient()
+                    cache["_uw_loop"] = asyncio.new_event_loop()
+                uw = cache["_uw_client"]
+                _loop = cache["_uw_loop"]
+                uw_data = {}
+                uw_data["flow"] = _loop.run_until_complete(uw.get_options_flow(ticker=ticker))
+                uw_data["gex"] = _loop.run_until_complete(uw.get_gex(ticker))
+                try:
+                    uw_data["chain"] = _loop.run_until_complete(uw.get_option_chain(ticker))
+                except Exception:
+                    uw_data["chain"] = None
+                cache[uw_key] = uw_data
+            except Exception:
+                cache[uw_key] = None
+
+        uw_data = cache.get(uw_key)
+        if uw_data:
+            flow = uw_data.get("flow")
+            if flow:
+                total_premium = sum(float(f.premium or 0) for f in flow[:50])
+                call_premium = sum(float(f.premium or 0) for f in flow[:50]
+                                   if f.option_type == "CALL")
+                put_premium = total_premium - call_premium
+                attrs["options_total_premium_50"] = total_premium
+                attrs["options_call_premium_pct"] = call_premium / total_premium if total_premium > 0 else 0.5
+                attrs["options_put_call_ratio"] = put_premium / call_premium if call_premium > 0 else np.nan
+                attrs["options_flow_count"] = len(flow)
+            gex = uw_data.get("gex")
+            if gex and gex.total_gex is not None:
+                attrs["gex_value"] = float(gex.total_gex)
+                attrs["gex_positive"] = float(attrs.get("gex_value", 0) > 0)
+            chain = uw_data.get("chain")
+            contracts = chain.contracts if chain else []
+            if contracts:
+                ivs = [c.implied_volatility for c in contracts if c.implied_volatility]
+                if ivs:
+                    current_iv = ivs[0]
+                    iv_min, iv_max = min(ivs), max(ivs)
+                    attrs["iv_current"] = current_iv
+                    attrs["iv_rank"] = ((current_iv - iv_min) / (iv_max - iv_min)
+                                        if iv_max > iv_min else 0.5)
+                    attrs["iv_percentile"] = sum(1 for iv in ivs if iv <= current_iv) / len(ivs)
+                entry_price = float(row.get("entry_price", 0))
+                atm = [c for c in contracts if entry_price > 0 and
+                       abs(c.strike - entry_price) < entry_price * 0.05]
+                if not atm:
+                    atm = contracts[:5]
+                if atm:
+                    attrs["avg_delta"] = np.mean([c.delta or 0 for c in atm])
+                    attrs["avg_gamma"] = np.mean([c.gamma or 0 for c in atm])
+                    attrs["avg_theta"] = np.mean([c.theta or 0 for c in atm])
+                    attrs["avg_vega"] = np.mean([c.vega or 0 for c in atm])
 
     # ── Category 9: Intraday Features (5m bars, cached per ticker) ────
     intra_key = f"_intra5m_{ticker}"
@@ -834,13 +854,419 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
                 attrs["price_vs_intraday_vwap"] = (ic.iloc[-1] - intra_vwap) / intra_vwap if intra_vwap > 0 else np.nan
             if len(iv) >= 20:
                 attrs["intraday_vol_ratio"] = float(iv.iloc[-1] / iv.iloc[-20:].mean()) if iv.iloc[-20:].mean() > 0 else np.nan
+            # Hour-of-day volatility concentration (higher = more "seasonal" intraday)
+            if len(intra_slice) >= 60:
+                try:
+                    ic_full = intra_slice["Close"].astype(float)
+                    rets = ic_full.pct_change().dropna()
+                    if len(rets) >= 30:
+                        hours = pd.to_datetime(rets.index).hour
+                        by_h = rets.groupby(hours).std()
+                        if len(by_h) > 1 and float(by_h.mean()) > 1e-10:
+                            attrs["intraday_seasonality_score"] = round(
+                                float(by_h.std(ddof=0) / by_h.mean()), 4
+                            )
+                except Exception:
+                    pass
+
+    # ── Category 10: Time Series Dynamics ──────────────────────────────
+    try:
+        ts_features = _compute_time_series_features(close, volume)
+        attrs.update(ts_features)
+    except Exception:
+        pass
+
+    # ── Category 11: FRED Macro Features ─────────────────────────────
+    try:
+        fred_features = _compute_fred_features(entry_date, cache)
+        attrs.update(fred_features)
+    except Exception:
+        pass
+
+    # ── Category 12: Event Reaction Features ─────────────────────────
+    try:
+        event_features = _compute_event_reactions(ticker, entry_date, close, cache)
+        attrs.update(event_features)
+    except Exception:
+        pass
+
+    # ── Category 13: Gap Analysis Features ───────────────────────────
+    if os.environ.get("FEATURE_GAP_ANALYSIS", "true").lower() == "true":
+        try:
+            from shared.data.gap_analysis import compute_gap_features
+            gap_feats = compute_gap_features(hist)
+            attrs.update(gap_feats)
+        except Exception:
+            pass
+
+    # ── Category 14: Extended Unusual Whales Features ────────────────
+    if os.environ.get("FEATURE_UW_EXTENDED", "true").lower() == "true":
+        if _days_ago <= 5:
+            try:
+                import asyncio as _asyncio
+
+                from shared.unusual_whales.client import UnusualWhalesClient
+                _uw = UnusualWhalesClient()
+                _loop = _asyncio.new_event_loop()
+                try:
+                    uw_ext = _loop.run_until_complete(_uw.get_all_extended_features(ticker, as_of_date=_entry_as_date))
+                    attrs.update(uw_ext)
+                finally:
+                    _loop.run_until_complete(_uw.close())
+                    _loop.close()
+            except Exception:
+                pass
+        # Historical trades: set all extended UW features to NaN
+        else:
+            _uw_ext_keys = [
+                "darkpool_volume_pct", "darkpool_block_count",
+                "darkpool_avg_block_size", "darkpool_net_sentiment",
+                "darkpool_lit_ratio",
+                "congress_buy_count_30d", "congress_sell_count_30d",
+                "congress_net_trades_30d", "congress_total_value_30d",
+                "insider_uw_buy_count_90d", "insider_uw_sell_count_90d",
+                "insider_uw_net_shares_90d", "insider_uw_buy_sell_ratio",
+                "insider_uw_latest_days_ago",
+                "short_interest_pct", "short_interest_days_to_cover",
+                "short_utilization", "short_interest_change_30d",
+                "institutional_ownership_pct", "institutional_count",
+                "institutional_net_change_qtr", "top10_concentration",
+                "iv_term_structure_slope", "iv_skew_25d",
+                "vol_surface_atm_30d", "vol_surface_atm_60d",
+                "vol_smile_curvature", "iv_term_spread_30_60",
+            ]
+            for _k in _uw_ext_keys:
+                attrs[_k] = np.nan
+
+    # ── Category 15: Company Events Features ────────────────────────
+    if os.environ.get("FEATURE_COMPANY_EVENTS", "true").lower() == "true":
+        try:
+            from shared.data.company_events import get_company_events_client
+            _ce_client = get_company_events_client()
+            ce_feats = _ce_client.get_event_features(ticker, entry_date)
+            attrs.update(ce_feats)
+        except Exception:
+            pass
+
+    # ── Category 16: News & Headlines Sentiment (~25-30 features) ───
+    if os.environ.get("FEATURE_NEWS_SENTIMENT", "true").lower() == "true":
+        try:
+            from shared.data.news_client import get_news_features
+            news_key = f"_news_features_{ticker}_{entry_date}"
+            if news_key in cache:
+                attrs.update(cache[news_key])
+            else:
+                news_feats = get_news_features(ticker, entry_date)
+                cache[news_key] = news_feats
+                attrs.update(news_feats)
+        except Exception:
+            pass
+
+    # ── Category 17: Data Source Expansion (SEC, Polygon, Source Manager) ──
+    if os.environ.get("FEATURE_DATA_EXPANSION", "true").lower() == "true":
+        try:
+            from shared.data.source_manager import get_source_manager
+            sm_key = f"_source_manager_{ticker}_{entry_date}"
+            if sm_key in cache:
+                attrs.update(cache[sm_key])
+            else:
+                sm = get_source_manager()
+                sm_feats = sm.get_all_features(ticker, entry_date)
+                cache[sm_key] = sm_feats
+                attrs.update(sm_feats)
+        except Exception:
+            pass
 
     return attrs
+
+
+def _compute_time_series_features(close: pd.Series, volume: pd.Series) -> dict:
+    """Compute time-series dynamics: regime, persistence, autocorrelation, etc."""
+    features: dict = {}
+    returns = close.pct_change().dropna()
+    if len(returns) < 20:
+        return features
+
+    # Hurst exponent via rescaled range (R/S) analysis
+    try:
+        n = len(returns)
+        max_k = min(int(n / 2), 100)
+        if max_k >= 10:
+            rs_values = []
+            ks = []
+            for k in [10, 20, 50, max_k]:
+                if k > max_k:
+                    continue
+                rs_sub = []
+                for start in range(0, n - k, k):
+                    segment = returns.iloc[start:start + k].values
+                    mean_s = np.mean(segment)
+                    deviate = np.cumsum(segment - mean_s)
+                    r = np.max(deviate) - np.min(deviate)
+                    s = np.std(segment, ddof=1) if np.std(segment, ddof=1) > 0 else 1e-10
+                    rs_sub.append(r / s)
+                if rs_sub:
+                    rs_values.append(np.log(np.mean(rs_sub)))
+                    ks.append(np.log(k))
+            if len(ks) >= 2:
+                coeffs = np.polyfit(ks, rs_values, 1)
+                features["hurst_exponent"] = round(float(coeffs[0]), 4)
+    except Exception:
+        pass
+
+    # Autocorrelation of returns (lags 1-5)
+    for lag in range(1, 6):
+        if len(returns) > lag + 5:
+            corr = returns.autocorr(lag=lag)
+            features[f"autocorr_lag_{lag}"] = round(float(corr), 4) if not np.isnan(corr) else 0.0
+
+    # Volatility clustering (autocorrelation of absolute returns)
+    abs_returns = returns.abs()
+    if len(abs_returns) > 5:
+        vol_cluster = abs_returns.autocorr(lag=1)
+        features["volatility_clustering"] = round(float(vol_cluster), 4) if not np.isnan(vol_cluster) else 0.0
+
+    # Mean reversion speed (half-life via OLS on lagged spread)
+    try:
+        y = returns.values[1:]
+        x = returns.values[:-1]
+        if len(y) >= 20:
+            slope = np.polyfit(x, y, 1)[0]
+            if slope < 0:
+                half_life = -np.log(2) / np.log(1 + slope) if (1 + slope) > 0 else np.nan
+                features["mean_reversion_speed"] = round(float(half_life), 2)
+            else:
+                features["mean_reversion_speed"] = np.nan
+    except Exception:
+        features["mean_reversion_speed"] = np.nan
+
+    # Fractal dimension (Higuchi method, simplified)
+    try:
+        prices = close.values[-100:] if len(close) > 100 else close.values
+        k_max = min(10, len(prices) // 4)
+        if k_max >= 2:
+            lengths = []
+            ks_fd = []
+            for k in range(1, k_max + 1):
+                L_k = 0
+                for m in range(1, k + 1):
+                    idx = np.arange(m - 1, len(prices), k)
+                    if len(idx) < 2:
+                        continue
+                    seg = prices[idx]
+                    L_m = np.sum(np.abs(np.diff(seg))) * (len(prices) - 1) / (k * len(np.diff(seg)))
+                    L_k += L_m
+                L_k /= k
+                if L_k > 0:
+                    lengths.append(np.log(L_k))
+                    ks_fd.append(np.log(1.0 / k))
+            if len(ks_fd) >= 2:
+                fd = np.polyfit(ks_fd, lengths, 1)[0]
+                features["fractal_dimension"] = round(float(fd), 4)
+    except Exception:
+        pass
+
+    # Regime detection via rolling z-score of 20d returns
+    rolling_mean = returns.rolling(20).mean()
+    rolling_std = returns.rolling(20).std()
+    if len(rolling_std.dropna()) > 0 and rolling_std.iloc[-1] > 0:
+        z = float((rolling_mean.iloc[-1]) / rolling_std.iloc[-1])
+        if z > 1:
+            features["regime_label"] = 2  # bull
+        elif z < -1:
+            features["regime_label"] = 0  # bear
+        else:
+            features["regime_label"] = 1  # sideways
+
+        # Regime duration: count consecutive days in same regime
+        z_series = rolling_mean / rolling_std.replace(0, np.nan)
+        z_series = z_series.dropna()
+        if len(z_series) > 1:
+            current_regime = features.get("regime_label", 1)
+            duration = 0
+            for val in reversed(z_series.values):
+                if current_regime == 2 and val > 1:
+                    duration += 1
+                elif current_regime == 0 and val < -1:
+                    duration += 1
+                elif current_regime == 1 and -1 <= val <= 1:
+                    duration += 1
+                else:
+                    break
+            features["regime_duration_days"] = duration
+
+    # Trend persistence
+    for window in [5, 20]:
+        if len(returns) >= window:
+            recent = returns.iloc[-window:]
+            pos_days = float((recent > 0).sum()) / window
+            features[f"trend_persistence_{window}d"] = round(pos_days, 4)
+
+    # Return distribution moments
+    recent_20 = returns.iloc[-20:] if len(returns) >= 20 else returns
+    features["return_skewness_20d"] = round(float(recent_20.skew()), 4)
+    features["return_kurtosis_20d"] = round(float(recent_20.kurtosis()), 4)
+
+    return features
+
+
+def _compute_fred_features(entry_date, cache: dict) -> dict:
+    """Fetch FRED macro features for enrichment (cached per entry_date)."""
+    fred_key = f"_fred_features_{entry_date}"
+    if fred_key in cache:
+        return cache[fred_key]
+
+    try:
+        from shared.data.fred_client import get_fred_client
+        client = get_fred_client()
+        features = client.get_macro_features(entry_date)
+        cache[fred_key] = features
+        return features
+    except Exception:
+        cache[fred_key] = {}
+        return {}
+
+
+def _compute_event_reactions(ticker: str, entry_date, close: pd.Series, cache: dict) -> dict:
+    """Compute post-event return features using yfinance earnings + FRED dates."""
+    features: dict = {}
+
+    # Post-earnings returns (stock-specific)
+    try:
+        import yfinance as yf
+        tk = yf.Ticker(ticker)
+        cal = tk.calendar
+        if cal is not None:
+            earnings_date = None
+            if isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.columns:
+                dates = cal["Earnings Date"]
+                past = [d for d in dates if hasattr(d, "date") and d.date() < entry_date]
+                if past:
+                    earnings_date = max(past).date()
+            elif isinstance(cal, dict):
+                ed = cal.get("Earnings Date", [])
+                if ed:
+                    past = [d.date() if hasattr(d, "date") else d for d in ed if d < pd.Timestamp(entry_date)]
+                    if past:
+                        earnings_date = max(past)
+
+            if earnings_date:
+                if close.index.tz is not None:
+                    close_idx = close.index.tz_localize(None)
+                else:
+                    close_idx = close.index
+                post = close[close_idx.date > earnings_date]
+                pre = close[close_idx.date <= earnings_date]
+                if len(pre) > 0 and len(post) >= 1:
+                    base = float(pre.iloc[-1])
+                    features["post_earnings_return_1d"] = round(float(post.iloc[0] / base - 1) * 100, 4) if base > 0 else np.nan
+                if len(post) >= 5 and base > 0:
+                    features["post_earnings_return_5d"] = round(float(post.iloc[4] / base - 1) * 100, 4)
+    except Exception:
+        pass
+
+    # Post-FOMC returns (SPY-based, cached)
+    try:
+        fomc_key = "_fomc_reactions"
+        if fomc_key not in cache:
+            from shared.data.fred_client import get_fred_client
+            client = get_fred_client()
+            fomc_dates = client.get_event_dates("fomc", entry_date)
+            cache[fomc_key] = fomc_dates
+
+        fomc_dates = cache.get(fomc_key, [])
+        past_fomc = [d for d in fomc_dates if d < entry_date]
+        if past_fomc:
+            last_fomc = past_fomc[-1]
+            spy_key = "daily_SPY"
+            if spy_key in cache and not cache[spy_key].empty:
+                spy = cache[spy_key]
+                spy_close = spy["Close"]
+                if spy_close.index.tz is not None:
+                    spy_idx = spy_close.index.tz_localize(None)
+                else:
+                    spy_idx = spy_close.index
+                post = spy_close[spy_idx.date > last_fomc]
+                pre = spy_close[spy_idx.date <= last_fomc]
+                if len(pre) > 0 and len(post) >= 1:
+                    base = float(pre.iloc[-1])
+                    if base > 0:
+                        features["post_fomc_return_1d"] = round(float(post.iloc[0] / base - 1) * 100, 4)
+                    if len(post) >= 5 and base > 0:
+                        features["post_fomc_return_5d"] = round(float(post.iloc[4] / base - 1) * 100, 4)
+    except Exception:
+        pass
+
+    # Post-CPI SPY reaction (same machinery as FOMC)
+    try:
+        cpi_key = "_cpi_reactions"
+        if cpi_key not in cache:
+            from shared.data.fred_client import get_fred_client
+            client = get_fred_client()
+            cache[cpi_key] = client.get_event_dates("cpi", entry_date)
+
+        cpi_dates = cache.get(cpi_key, [])
+        past_cpi = [d for d in cpi_dates if d < entry_date]
+        if past_cpi:
+            last_cpi = past_cpi[-1]
+            spy_key = "daily_SPY"
+            if spy_key in cache and not cache[spy_key].empty:
+                spy = cache[spy_key]
+                spy_close = spy["Close"]
+                spy_idx = spy_close.index.tz_localize(None) if spy_close.index.tz is not None else spy_close.index
+                post = spy_close[spy_idx.date > last_cpi]
+                pre = spy_close[spy_idx.date <= last_cpi]
+                if len(pre) > 0 and len(post) >= 1:
+                    base = float(pre.iloc[-1])
+                    if base > 0:
+                        features["post_cpi_return_1d"] = round(float(post.iloc[0] / base - 1) * 100, 4)
+    except Exception:
+        pass
+
+    # Earnings surprise direction from most recent quarterly earnings vs estimate.
+    # Filter to only include quarters with dates before entry_date to avoid temporal leakage.
+    try:
+        import yfinance as yf
+        tk = yf.Ticker(ticker)
+        qe = getattr(tk, "quarterly_earnings", None)
+        if qe is not None and not qe.empty:
+            # Filter to rows before entry_date (index may be string dates or DatetimeIndex)
+            if hasattr(qe.index, "date"):
+                qe = qe[qe.index.date < entry_date]
+            elif qe.index.dtype == object:
+                # String index -- try to parse
+                try:
+                    parsed_idx = pd.to_datetime(qe.index)
+                    qe = qe[parsed_idx.date < entry_date]
+                except Exception:
+                    pass  # Cannot parse, use as-is (fallback)
+
+            if qe is not None and not qe.empty:
+                cols = set(str(c).lower() for c in qe.columns)
+                if "earnings" in cols and "estimate" in cols:
+                    earn_col = next(c for c in qe.columns if str(c).lower() == "earnings")
+                    est_col = next(c for c in qe.columns if str(c).lower() == "estimate")
+                    last = qe.iloc[0]
+                    e_val, est_val = last[earn_col], last[est_col]
+                    if est_val is not None and not pd.isna(est_val) and e_val is not None and not pd.isna(e_val):
+                        if float(e_val) > float(est_val):
+                            features["earnings_surprise_direction"] = 1.0
+                        elif float(e_val) < float(est_val):
+                            features["earnings_surprise_direction"] = -1.0
+                        else:
+                            features["earnings_surprise_direction"] = 0.0
+            else:
+                features["earnings_surprise_direction"] = np.nan
+    except Exception:
+        pass
+
+    return features
 
 
 _SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
 # Override via env var: export SEED_DB_URL="postgresql://seeduser:<pw>@localhost:5434/phoenix_seed"
 import os as _os
+
 _SEED_DB_URL = _os.environ.get("SEED_DB_URL", _SEED_DB_URL)
 
 
@@ -878,6 +1304,85 @@ def _load_trades_from_postgres(db_url: str) -> pd.DataFrame:
             df[col] = None
 
     return df
+
+
+def _load_analyst_profiles_map() -> dict[str, dict]:
+    """Load persisted analyst_profiles rows for enrichment (optional DATABASE_URL)."""
+    url = os.getenv("DATABASE_URL") or os.getenv("SEED_DB_URL")
+    if not url:
+        return {}
+    try:
+        from sqlalchemy import create_engine, select
+        from sqlalchemy.orm import Session
+
+        from shared.db.models.analyst_profile import AnalystProfile
+
+        engine = create_engine(url, pool_pre_ping=True)
+        out: dict[str, dict] = {}
+        with Session(engine) as session:
+            for p in session.scalars(select(AnalystProfile)).all():
+                out[p.analyst_name.strip()] = {
+                    "total_trades": p.total_trades,
+                    "win_rate_10": p.win_rate_10,
+                    "win_rate_20": p.win_rate_20,
+                    "avg_hold_hours": p.avg_hold_hours,
+                    "median_exit_pnl": p.median_exit_pnl,
+                    "exit_pnl_p25": p.exit_pnl_p25,
+                    "exit_pnl_p75": p.exit_pnl_p75,
+                    "avg_entry_hour": p.avg_entry_hour,
+                    "avg_exit_hour": p.avg_exit_hour,
+                    "preferred_exit_dow": p.preferred_exit_dow,
+                    "drawdown_tolerance": p.drawdown_tolerance,
+                    "conviction_score": p.conviction_score,
+                    "post_earnings_sell_rate": p.post_earnings_sell_rate,
+                    "profile_data": p.profile_data or {},
+                }
+        return out
+    except Exception as exc:
+        print(f"  [analyst_profiles] skip DB merge: {exc}")
+        return {}
+
+
+def _merge_analyst_profile_db_features(result: pd.DataFrame) -> pd.DataFrame:
+    """Add analyst_* behavioral features from analyst_profiles table (live parity with builder)."""
+    from shared.utils.analyst_profile_builder import get_analyst_features_for_trade
+
+    profiles = _load_analyst_profiles_map()
+    if not profiles or "analyst" not in result.columns:
+        return result
+
+    sample = get_analyst_features_for_trade(next(iter(profiles.values())), {"entry_time": None, "pnl_pct": None})
+    for col in sample:
+        if col not in result.columns:
+            result[col] = np.nan
+
+    for i in range(len(result)):
+        name = result.iloc[i].get("analyst")
+        if name is None or (isinstance(name, float) and np.isnan(name)):
+            continue
+        name = str(name).strip()
+        prof = profiles.get(name)
+        if not prof:
+            continue
+        trade_row = result.iloc[i].to_dict()
+        # In backtest mode, pass as_of so hold-time features use point-in-time
+        # instead of datetime.now(), avoiding temporal leakage.
+        _entry_t = trade_row.get("entry_time")
+        _as_of = None
+        if _entry_t is not None:
+            if isinstance(_entry_t, str):
+                try:
+                    _entry_t = pd.Timestamp(_entry_t).to_pydatetime()
+                except Exception:
+                    _entry_t = None
+            if _entry_t is not None:
+                _as_of = _entry_t + timedelta(hours=1)
+        feats = get_analyst_features_for_trade(prof, trade_row, as_of=_as_of)
+        for k, v in feats.items():
+            result.iat[i, result.columns.get_loc(k)] = v
+
+    print("Merged analyst_profiles DB features (where analyst name matches)")
+    return result
 
 
 def main():
@@ -1016,6 +1521,8 @@ def main():
 
         result["analyst_win_streak"] = result.groupby("analyst")["is_profitable"].transform(_streak)
         print("Added rolling analyst features")
+
+    result = _merge_analyst_profile_db_features(result)
 
     # --- Category 10: Temporal Cross-Trade Features ---
     result = result.sort_values("entry_time").reset_index(drop=True)

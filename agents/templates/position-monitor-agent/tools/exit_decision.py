@@ -1,7 +1,8 @@
 """Exit decision orchestrator for position monitoring.
 
-Combines TA, MAG-7 correlation, Discord sell signals, and risk levels into
-a single HOLD/PARTIAL_EXIT/FULL_EXIT decision with reasoning.
+Combines TA (15+ indicators), MAG-7 correlation, options flow,
+macro signals, analyst sell signals, and risk levels into a single
+HOLD/PARTIAL_EXIT/FULL_EXIT decision with reasoning.
 
 Usage:
     python exit_decision.py --position-id POS123 --output decision.json
@@ -68,18 +69,50 @@ def make_exit_decision(position: dict, config: dict) -> dict:
     else:
         pnl_pct = (entry_price - current_price) / entry_price * 100
 
-    # Run TA check
-    ta = _run_tool("ta_check.py", ["--ticker", ticker, "--side", side, "--output", "/tmp/ta.json"])
+    # Pass config to TA check for weight overrides
+    config_path = Path("config.json")
+    ta_args = ["--ticker", ticker, "--side", side, "--output", "/tmp/ta.json"]
+    if config_path.exists():
+        ta_args.extend(["--config", str(config_path)])
+
+    # Run TA check (15+ indicators)
+    ta = _run_tool("ta_check.py", ta_args)
     ta_urgency = ta.get("exit_urgency", 0)
 
-    # Run MAG-7 correlation
-    mag7 = _run_tool("mag7_correlation.py", ["--side", side, "--output", "/tmp/mag7.json"])
+    # Run MAG-7 + cross-asset correlation (+ sector breakdown when ticker known)
+    mag7 = _run_tool(
+        "mag7_correlation.py",
+        ["--ticker", ticker, "--side", side, "--output", "/tmp/mag7.json"],
+    )
     mag7_urgency = mag7.get("exit_urgency", 0)
+
+    # Run options flow check (Unusual Whales)
+    options_flow = _run_tool("options_flow_check.py",
+                             ["--ticker", ticker, "--side", side, "--output", "/tmp/flow.json"])
+    options_urgency = options_flow.get("exit_urgency", 0)
+
+    # Run macro check (FRED)
+    macro = _run_tool("macro_check.py", ["--side", side, "--output", "/tmp/macro.json"])
+    macro_urgency = macro.get("exit_urgency", 0)
+
+    # Run IBKR data check (optional — degrades gracefully)
+    ibkr_args = ["--ticker", ticker, "--side", side, "--output", "/tmp/ibkr.json"]
+    option_data = position.get("option_contract")
+    if option_data:
+        ibkr_args.extend(["--option-contract", json.dumps(option_data)])
+    elif position.get("strike") and position.get("expiry"):
+        oc = {"strike": position["strike"], "expiry": str(position["expiry"]),
+              "right": "C" if position.get("option_type", "call").lower() == "call" else "P"}
+        ibkr_args.extend(["--option-contract", json.dumps(oc)])
+    ibkr = _run_tool("ibkr_data_check.py", ibkr_args, timeout=30)
+    ibkr_urgency = ibkr.get("exit_urgency", 0)
 
     # Check local sell_signal.json (fast, written by primary agent's sell-routing)
     discord_urgency = 0
     discord = {}
     sell_signal_path = Path(f"positions/{ticker}/sell_signal.json")
+    if not sell_signal_path.exists():
+        sell_signal_path = Path("sell_signal.json")
     if sell_signal_path.exists():
         try:
             sell_data = json.loads(sell_signal_path.read_text())
@@ -105,7 +138,7 @@ def make_exit_decision(position: dict, config: dict) -> dict:
         if (side == "buy" and current_price <= stop_loss) or \
            (side == "sell" and current_price >= stop_loss):
             hit_stop = True
-            risk_urgency += 100  # Force full exit
+            risk_urgency += 100
             risk_reasons.append(f"Stop loss hit at ${stop_loss}")
     elif pnl_pct <= -stop_loss_pct:
         hit_stop = True
@@ -130,8 +163,29 @@ def make_exit_decision(position: dict, config: dict) -> dict:
         risk_urgency += 25
         risk_reasons.append(f"Approaching stop loss ({pnl_pct:.2f}% of -{stop_loss_pct}%)")
 
+    # Analyst behavioral exit probability (from analyst_profiles / spawn payload)
+    analyst_exit_prediction: dict = {}
+    analyst_urgency = 0
+    prof = position.get("analyst_exit_profile") or {}
+    if prof:
+        try:
+            from shared.utils.analyst_exit_predictor import predict_analyst_exit
+
+            analyst_exit_prediction = predict_analyst_exit(prof, position, current_price)
+            p = int(analyst_exit_prediction.get("probability", 0))
+            if p > 70:
+                analyst_urgency = 20
+            elif p > 50:
+                analyst_urgency = 10
+        except Exception:
+            pass
+
     # Total urgency (capped at 100)
-    total_urgency = min(ta_urgency + mag7_urgency + discord_urgency + risk_urgency, 100)
+    total_urgency = min(
+        ta_urgency + mag7_urgency + options_urgency + macro_urgency
+        + ibkr_urgency + discord_urgency + risk_urgency + analyst_urgency,
+        100
+    )
 
     # Decide action
     if hit_stop or total_urgency >= 80:
@@ -150,15 +204,25 @@ def make_exit_decision(position: dict, config: dict) -> dict:
         reasons.append("STOP LOSS HIT")
     if hit_target:
         reasons.append("TAKE PROFIT HIT")
-    if ta.get("indicators", {}).get("rsi_signal"):
-        reasons.append(f"TA: {ta['indicators']['rsi_signal']}")
-    if ta.get("indicators", {}).get("bb_signal"):
-        reasons.append(f"TA: {ta['indicators']['bb_signal']}")
+    for sig_name, sig_val in ta.get("signals", {}).items():
+        reasons.append(f"TA/{sig_name}: {sig_val}")
     if mag7.get("alert"):
         reasons.append(f"MAG-7: {mag7['alert']}")
+    for sig_name, sig_val in options_flow.get("signals", {}).items():
+        if "alert" in sig_name or "sweep" in sig_name:
+            reasons.append(f"Options: {sig_name}={sig_val}")
+    for sig_name, sig_val in macro.get("signals", {}).items():
+        if "alert" in sig_name or "spike" in sig_name:
+            reasons.append(f"Macro: {sig_name}={sig_val}")
+    for sig_name, sig_val in ibkr.get("signals", {}).items():
+        if "alert" in sig_name:
+            reasons.append(f"IBKR: {sig_name}={sig_val}")
     if discord.get("alert"):
         reasons.append(f"Discord: {discord['alert']}")
     reasons.extend(risk_reasons)
+    if analyst_exit_prediction:
+        for r in analyst_exit_prediction.get("reasons", [])[:5]:
+            reasons.append(f"Analyst model: {r}")
 
     return {
         "action": action,
@@ -171,13 +235,22 @@ def make_exit_decision(position: dict, config: dict) -> dict:
         "current_price": current_price,
         "pnl_pct": round(pnl_pct, 2),
         "qty": qty,
+        "analyst_exit_prediction": analyst_exit_prediction,
         "signals": {
             "ta": ta_urgency,
             "mag7": mag7_urgency,
+            "options_flow": options_urgency,
+            "macro": macro_urgency,
+            "ibkr": ibkr_urgency,
             "discord": discord_urgency,
             "risk": risk_urgency,
+            "analyst_model": analyst_urgency,
         },
         "ta_indicators": ta.get("indicators", {}),
+        "ta_signals": ta.get("signals", {}),
+        "options_flow_signals": options_flow.get("signals", {}),
+        "macro_signals": macro.get("signals", {}),
+        "ibkr_signals": ibkr.get("signals", {}),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -189,11 +262,8 @@ def execute_exit(position: dict, exit_pct: int, decision: dict) -> dict:
     qty_to_exit = max(1, int(qty * exit_pct / 100))
 
     try:
-        # Call robinhood_mcp.py from the live-trader template path
-        # Position monitor agents inherit live-trader tools
         rh_path = TOOLS_DIR / "robinhood_mcp.py"
         if not rh_path.exists():
-            # Fallback: look in parent live-trader template
             rh_path = TOOLS_DIR.parent.parent / "live-trader-v1" / "tools" / "robinhood_mcp.py"
 
         cmd = [
@@ -221,7 +291,6 @@ def main():
     parser.add_argument("--pct", type=int, default=0, help="Override exit percentage")
     args = parser.parse_args()
 
-    # Load position
     pos_path = Path("position.json")
     if not pos_path.exists():
         print(json.dumps({"error": "position.json not found"}))
@@ -231,10 +300,8 @@ def main():
     config_path = Path("config.json")
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
 
-    # Make decision
     decision = make_exit_decision(position, config)
 
-    # Optionally execute
     if args.execute:
         exit_pct = args.pct or decision.get("suggested_exit_pct", 0)
         if exit_pct > 0:

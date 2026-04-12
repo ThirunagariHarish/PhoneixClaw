@@ -18,7 +18,7 @@ interface AuthContextValue {
   token: string | null
   user: UserProfile | null
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, name: string) => Promise<void>
+  register: (email: string, password: string, name: string, invitationCode: string) => Promise<void>
   logout: () => void
   isAuthenticated: boolean
   error: string | null
@@ -93,14 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(profile)
   }, [])
 
-  const register = useCallback(async (email: string, password: string, name: string) => {
+  const register = useCallback(async (email: string, password: string, name: string, invitationCode: string) => {
     setError(null)
     let res: Response
     try {
       res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email, password, name, invitation_code: invitationCode }),
       })
     } catch {
       const msg = 'Cannot reach the API server. Make sure the backend is running on port 8011.'
