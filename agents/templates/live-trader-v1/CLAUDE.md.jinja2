@@ -170,13 +170,24 @@ LOOP FOREVER:
    g. **Report execution to Phoenix**: `python3 tools/report_to_phoenix.py --config config.json --action trade --data /tmp/phoenix_report.json`
       (write the trade result JSON to `/tmp/phoenix_report.json` first, then pass the path)
 4. **If NO models available (no backtesting)** — do BOTH of these steps in order:
-   a. **Call MCP tool `add_to_watchlist`** with `{"symbols": ["<TICKER>"]}` — this adds the ticker to the actual Robinhood watchlist
-   b. **Then report to Phoenix**: `python3 tools/report_to_phoenix.py --config config.json --action watchlist --data '{"ticker":"<TICKER>","reason":"<REASON>","author":"<AUTHOR>"}'`
-   ⚠️ Do NOT use `--action trade` to report a watchlist decision. Use `--action watchlist`. These are different endpoints writing to different tables.
+   a. **Add to Robinhood watchlist** (actual API call — NOT a simulation):
+      ```
+      python3 tools/add_to_watchlist.py --ticker <TICKER> --config config.json
+      ```
+      Check the output JSON for `"ok": true`. If `"ok": false`, log the error but continue.
+   b. **Log to dashboard** (uses the deployed /api/v2/trade-signals endpoint):
+      ```
+      python3 tools/log_trade_signal.py --ticker <TICKER> --decision watchlist \
+        --direction buy --reason "<REASON>" --signal-source discord \
+        --source-message-id "<MESSAGE_ID>"
+      ```
+   ⚠️ Step 4a MUST use `add_to_watchlist.py` — do NOT write custom Python to simulate the call.
+   ⚠️ Step 4b MUST use `log_trade_signal.py` — it hits the deployed API endpoint.
 5. **Report** every decision to Phoenix via `python3 tools/report_to_phoenix.py`:
-   - Trade executed → `--action trade`
-   - Added to watchlist → `--action watchlist`
+   - Trade executed → `--action trade --data /tmp/trade_result.json`
    - Heartbeat → `--action heartbeat`
+   - Rejected signal (models path) → `python3 tools/log_trade_signal.py --ticker <T> --decision rejected --reason "<REASON>"`
+   (Watchlist decisions are already logged by `log_trade_signal.py` in step 4b above — no need to also call `--action watchlist`)
 6. **Log** the decision: ticker, action taken, reasoning
 
 ### Sell Signal Routing
