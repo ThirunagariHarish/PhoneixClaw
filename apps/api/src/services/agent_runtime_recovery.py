@@ -16,6 +16,7 @@ This module runs on lifespan startup and:
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Session types that we KNOW how to resume safely — expanded for three-tier
 RESUMABLE_TYPES = {"analyst", "live_trader"}
+
 # Tier 2 agents that can be re-spawned cheaply (no Claude SDK needed)
 RESPAWNABLE_TYPES = {"position_monitor", "supervisor", "morning_briefing",
                      "eod_analysis", "daily_summary", "trade_feedback", "backtester"}
@@ -39,6 +41,7 @@ async def recover_agents_on_startup() -> dict:
         "found_running": 0,
         "marked_interrupted": 0,
         "resumed": 0,
+        "tools_deployed": 0,
         "errors": [],
     }
 
@@ -108,6 +111,16 @@ async def recover_agents_on_startup() -> dict:
 
     summary["marked_interrupted"] = len(interrupted_ids)
     logger.info("[recovery] Marked %d sessions interrupted", len(interrupted_ids))
+
+    # Hot-deploy any new/missing critical tools to all live agent directories.
+    # Runs before resumption so that resuming agents already have the latest tools.
+    try:
+        deployed = _hot_deploy_critical_tools()
+        summary["tools_deployed"] = deployed
+        if deployed:
+            logger.info("[recovery] Hot-deployed %d missing tool file(s) to live agent dirs", deployed)
+    except Exception as exc:
+        logger.warning("[recovery] Tool hot-deploy failed (non-fatal): %s", exc)
 
     # Now attempt to resume the resumable ones
     try:
@@ -185,8 +198,63 @@ async def recover_agents_on_startup() -> dict:
 
     summary["completed_at"] = datetime.now(timezone.utc).isoformat()
     logger.info(
-        "[recovery] Done: found=%d interrupted=%d resumed=%d errors=%d",
+        "[recovery] Done: found=%d interrupted=%d resumed=%d tools_deployed=%d errors=%d",
         summary["found_running"], summary["marked_interrupted"],
-        summary["resumed"], len(summary["errors"]),
+        summary["resumed"], summary["tools_deployed"], len(summary["errors"]),
     )
     return summary
+
+
+def _hot_deploy_critical_tools() -> int:
+    """Copy any missing critical tool files to all live agent working directories.
+
+    Uses ``_AGENT_CRITICAL_TOOLS`` from agent_gateway as the single source of
+    truth for which tools are required.
+
+    Only copies files that do NOT yet exist in the agent's tools/ dir — never
+    overwrites files that are already present (avoids disrupting running agents).
+
+    Returns the number of tool files copied.
+    """
+    try:
+        from apps.api.src.services.agent_gateway import (
+            _AGENT_CRITICAL_TOOLS,
+            DATA_DIR,
+            LIVE_TEMPLATE,
+        )
+    except Exception as exc:
+        logger.warning("[hot_deploy] Could not import gateway paths: %s", exc)
+        return 0
+
+    live_agents_dir = DATA_DIR / "live_agents"
+    if not live_agents_dir.exists():
+        return 0
+
+    deployed = 0
+    dirs_checked = 0
+    for agent_dir in live_agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        tools_dst = agent_dir / "tools"
+        if not tools_dst.exists():
+            continue
+        dirs_checked += 1
+        for tool_name in _AGENT_CRITICAL_TOOLS:
+            src = LIVE_TEMPLATE / "tools" / tool_name
+            dst = tools_dst / tool_name
+            if src.exists() and not dst.exists():
+                try:
+                    shutil.copy2(src, dst)
+                    deployed += 1
+                    logger.info(
+                        "[hot_deploy] Deployed %s → %s", tool_name, tools_dst
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[hot_deploy] Failed to copy %s to %s: %s", tool_name, tools_dst, exc
+                    )
+    if not deployed:
+        logger.debug(
+            "[hot_deploy] No missing critical tools found across %d agent dir(s)", dirs_checked
+        )
+    return deployed

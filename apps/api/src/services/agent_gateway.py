@@ -46,6 +46,13 @@ TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-a
 ANALYST_TEMPLATE = "analyst-agent"
 DATA_DIR = REPO_ROOT / "data"
 
+# Tools that must exist in every live agent's tools/ directory.
+# Add a filename here whenever a new tool is introduced in the template so it
+# is hot-deployed to already-running agents on the next API restart or spawn.
+_AGENT_CRITICAL_TOOLS: tuple[str, ...] = (
+    "check_messages.py",
+)
+
 # Reserved system-agent UUIDs — must match the seed list in apps/api/src/main.py and
 # scripts/docker_migrate.py.  Defined once here so a typo anywhere causes a NameError
 # rather than a silent FK violation.
@@ -858,6 +865,24 @@ class AgentGateway:
             logger.warning("Budget check failed for %s, allowing: %s", agent_id, exc)
 
         agent_key = str(agent_id)
+
+        # Hot-deploy any new/missing critical tools to a running agent's directory.
+        # This handles the case where new tools (e.g. check_messages.py) were added
+        # to the template after the agent was already spawned. Runs before the
+        # early-return so even already-running agents get the new files.
+        live_agent_dir = DATA_DIR / "live_agents" / str(agent_id)
+        if live_agent_dir.exists():
+            for _tool_name in _AGENT_CRITICAL_TOOLS:
+                _src = LIVE_TEMPLATE / "tools" / _tool_name
+                _dst = live_agent_dir / "tools" / _tool_name
+                if _src.exists() and not _dst.exists():
+                    try:
+                        shutil.copy2(_src, _dst)
+                        logger.info("[gateway] Hot-deployed %s to agent %s", _tool_name, agent_id)
+                    except Exception as _cp_exc:
+                        logger.warning("[gateway] Failed to hot-deploy %s to %s: %s",
+                                       _tool_name, live_agent_dir, _cp_exc)
+
         if agent_key in _running_tasks and not _running_tasks[agent_key].done():
             return agent_key
 
