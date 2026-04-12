@@ -9,6 +9,7 @@ lives in PostgreSQL; no SSH or VPS management.
 import asyncio
 import json
 import logging
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -20,8 +21,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 
 from apps.api.src.deps import DbSession
+from shared.db.engine import async_session as _make_db_session
 from shared.db.models.agent import Agent, AgentBacktest
 from shared.db.models.connector import Connector, ConnectorAgent
+from shared.db.models.system_log import SystemLog as _SysLog
 
 router = APIRouter(prefix="/api/v2/agents", tags=["agents"])
 
@@ -1239,15 +1242,65 @@ async def complete_agent_backtest(agent_id: str, session: DbSession):
     if not bt:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active backtest found")
 
+    # Write an initial log entry so the UI log panel shows something immediately
+    session.add(_SysLog(
+        id=uuid.uuid4(), source="backtest", level="INFO",
+        service="backtest-pipeline", agent_id=agent_id,
+        backtest_id=str(bt.id), message="Backtest pipeline initialising…",
+        step="init", progress_pct=0,
+    ))
+    await session.commit()
+
     try:
         from services.backtest_runner.src.pipeline import run_backtest_pipeline
-        result = await run_backtest_pipeline(session=session, agent_id=agent.id, backtest_id=bt.id)
+
+        async def _progress_callback(step: str, pct: int) -> None:
+            """Write a SystemLog row via an isolated session (R03/R04: never mutates
+            the pipeline's session, avoiding mid-transaction commit conflicts)."""
+            _STEP_MESSAGES: dict[str, str] = {
+                "resolving_connectors": "Resolving connected Discord channels…",
+                "ingesting_messages": "Ingesting historical messages from Discord…",
+                "no_messages": "No messages found in any channel — backtesting skipped.",
+                "parsing_signals": "Parsing trade signals from messages…",
+                "enriching_market_data": "Enriching trades with live market data…",
+                "analyzing_patterns": "Analysing patterns and building intelligence…",
+                "computing_metrics": "Computing summary metrics…",
+                "complete": "Pipeline complete.",
+            }
+            message = _STEP_MESSAGES.get(step, step.replace("_", " ").capitalize())
+            log_level = "ERROR" if step == "no_messages" else "INFO"
+            log_session = _make_db_session()
+            try:
+                # Update progress fields and write the log row in the same isolated commit
+                bt_row = await log_session.get(AgentBacktest, bt.id)
+                if bt_row:
+                    bt_row.current_step = step
+                    bt_row.progress_pct = pct
+                log_session.add(_SysLog(
+                    id=uuid.uuid4(), source="backtest", level=log_level,
+                    service="backtest-pipeline", agent_id=agent_id,
+                    backtest_id=str(bt.id), message=message, step=step, progress_pct=pct,
+                ))
+                await log_session.commit()
+            except Exception as cb_exc:
+                logger.warning("Progress callback failed writing step=%s: %s", step, cb_exc)
+                await log_session.rollback()
+            finally:
+                await log_session.close()
+
+        result = await run_backtest_pipeline(
+            session=session, agent_id=agent.id, backtest_id=bt.id,
+            progress_callback=_progress_callback,
+        )
         if "error" not in result and result.get("total_trades", 0) > 0:
             await session.refresh(bt)
             await session.refresh(agent)
             return {"backtest_id": str(bt.id), "agent_id": agent_id, "status": bt.status, "pipeline": "real", **result}
+        if result.get("error") == "no_messages":
+            return {"backtest_id": str(bt.id), "agent_id": agent_id, "status": "FAILED", **result}
+        if result.get("error") == "no_valid_connectors":
+            return {"backtest_id": str(bt.id), "agent_id": agent_id, "status": "FAILED", **result}
     except Exception as e:
-        import traceback
         traceback.print_exc()
         error_msg = f"Pipeline error: {str(e)[:500]}"
         now = datetime.now(timezone.utc)
@@ -1310,8 +1363,36 @@ async def get_backtest_trades(agent_id: str, session: DbSession, limit: int = Qu
 
 
 @router.get("/{agent_id}/logs")
-async def get_agent_logs(agent_id: str, session: DbSession, level: str | None = None, limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    """Stream agent logs from DB."""
+async def get_agent_logs(agent_id: str, session: DbSession, level: str | None = None, source: str | None = None, limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    """Stream agent logs from DB. Pass source=backtest to get backtest pipeline logs."""
+    _VALID_SOURCES = {None, "", "backtest"}
+    if source not in _VALID_SOURCES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid source '{source}'. Valid values: backtest")
+    if source == "backtest":
+        from shared.db.models.system_log import SystemLog
+        query = (
+            select(SystemLog)
+            .where(SystemLog.agent_id == agent_id, SystemLog.source == "backtest")
+            .order_by(SystemLog.created_at.asc())
+        )
+        if level:
+            query = query.where(SystemLog.level == level.upper())
+        query = query.limit(limit).offset(offset)
+        result = await session.execute(query)
+        logs = result.scalars().all()
+        return [
+            {
+                "id": str(log.id),
+                "level": log.level,
+                "step": log.step or "",
+                "message": log.message,
+                "progress_pct": log.progress_pct,
+                "details": log.details or {},
+                "created_at": log.created_at.isoformat() if log.created_at else "",
+            }
+            for log in logs
+        ]
+
     from shared.db.models.agent import AgentLog
     query = select(AgentLog).where(AgentLog.agent_id == uuid.UUID(agent_id)).order_by(desc(AgentLog.created_at))
     if level:

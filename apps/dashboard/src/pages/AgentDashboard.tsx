@@ -1063,17 +1063,17 @@ const PIPELINE_STEPS = [
 ]
 
 function BacktestPipelineProgress({ id, status, artifacts }: { id: string; status: string; artifacts?: BacktestArtifacts }) {
+  const isComplete = status === 'BACKTEST_COMPLETE' || artifacts?.status === 'COMPLETED'
+  const isRunning = status === 'BACKTESTING'
+
   const { data: logs = [] } = useQuery<BacktestLogEntry[]>({
     queryKey: ['backtest-logs', id],
     queryFn: async () => { try { return (await api.get(`/api/v2/agents/${id}/logs?source=backtest&limit=50`)).data } catch { return [] } },
     enabled: !!id,
-    refetchInterval: status === 'BACKTESTING' ? 5000 : 30000,
+    refetchInterval: isComplete ? false : isRunning ? 5000 : 30000,
   })
-
   const progressPct = artifacts?.progress_pct ?? 0
   const currentStep = artifacts?.current_step ?? ''
-  const isRunning = status === 'BACKTESTING'
-  const isComplete = status === 'BACKTEST_COMPLETE' || artifacts?.status === 'COMPLETED'
   const activeStepIdx = PIPELINE_STEPS.findIndex(s => currentStep.toLowerCase().includes(s.key))
 
             return (
@@ -1130,20 +1130,38 @@ function BacktestPipelineProgress({ id, status, artifacts }: { id: string; statu
           })}
         </div>
 
-        {logs.length > 0 && (
-          <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border bg-muted/20 p-2">
-            {logs.slice(-15).map(log => (
+        {logs.length > 0 ? (
+          <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border bg-muted/20 p-2 font-mono">
+            {logs.map(log => (
               <div key={log.id} className="flex items-start gap-2 text-[11px]">
-                <span className="text-muted-foreground shrink-0 w-14 font-mono">
+                <span className="text-muted-foreground shrink-0 w-14">
                   {log.created_at ? new Date(log.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
                 </span>
-                <span className={cn('shrink-0 w-12 uppercase font-medium', log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-muted-foreground')}>
+                <span className={cn('shrink-0 w-20 uppercase font-medium', log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-emerald-500')}>
                   {log.step || log.level}
                 </span>
-                <span className="text-foreground">{log.message}</span>
+                <span className={cn('flex-1', log.level === 'ERROR' ? 'text-red-400' : 'text-foreground')}>{log.message}</span>
+                {log.progress_pct != null && (
+                  <span className="shrink-0 text-muted-foreground">{log.progress_pct}%</span>
+                )}
               </div>
             ))}
-                  </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border bg-muted/20 p-3 font-mono">
+            <p className="text-[11px] text-muted-foreground">
+              {isRunning ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  Waiting for pipeline logs…
+                </span>
+              ) : isComplete ? (
+                'Pipeline completed — no log entries were recorded.'
+              ) : (
+                'No pipeline logs yet. Start backtesting to see live output here.'
+              )}
+            </p>
+          </div>
         )}
                 </CardContent>
               </Card>

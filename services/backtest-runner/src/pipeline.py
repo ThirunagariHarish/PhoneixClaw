@@ -62,11 +62,15 @@ async def run_backtest_pipeline(
         await progress_callback("resolving_connectors", 5)
 
     all_trades: list[BacktestTrade] = []
+    valid_connector_count = 0
+    empty_connector_count = 0
 
     for link in links:
         connector = await session.get(Connector, link.connector_id)
         if not connector:
             continue
+
+        valid_connector_count += 1
 
         # ── Step 2: Check for existing messages or ingest ────────────
         msg_count = (await session.execute(
@@ -97,6 +101,21 @@ async def run_backtest_pipeline(
             except Exception as e:
                 logger.error("Message ingestion failed for connector %s: %s", connector.id, e)
 
+            # Re-check after ingestion attempt
+            msg_count = (await session.execute(
+                select(func.count(ChannelMessage.id)).where(
+                    ChannelMessage.connector_id == connector.id
+                )
+            )).scalar() or 0
+
+            if msg_count == 0:
+                logger.warning(
+                    "No messages for connector %s (channel: %s) — skipping this connector.",
+                    connector.id, link.channel,
+                )
+                empty_connector_count += 1
+                continue  # skip this connector; try remaining ones
+
         # ── Step 3: Reconstruct trades ───────────────────────────────
         if progress_callback:
             await progress_callback("parsing_signals", 30)
@@ -115,6 +134,53 @@ async def run_backtest_pipeline(
             channel_filter=channel_filter,
         )
         all_trades.extend(trades)
+
+    # ── Post-loop: guard — no resolvable connectors at all ────────────────
+    if valid_connector_count == 0:
+        logger.warning(
+            "Agent %s has %d connector link(s) but none resolved to a valid Connector record — aborting backtest.",
+            agent_id, len(links),
+        )
+        backtest = await session.get(AgentBacktest, backtest_id)
+        if backtest:
+            backtest.status = "FAILED"
+            backtest.error_message = (
+                "No valid connectors found for this agent. "
+                "Please re-link your Discord channel and try again."
+            )
+            backtest.completed_at = datetime.now(timezone.utc)
+        if agent:
+            agent.status = "CREATED"
+        await session.commit()
+        return {"error": "no_valid_connectors", "message": "No valid connectors found."}
+
+    # ── Post-loop: fail cleanly when every valid connector had no messages ──
+    if valid_connector_count > 0 and empty_connector_count == valid_connector_count:
+        logger.warning(
+            "All %d connector(s) for agent %s had no messages after ingestion — aborting backtest.",
+            valid_connector_count, agent_id,
+        )
+        if progress_callback:
+            await progress_callback("no_messages", 0)
+        backtest = await session.get(AgentBacktest, backtest_id)
+        if backtest:
+            backtest.status = "FAILED"
+            backtest.error_message = (
+                "No messages found in any connected Discord channel. "
+                "Backtesting requires historical messages to analyse. "
+                "Please ensure the channel has activity and try again."
+            )
+            backtest.completed_at = datetime.now(timezone.utc)
+        if agent:
+            agent.status = "CREATED"
+        await session.commit()
+        return {
+            "error": "no_messages",
+            "message": (
+                "No messages found in the connected Discord channel(s). "
+                "Backtesting skipped."
+            ),
+        }
 
     # ── Step 4: Market data enrichment ───────────────────────────────────
     if progress_callback:
