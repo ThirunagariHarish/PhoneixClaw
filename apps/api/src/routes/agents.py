@@ -827,11 +827,20 @@ async def get_runtime_info(agent_id: str, session: DbSession):
 
     from shared.db.models.agent_session import AgentSession
 
+    # Prefer live/analyst sessions over backtester sessions when multiple are running.
+    # Order: analyst/live_trader first (CASE 0), then any other type (CASE 1), newest first.
+    from sqlalchemy import case as _case
     sess_result = await session.execute(
         select(AgentSession)
         .where(AgentSession.agent_id == uuid.UUID(agent_id),
                AgentSession.status.in_(["running", "starting"]))
-        .order_by(desc(AgentSession.started_at))
+        .order_by(
+            _case(
+                (AgentSession.agent_type.in_(["analyst", "live_trader"]), 0),
+                else_=1,
+            ),
+            desc(AgentSession.started_at),
+        )
         .limit(1)
     )
     sess = sess_result.scalar_one_or_none()
@@ -848,18 +857,20 @@ async def get_runtime_info(agent_id: str, session: DbSession):
         "working_directory": sess.working_dir,
         "started_at": sess.started_at.isoformat() if sess.started_at else None,
         "host_name": sess.host_name or _socket.gethostname(),
-        "pid": sess.pid or _os.getpid(),
+        # Use None when PID is unknown — do not fall back to the API server PID
+        # (which would be misleading in the Runtime tab and trigger wrong psutil lookup).
+        "pid": sess.pid or None,
     }
 
     if sess.started_at:
         uptime = (datetime.now(timezone.utc) - sess.started_at).total_seconds()
         info["uptime_seconds"] = int(uptime)
 
-    # Memory usage (best-effort)
+    # Memory usage (best-effort: only attempt if we have a real agent PID)
     try:
         import psutil  # type: ignore
-        proc = psutil.Process(info["pid"])
-        info["memory_usage_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+        proc = psutil.Process(info["pid"]) if info["pid"] else None
+        info["memory_usage_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1) if proc else None
     except Exception:
         info["memory_usage_mb"] = None
 

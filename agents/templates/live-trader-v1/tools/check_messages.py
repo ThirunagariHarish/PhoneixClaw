@@ -93,6 +93,27 @@ def check(config_path: str) -> dict:
         log.error("Failed to fetch messages: %s", exc)
         return {"error": str(exc)[:200], "count": 0, "new_messages": []}
 
+    # has_connectors=False means no Discord connector is linked to this agent.
+    # Guard on the connector state alone — do NOT also require messages to be empty,
+    # because a cached/stale message list must not suppress the warning (R-001 fix).
+    # Do NOT advance the `since` cursor here: if a connector is added later, we want
+    # to backfill messages from this point forward rather than skipping them (R-005 fix).
+    if not data.get("has_connectors", True):
+        log.error(
+            "NO CONNECTOR LINKED: This agent has no Discord connector attached. "
+            "Go to Dashboard → Agent → Settings and link a Discord connector. "
+            "Signals CANNOT be received until a connector is configured."
+        )
+        return {
+            "count": 0,
+            "new_messages": [],
+            "warning": "no_connector_linked",
+            "warning_message": (
+                "No Discord connector is linked to this agent. "
+                "Link one in the dashboard to start receiving signals."
+            ),
+        }
+
     all_messages = data.get("messages", [])
     processed_ids = _load_processed_ids()
 
@@ -104,6 +125,7 @@ def check(config_path: str) -> dict:
         new_messages.append(msg)
         processed_ids.add(msg_key)
 
+    # Only advance the cursor when we successfully polled with a live connector.
     now_iso = datetime.now(timezone.utc).isoformat()
     _save_last_check(now_iso)
 
