@@ -137,7 +137,11 @@ async def backfill_channel_messages(
                 continue
 
             import httpx
-            headers = {"Authorization": f"Bot {token}" if len(token) < 100 else token}
+            auth_type = (conn.config or {}).get("auth_type", "user_token")
+            if auth_type == "bot":
+                headers = {"Authorization": f"Bot {token}"}
+            else:
+                headers = {"Authorization": token}
 
             async with httpx.AsyncClient(timeout=15) as http:
                 for ch_id in channel_ids[:20]:
