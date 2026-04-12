@@ -811,11 +811,14 @@ function LogsTab({ id }: { id: string }) {
   }
 
   function handleDownloadCSV() {
+    // R-002: use toLocaleString() so Time column matches what the UI displays
+    // R-003: quote all three columns defensively (RFC 4180)
+    const q = (val: string) => `"${val.replace(/"/g, '""')}"`
     const headers = ['Time', 'Level', 'Message']
     const rows = filteredLogs.map(l => [
-      l.created_at,
-      l.level,
-      `"${(l.message ?? '').replace(/"/g, '""')}"`,
+      q(new Date(l.created_at).toLocaleString()),
+      q(l.level ?? ''),
+      q(l.message ?? ''),
     ])
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     triggerDownload(csv, `agent-${id}-logs-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8;')
@@ -845,10 +848,11 @@ function LogsTab({ id }: { id: string }) {
               </SelectContent>
             </Select>
             <Input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="w-48 h-8 text-xs" />
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadCSV} disabled={filteredLogs.length === 0} title="Download as CSV">
+            {/* R-004: aria-label so screen readers know what is being downloaded */}
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadCSV} disabled={filteredLogs.length === 0} title="Download as CSV" aria-label="Download logs as CSV">
               <FileSpreadsheet className="h-3.5 w-3.5" />CSV
             </Button>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadJSON} disabled={filteredLogs.length === 0} title="Download as JSON">
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadJSON} disabled={filteredLogs.length === 0} title="Download as JSON" aria-label="Download logs as JSON">
               <FileJson className="h-3.5 w-3.5" />JSON
             </Button>
           </div>
