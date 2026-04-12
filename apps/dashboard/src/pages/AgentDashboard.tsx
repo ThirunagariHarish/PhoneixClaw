@@ -798,6 +798,37 @@ function LogsTab({ id }: { id: string }) {
     }
   }
 
+  function triggerDownload(content: string, filename: string, mime: string) {
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  function handleDownloadCSV() {
+    const headers = ['Time', 'Level', 'Message']
+    const rows = filteredLogs.map(l => [
+      l.created_at,
+      l.level,
+      `"${(l.message ?? '').replace(/"/g, '""')}"`,
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    triggerDownload(csv, `agent-${id}-logs-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8;')
+  }
+
+  function handleDownloadJSON() {
+    triggerDownload(
+      JSON.stringify(filteredLogs, null, 2),
+      `agent-${id}-logs-${new Date().toISOString().slice(0, 10)}.json`,
+      'application/json',
+    )
+  }
+
   return (
     <div className="space-y-4">
           <Card>
@@ -814,6 +845,12 @@ function LogsTab({ id }: { id: string }) {
               </SelectContent>
             </Select>
             <Input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="w-48 h-8 text-xs" />
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadCSV} disabled={filteredLogs.length === 0} title="Download as CSV">
+              <FileSpreadsheet className="h-3.5 w-3.5" />CSV
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleDownloadJSON} disabled={filteredLogs.length === 0} title="Download as JSON">
+              <FileJson className="h-3.5 w-3.5" />JSON
+            </Button>
           </div>
             </CardHeader>
             <CardContent>
@@ -1697,7 +1734,37 @@ function RuntimeTab({ id }: { id: string }) {
       </Card>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Terminal className="h-4 w-4" />Recent Logs</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-1"><Terminal className="h-4 w-4" />Recent Logs</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              disabled={!runtime && logs.length === 0}
+              title="Download runtime snapshot as JSON"
+              onClick={() => {
+                const snapshot = {
+                  exported_at: new Date().toISOString(),
+                  agent_id: id,
+                  runtime: runtime ?? null,
+                  recent_logs: logs,
+                }
+                const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
+                const url = URL.createObjectURL(blob)
+                const link = document.createElement('a')
+                link.href = url
+                link.download = `agent-${id}-runtime-snapshot-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+                URL.revokeObjectURL(url)
+              }}
+            >
+              <FileDown className="h-3.5 w-3.5" />Download Snapshot
+            </Button>
+          </div>
+        </CardHeader>
         <CardContent>
           {logs.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">No recent logs.</p>
