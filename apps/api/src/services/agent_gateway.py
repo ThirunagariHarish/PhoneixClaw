@@ -2488,6 +2488,17 @@ class AgentGateway:
             work_dir = DATA_DIR / "live_agents" / agent_key
             if not work_dir.exists():
                 work_dir = await self._prepare_analyst_directory(agent, db)
+            else:
+                for subdir in ("tools", "skills"):
+                    src = LIVE_TEMPLATE / subdir
+                    dst = work_dir / subdir
+                    if src.exists():
+                        if dst.exists():
+                            shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                startup_src = LIVE_TEMPLATE / "startup.sh"
+                if startup_src.exists():
+                    shutil.copy2(startup_src, work_dir / "startup.sh")
 
             session_row_id = uuid.uuid4()
             db.add(AgentSession(
