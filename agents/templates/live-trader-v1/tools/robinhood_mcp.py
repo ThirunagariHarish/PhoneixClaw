@@ -189,15 +189,16 @@ def _retry(fn, *args, **kwargs):
             last_exc = exc
             err_str = str(exc).lower()
             # On 401/Unauthorized, reset the auth flag AND attempt a silent
-            # re-auth before the next retry so that subsequent attempts use
-            # a fresh session instead of replaying against a dead token.
-            # The thread-local guard prevents infinite recursion when _retry
-            # is called from within _ensure_login itself (e.g. for rh.login).
+            # re-auth on the FIRST failure only.  Re-auth is limited to
+            # attempt == 1 so that a bad password does not trigger repeated
+            # rh.login() calls (each of which sends a push notification).
+            # The thread-local guard prevents recursion when _retry is called
+            # from within _ensure_login itself.
             if any(kw in err_str for kw in _AUTH_ERROR_KEYWORDS):
                 _rh_logged_in = False
                 log.warning("Auth error on attempt %d — session marked for renewal", attempt)
                 if (
-                    attempt < MAX_RETRIES
+                    attempt == 1
                     and not PAPER_MODE
                     and not getattr(_in_retry_reauth, "active", False)
                 ):
@@ -243,6 +244,7 @@ def _load_credentials() -> tuple[str, str, str]:
             from pathlib import Path as _Path
             p = _Path(cfg_path)
             if not p.exists():
+                log.debug("Credentials config not found at %s — skipping", p.resolve())
                 continue
             import json as _json
             with open(p) as f:
@@ -324,9 +326,13 @@ def _ensure_login() -> None:
     # Only on the FIRST login of the day (no pickle or expired token) does a real
     # network auth call happen.
     # expiresIn=86400 requests a 24-hour token — valid for a full trading day.
+    #
+    # NOTE: rh.login() is called directly (NOT via _retry) because auth failures
+    # are not transient — a bad password will fail every time, and retrying 3×
+    # would trigger 3 device-approval push notifications.  The no-MFA fallback
+    # is also a single direct call for the same reason.
     try:
-        _retry(
-            rh.login,
+        rh.login(
             username,
             password,
             mfa_code=mfa_code,
@@ -336,8 +342,7 @@ def _ensure_login() -> None:
         )
     except Exception as first_err:
         # If TOTP was provided but login failed (e.g. wrong secret or clock skew),
-        # attempt once without mfa_code.  We do NOT retry in a loop here to avoid
-        # sending multiple push notifications.
+        # attempt once without mfa_code.  One attempt only — no loop.
         if mfa_code:
             log.warning("Login with TOTP failed (%s), retrying once without MFA code", first_err)
             try:

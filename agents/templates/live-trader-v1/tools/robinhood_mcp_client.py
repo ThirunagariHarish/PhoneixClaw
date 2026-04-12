@@ -43,6 +43,12 @@ class RobinhoodMCPClient:
         # session pickle at ~/.tokens/{name}.pickle lands on the agent's
         # persistent volume and survives container restarts.
         env["HOME"] = str(_MCP_SCRIPT.parent.parent)
+        # NOTE: RH_PASSWORD is present in the subprocess environment because
+        # the MCP server's _load_credentials() falls back to env vars when no
+        # config.json is present.  Subprocess env vars are visible via
+        # /proc/<pid>/environ on Linux — mitigate by using a temp config file
+        # with ROBINHOOD_CONFIG pointing to it (already supported) for
+        # production deployments where process isolation is a concern.
         return env
 
     def start(self) -> None:
@@ -77,7 +83,11 @@ class RobinhoodMCPClient:
             "params": {"name": tool_name, "arguments": arguments},
         }
         assert self._proc and self._proc.stdin and self._proc.stdout
-        log.debug("→ MCP request #%d: %s(%s)", self._request_id, tool_name, json.dumps(arguments))
+        # Scrub sensitive keys before logging so passwords/TOTP codes never
+        # reach log files even when DEBUG=1 is set.
+        _SENSITIVE = frozenset({"password", "mfa_code", "totp_secret", "access_token"})
+        safe_args = {k: "***" if k in _SENSITIVE else v for k, v in arguments.items()}
+        log.debug("→ MCP request #%d: %s(%s)", self._request_id, tool_name, json.dumps(safe_args))
         self._proc.stdin.write(json.dumps(request) + "\n")
         self._proc.stdin.flush()
 
@@ -97,9 +107,9 @@ class RobinhoodMCPClient:
                     if isinstance(content, list) and content:
                         text_val = content[0].get("text", "{}")
                         parsed = json.loads(text_val) if text_val.startswith("{") else {"raw": text_val}
-                        log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(parsed)[:200])
+                        log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(parsed)[:500])
                         return parsed
-                    log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(result)[:200])
+                    log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(result)[:500])
                     return result
             except (json.JSONDecodeError, KeyError):
                 continue
