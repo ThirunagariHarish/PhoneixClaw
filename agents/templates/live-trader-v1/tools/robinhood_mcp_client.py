@@ -77,6 +77,7 @@ class RobinhoodMCPClient:
             "params": {"name": tool_name, "arguments": arguments},
         }
         assert self._proc and self._proc.stdin and self._proc.stdout
+        log.debug("→ MCP request #%d: %s(%s)", self._request_id, tool_name, json.dumps(arguments))
         self._proc.stdin.write(json.dumps(request) + "\n")
         self._proc.stdin.flush()
 
@@ -89,15 +90,20 @@ class RobinhoodMCPClient:
                 resp = json.loads(line.strip())
                 if resp.get("id") == self._request_id:
                     if "error" in resp:
+                        log.warning("← MCP error #%d %s: %s", self._request_id, tool_name, resp["error"])
                         return {"error": resp["error"]}
                     result = resp.get("result", {})
                     content = result.get("content", [{}])
                     if isinstance(content, list) and content:
                         text_val = content[0].get("text", "{}")
-                        return json.loads(text_val) if text_val.startswith("{") else {"raw": text_val}
+                        parsed = json.loads(text_val) if text_val.startswith("{") else {"raw": text_val}
+                        log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(parsed)[:200])
+                        return parsed
+                    log.debug("← MCP response #%d %s: %s", self._request_id, tool_name, json.dumps(result)[:200])
                     return result
             except (json.JSONDecodeError, KeyError):
                 continue
+        log.warning("← MCP timeout #%d %s (%.1fs)", self._request_id, tool_name, timeout)
         return {"error": "timeout"}
 
     def stop(self) -> None:
