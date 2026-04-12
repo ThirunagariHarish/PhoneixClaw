@@ -12,11 +12,12 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from robinhood_mcp_client import RobinhoodMCPClient  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,81 +27,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 TOOLS_DIR = Path(__file__).resolve().parent
-
-
-class MCPClient:
-    """Communicate with robinhood_mcp.py via stdio JSON-RPC."""
-
-    def __init__(self, config: dict):
-        self.config = config
-        self.proc = None
-        self._request_id = 0
-
-    def start(self):
-        import os
-        import threading
-        env = os.environ.copy()
-        creds = self.config.get("robinhood_credentials", self.config.get("robinhood", {}))
-        if isinstance(creds, dict):
-            env["RH_USERNAME"] = creds.get("username", "")
-            env["RH_PASSWORD"] = creds.get("password", "")
-            env["RH_TOTP_SECRET"] = creds.get("totp_secret", "")
-        if self.config.get("paper_mode"):
-            env["PAPER_MODE"] = "true"
-        # Ensure HOME is set so robin_stocks session pickles land in the workspace
-        if "HOME" not in env or not env["HOME"]:
-            env["HOME"] = str(Path.cwd())
-        self.proc = subprocess.Popen(
-            [sys.executable, str(TOOLS_DIR / "robinhood_mcp.py")],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-        # Drain stderr in a daemon thread to prevent pipe deadlock
-        def _drain_stderr():
-            for line in self.proc.stderr:
-                log.debug("[mcp-stderr] %s", line.rstrip())
-        t = threading.Thread(target=_drain_stderr, daemon=True)
-        t.start()
-        log.info("MCP server started (pid=%d)", self.proc.pid)
-
-    def call(self, tool_name: str, arguments: dict, timeout: int = 60) -> dict:
-        self._request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._request_id,
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
-        }
-        self.proc.stdin.write(json.dumps(request) + "\n")
-        self.proc.stdin.flush()
-
-        start = time.time()
-        while time.time() - start < timeout:
-            line = self.proc.stdout.readline()
-            if not line:
-                break
-            try:
-                resp = json.loads(line.strip())
-                if resp.get("id") == self._request_id:
-                    if "error" in resp:
-                        return {"error": resp["error"]}
-                    result = resp.get("result", {})
-                    content = result.get("content", [{}])
-                    if isinstance(content, list) and content:
-                        text = content[0].get("text", "{}")
-                        return json.loads(text) if text.startswith("{") else {"raw": text}
-                    return result
-            except (json.JSONDecodeError, KeyError):
-                continue
-        return {"error": "timeout"}
-
-    def stop(self):
-        if self.proc:
-            self.proc.terminate()
-            self.proc.wait(timeout=5)
 
 
 def _report_trade_to_phoenix(config: dict, trade_data: dict):
@@ -240,7 +166,7 @@ def execute(decision_path: str, config_path: str):
     if is_paper:
         config["paper_mode"] = True
 
-    mcp = MCPClient(config)
+    mcp = RobinhoodMCPClient(config)
     mcp.start()
 
     try:

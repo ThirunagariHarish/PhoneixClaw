@@ -423,6 +423,55 @@ async def post_agent_log(
     return {"ok": True}
 
 
+@router.get("/{agent_id}/pipeline-status")
+async def get_pipeline_status(agent_id: uuid.UUID, session: DbSession = None):
+    """Return live_pipeline.py health status from the agent's working directory."""
+    from pathlib import Path
+
+    data_dir = Path(__file__).resolve().parents[4] / "data" / "live_agents" / str(agent_id)
+    status_file = data_dir / "pipeline_status.json"
+    pid_file = data_dir / "pipeline.pid"
+    log_file = data_dir / "live_pipeline.log"
+
+    result: dict = {
+        "agent_id": str(agent_id),
+        "work_dir_exists": data_dir.exists(),
+        "status_file_exists": status_file.exists(),
+        "pipeline_status": None,
+        "pid_alive": False,
+        "pid": None,
+        "log_tail": None,
+    }
+
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            result["pid"] = pid
+            import os
+            try:
+                os.kill(pid, 0)
+                result["pid_alive"] = True
+            except OSError:
+                result["pid_alive"] = False
+        except (ValueError, OSError):
+            pass
+
+    if status_file.exists():
+        try:
+            result["pipeline_status"] = json.loads(status_file.read_text())
+        except Exception:
+            result["pipeline_status"] = {"error": "unreadable"}
+
+    if log_file.exists():
+        try:
+            lines = log_file.read_text().splitlines()
+            result["log_tail"] = lines[-20:] if len(lines) > 20 else lines
+        except Exception:
+            pass
+
+    return result
+
+
 @router.get("/{agent_id}/logs/stream")
 async def stream_agent_logs(agent_id: uuid.UUID, request: Request):
     """SSE endpoint — tails agent_logs for the given agent.

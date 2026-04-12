@@ -126,7 +126,7 @@ def add_to_watchlist(
 ) -> dict[str, Any]:
     """Add a ticker to a Robinhood watchlist via the MCP server."""
     client = _get_client(config)
-    return client.call("add_to_watchlist", {"symbol": symbol, "watchlist_name": watchlist_name})
+    return client.call("add_to_watchlist", {"symbols": [symbol], "watchlist_name": watchlist_name})
 
 
 def get_watchlists(config: dict | None = None) -> dict[str, Any]:

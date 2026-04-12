@@ -984,8 +984,15 @@ class AgentGateway:
             "You are now live. Read CLAUDE.md for your full instructions. "
             "FIRST: run `bash startup.sh` to start the signal consumer (live_pipeline.py). "
             "This is mandatory — without it you will not receive any Discord signals. "
-            "Then start the operation loop: run pre-market analysis and begin monitoring for trade signals. "
-            "Report all activity to Phoenix."
+            "Then run pre-market analysis and report your status to Phoenix.\n\n"
+            "After startup, enter a MONITORING LOOP — you must stay alive indefinitely:\n"
+            "1. Every 5 minutes, check `cat pipeline_status.json` and `tail -10 live_pipeline.log` to verify the pipeline is healthy.\n"
+            "2. Report a heartbeat to Phoenix via `python3 tools/report_to_phoenix.py --config config.json --action heartbeat`.\n"
+            "3. Check for any new signals in `trades.log` and report them.\n"
+            "4. If pipeline PID is dead, restart it with `bash startup.sh`.\n"
+            "5. Sleep 300 seconds (`sleep 300`) and repeat from step 1.\n\n"
+            "NEVER exit this loop. You must stay alive to handle trade signals and user messages. "
+            "If you have nothing to do, sleep and check again. Do NOT finish your session."
         )
         if resume:
             prompt = (
@@ -993,7 +1000,13 @@ class AgentGateway:
                 smart_context_prefix +
                 "Resume your live trading session. Check your current positions in positions.json. "
                 "FIRST: run `bash startup.sh` to restart the signal consumer if not already running. "
-                "Then continue monitoring. Report your resumed status to Phoenix."
+                "Then continue monitoring. Report your resumed status to Phoenix.\n\n"
+                "Enter the MONITORING LOOP — you must stay alive indefinitely:\n"
+                "1. Every 5 minutes, check `cat pipeline_status.json` and `tail -10 live_pipeline.log`.\n"
+                "2. Report a heartbeat to Phoenix.\n"
+                "3. If pipeline PID is dead, restart it with `bash startup.sh`.\n"
+                "4. Sleep 300 seconds and repeat.\n\n"
+                "NEVER exit this loop. Stay alive to handle trade signals and user messages."
             )
 
         # Smart Context Builder (feature-flagged)
@@ -1107,18 +1120,52 @@ class AgentGateway:
         finally:
             _running_tasks.pop(agent_key, None)
 
+    @staticmethod
+    def _is_pipeline_alive(work_dir: Path) -> bool:
+        """Check if the agent's live_pipeline process is still running."""
+        pid_file = work_dir / "pipeline.pid"
+        if not pid_file.exists():
+            return False
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)  # signal 0 = existence check
+            return True
+        except (ValueError, OSError):
+            return False
+
     async def _prepare_analyst_directory(self, agent: Agent, session) -> Path:
         """Build the analyst agent's working directory with all artifacts."""
         work_dir = DATA_DIR / "live_agents" / str(agent.id)
         work_dir.mkdir(parents=True, exist_ok=True)
 
+        pipeline_alive = self._is_pipeline_alive(work_dir)
+
         for subdir in ("tools", "skills"):
             src = LIVE_TEMPLATE / subdir
             dst = work_dir / subdir
-            if dst.exists():
-                shutil.rmtree(dst)
             if src.exists():
-                shutil.copytree(src, dst)
+                if pipeline_alive and subdir == "tools":
+                    # Pipeline is running — selectively copy tools, skip files
+                    # that the pipeline is actively using to avoid disruption.
+                    _PIPELINE_FILES = {"live_pipeline.py", "discord_redis_consumer.py"}
+                    dst.mkdir(exist_ok=True)
+                    for item in src.iterdir():
+                        if item.name in _PIPELINE_FILES:
+                            logger.debug(
+                                "[prepare_dir] Skipping %s (pipeline alive)", item.name
+                            )
+                            continue
+                        target = dst / item.name
+                        if item.is_dir():
+                            if target.exists():
+                                shutil.rmtree(target)
+                            shutil.copytree(item, target)
+                        else:
+                            shutil.copy2(item, target)
+                else:
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
 
         # .claude/commands/ is copied verbatim; settings.json is written dynamically
         # (with credentials injected) further down after config.json is built.
@@ -2489,13 +2536,28 @@ class AgentGateway:
             if not work_dir.exists():
                 work_dir = await self._prepare_analyst_directory(agent, db)
             else:
+                pipeline_alive = self._is_pipeline_alive(work_dir)
+                _PIPELINE_FILES = {"live_pipeline.py", "discord_redis_consumer.py"}
                 for subdir in ("tools", "skills"):
                     src = LIVE_TEMPLATE / subdir
                     dst = work_dir / subdir
                     if src.exists():
-                        if dst.exists():
-                            shutil.rmtree(dst)
-                        shutil.copytree(src, dst)
+                        if pipeline_alive and subdir == "tools":
+                            dst.mkdir(exist_ok=True)
+                            for item in src.iterdir():
+                                if item.name in _PIPELINE_FILES:
+                                    continue
+                                target = dst / item.name
+                                if item.is_dir():
+                                    if target.exists():
+                                        shutil.rmtree(target)
+                                    shutil.copytree(item, target)
+                                else:
+                                    shutil.copy2(item, target)
+                        else:
+                            if dst.exists():
+                                shutil.rmtree(dst)
+                            shutil.copytree(src, dst)
                 startup_src = LIVE_TEMPLATE / "startup.sh"
                 if startup_src.exists():
                     shutil.copy2(startup_src, work_dir / "startup.sh")

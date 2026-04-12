@@ -2,9 +2,12 @@
 
 import argparse
 import json
+import logging
 from datetime import datetime, timezone
 
 import httpx
+
+_log = logging.getLogger(__name__)
 
 
 async def register_agent(config: dict) -> dict:
@@ -56,6 +59,7 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
     api_url = config.get("phoenix_api_url", "http://localhost:8011")
     agent_id = config.get("agent_id", "")
     if not agent_id:
+        _log.warning("report_signal_event: no agent_id in config, skipping")
         return
     message = f"[{event_type}] "
     if event_type == "signal_received":
@@ -67,11 +71,23 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
         decision = data.get("decision", "?")
         reason = data.get("reason", "")[:200]
         message += f"{decision} on {ticker}" + (f" — {reason}" if reason else "")
+    elif event_type == "pipeline_started":
+        redis_ok = data.get("redis_ping", False)
+        stream_len = data.get("stream_length", -1)
+        stream_key = data.get("stream_key", "?")
+        pid = data.get("pid", "?")
+        message += (
+            f"Pipeline online (PID={pid}). "
+            f"Redis={'OK' if redis_ok else 'FAIL'}, "
+            f"stream={stream_key}, messages_waiting={stream_len}"
+        )
+        if data.get("import_errors"):
+            message += f", IMPORT ERRORS: {data['import_errors']}"
     else:
         message += json.dumps(data, default=str)[:300]
 
     async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(
+        resp = await client.post(
             f"{api_url}/api/v2/agents/{agent_id}/logs",
             json={
                 "level": "INFO",
@@ -81,6 +97,11 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
             },
             headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
         )
+        if resp.status_code >= 400:
+            _log.warning(
+                "report_signal_event POST returned %d: %s",
+                resp.status_code, resp.text[:200],
+            )
 
 
 def main():

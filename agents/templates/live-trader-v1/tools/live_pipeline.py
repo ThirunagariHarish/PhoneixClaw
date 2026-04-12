@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -24,6 +25,19 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 log = logging.getLogger(__name__)
+
+# Shared mutable state for the health status file
+_pipeline_state: dict = {
+    "started_at": None,
+    "signals_processed": 0,
+    "trades_today": 0,
+    "last_signal_time": None,
+    "last_error": None,
+    "redis_connected": False,
+    "stream_key": None,
+    "cursor": None,
+}
+STATUS_FILE = Path("pipeline_status.json")
 
 
 def _json_safe(obj: object) -> object:
@@ -42,6 +56,102 @@ def _json_safe(obj: object) -> object:
     except ImportError:
         pass
     return obj
+
+
+def _write_status() -> None:
+    """Write pipeline_status.json with current health info."""
+    try:
+        STATUS_FILE.write_text(json.dumps({
+            **_pipeline_state,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "pid": os.getpid(),
+        }, indent=2, default=str))
+    except Exception as exc:
+        log.warning("Failed to write pipeline_status.json: %s", exc)
+
+
+async def _startup_diagnostic(config: dict) -> dict:
+    """Run pre-flight checks and report results to Phoenix and the status file."""
+    diag: dict = {
+        "redis_ping": False,
+        "stream_length": -1,
+        "stream_key": None,
+        "redis_url": None,
+        "imports": {},
+    }
+
+    redis_url = config.get("redis_url") or os.getenv("REDIS_URL", "redis://localhost:6379")
+    connector_id = config.get("connector_id", "")
+    channel_id = config.get("channel_id", connector_id)
+    stream_key = f"stream:channel:{connector_id}" if connector_id else f"stream:channel:{channel_id}"
+    diag["redis_url"] = redis_url
+    diag["stream_key"] = stream_key
+
+    # 1. PING Redis
+    try:
+        import redis.asyncio as aioredis
+        client = aioredis.from_url(redis_url, decode_responses=True)
+        pong = await client.ping()
+        diag["redis_ping"] = bool(pong)
+        log.info("Redis PING: %s (%s)", pong, redis_url)
+    except Exception as exc:
+        log.error("Redis PING failed: %s", exc)
+        diag["redis_ping_error"] = str(exc)[:200]
+        client = None
+
+    # 2. XLEN the stream
+    if client and diag["redis_ping"]:
+        try:
+            length = await client.xlen(stream_key)
+            diag["stream_length"] = length
+            log.info("Stream '%s' has %d messages", stream_key, length)
+        except Exception as exc:
+            log.warning("XLEN failed for %s: %s", stream_key, exc)
+            diag["stream_length_error"] = str(exc)[:200]
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+    # 3. Test key imports
+    for mod_name in ("parse_signal", "decision_engine", "report_to_phoenix"):
+        try:
+            __import__(mod_name)
+            diag["imports"][mod_name] = "ok"
+        except Exception as exc:
+            diag["imports"][mod_name] = str(exc)[:120]
+            log.error("Import %s FAILED: %s", mod_name, exc)
+    for mod_path in ("shared.utils.signal_parser",):
+        try:
+            __import__(mod_path)
+            diag["imports"][mod_path] = "ok"
+        except Exception as exc:
+            diag["imports"][mod_path] = str(exc)[:120]
+            log.error("Import %s FAILED: %s", mod_path, exc)
+
+    # 4. Report to Phoenix
+    try:
+        from report_to_phoenix import report_signal_event
+        failed_imports = {k: v for k, v in diag["imports"].items() if v != "ok"}
+        await report_signal_event(config, "pipeline_started", {
+            "redis_ping": diag["redis_ping"],
+            "stream_key": stream_key,
+            "stream_length": diag["stream_length"],
+            "connector_id": connector_id,
+            "import_errors": failed_imports if failed_imports else None,
+            "pid": os.getpid(),
+        })
+        log.info("Startup diagnostic reported to Phoenix")
+    except Exception as exc:
+        log.warning("Failed to report startup diagnostic to Phoenix: %s", exc)
+
+    # 5. Update shared state and write status file
+    _pipeline_state["started_at"] = datetime.now(timezone.utc).isoformat()
+    _pipeline_state["redis_connected"] = diag["redis_ping"]
+    _pipeline_state["stream_key"] = stream_key
+    _write_status()
+
+    return diag
 
 
 async def process_signal(raw_signal: dict, config: dict) -> dict:
@@ -291,6 +401,10 @@ async def _redis_signal_stream(config: dict):
     last_id, total = _load_cursor_data(stream_key)
     log.info("Redis stream '%s' (cursor=%s)", stream_key, last_id)
 
+    _pipeline_state["redis_connected"] = True
+    _pipeline_state["stream_key"] = stream_key
+    _pipeline_state["cursor"] = last_id
+
     try:
         while True:
             try:
@@ -302,6 +416,7 @@ async def _redis_signal_stream(config: dict):
                         last_id = msg_id
                         total += 1
                         _save_cursor(stream_key, last_id, total)
+                        _pipeline_state["cursor"] = last_id
                         yield {
                             "stream_id": msg_id,
                             "channel_id": data.get("channel_id", channel_id),
@@ -326,6 +441,12 @@ async def _redis_signal_stream(config: dict):
 async def run_pipeline(config: dict) -> None:
     """Main pipeline loop — consume signals, process, execute."""
     from report_to_phoenix import report_heartbeat, report_signal_event
+
+    # --- Startup diagnostics (visible on dashboard immediately) ---
+    diag = await _startup_diagnostic(config)
+    if not diag.get("redis_ping"):
+        log.error("ABORTING: Redis not reachable. Pipeline cannot function.")
+        return
 
     signals_processed = 0
     trades_today = 0
@@ -352,13 +473,24 @@ async def run_pipeline(config: dict) -> None:
                     "trades_today": trades_today,
                     **hb_extra,
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("Heartbeat failed: %s", exc)
+
+    async def status_writer_loop() -> None:
+        """Periodically flush pipeline_status.json for external health checks."""
+        while True:
+            await asyncio.sleep(30)
+            _pipeline_state["signals_processed"] = signals_processed
+            _pipeline_state["trades_today"] = trades_today
+            _write_status()
 
     asyncio.create_task(heartbeat_loop())
+    asyncio.create_task(status_writer_loop())
 
     async for signal in _redis_signal_stream(config):
         signals_processed += 1
+        _pipeline_state["signals_processed"] = signals_processed
+        _pipeline_state["last_signal_time"] = datetime.now(timezone.utc).isoformat()
         log.info("Signal #%d: %s", signals_processed, signal.get("content", "")[:80])
 
         try:
@@ -367,8 +499,8 @@ async def run_pipeline(config: dict) -> None:
                 "author": signal.get("author", ""),
                 "message_id": signal.get("message_id", ""),
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("report_signal_event(signal_received) failed: %s", exc)
 
         try:
             decision = await process_signal(signal, config)
@@ -386,11 +518,12 @@ async def run_pipeline(config: dict) -> None:
                     "decision": decision["decision"],
                     "reason": decision.get("reason", "")[:200],
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("report_signal_event(signal_decided) failed: %s", exc)
 
             if decision["decision"] == "EXECUTE":
                 trades_today += 1
+                _pipeline_state["trades_today"] = trades_today
                 log.info("EXECUTE: %s %s", direction, ticker)
 
                 try:
@@ -411,6 +544,8 @@ async def run_pipeline(config: dict) -> None:
                     _route_sell_signal(ticker, signal, decision)
         except Exception as e:
             log.error("Pipeline error: %s", e, exc_info=True)
+            _pipeline_state["last_error"] = f"{e}"[:200]
+            _write_status()
 
 
 def _route_sell_signal(ticker: str, raw_signal: dict, decision: dict) -> None:

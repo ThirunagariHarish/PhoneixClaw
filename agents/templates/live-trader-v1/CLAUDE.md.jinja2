@@ -136,6 +136,20 @@ This automatically starts `live_pipeline.py` in the background and verifies `con
 
 If `startup.sh` reports `connector_id is empty`, the agent was misconfigured. Report to Phoenix and stop.
 
+**VERIFY PIPELINE HEALTH** — after startup.sh, wait 5 seconds then check:
+```bash
+sleep 5
+tail -20 live_pipeline.log
+cat pipeline_status.json 2>/dev/null || echo "No status file yet"
+```
+You MUST confirm you see `[pipeline] INFO Pipeline started` and a successful Redis PING in the logs. If you see errors (import failures, Redis connection refused, etc.), fix them immediately. The `pipeline_status.json` file is updated every 30 seconds with signals processed, Redis status, and any errors.
+
+If `live_pipeline.log` shows the process exited or has errors, check and fix the issue, then restart:
+```bash
+cat pipeline.pid | xargs kill 2>/dev/null; rm -f pipeline.pid
+bash startup.sh
+```
+
 **Manual alternative** (only if startup.sh is missing):
 
 **Option A (recommended):** Start the integrated live pipeline:

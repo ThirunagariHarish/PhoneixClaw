@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -424,12 +426,18 @@ async def _job_consolidation_run() -> None:
 
 
 # Live-agent keepalive: how many seconds after a session ends before we re-spawn.
-# Default 60 s — enough to avoid a tight crash-loop, short enough to feel instant.
-_KEEPALIVE_RESTART_DELAY_SECONDS = int(os.environ.get("AGENT_KEEPALIVE_DELAY_SECONDS", "60"))
+# Default 300 s (5 min) — long enough to avoid tight crash-loops.
+_KEEPALIVE_RESTART_DELAY_SECONDS = int(os.environ.get("AGENT_KEEPALIVE_DELAY_SECONDS", "300"))
 # Set AGENT_KEEPALIVE_ENABLED=0 to disable entirely (e.g. overnight maintenance).
 _KEEPALIVE_ENABLED = os.environ.get("AGENT_KEEPALIVE_ENABLED", "1") != "0"
 
 _HEARTBEAT_STALE_MINUTES = int(os.environ.get("HEARTBEAT_STALE_MINUTES", "30"))
+
+# Circuit breaker: max restarts per agent per hour before we stop retrying.
+_MAX_RESTARTS_PER_HOUR = int(os.environ.get("AGENT_MAX_RESTARTS_PER_HOUR", "3"))
+_restart_history: dict[str, list[float]] = {}  # agent_id -> [timestamp, ...]
+
+DATA_DIR = Path(__file__).resolve().parents[4] / "data"
 
 
 async def _job_live_agent_keepalive() -> None:
@@ -438,7 +446,11 @@ async def _job_live_agent_keepalive() -> None:
     Runs every minute. For each agent with status RUNNING or PAPER that has
     no active session (status in running/starting), and whose last session
     ended cleanly (status=completed) at least _KEEPALIVE_RESTART_DELAY_SECONDS
-    ago, spawns a fresh Claude Code session via gateway.create_analyst().
+    ago, resumes the agent via gateway.resume_agent() (or cold-starts if no
+    work directory exists).
+
+    Circuit breaker: max _MAX_RESTARTS_PER_HOUR (default 3) restarts per agent
+    per hour. If breached, the agent is skipped until cooldown.
 
     Skipped when:
     - AGENT_KEEPALIVE_ENABLED=0
@@ -555,19 +567,43 @@ async def _job_live_agent_keepalive() -> None:
                 agents_to_restart.append((agent.id, agent.name))
 
         for agent_id, agent_name in agents_to_restart:
+            agent_key = str(agent_id)
+
+            # Circuit breaker: skip if already restarted too many times this hour
+            now_ts = time.time()
+            history = _restart_history.get(agent_key, [])
+            history = [ts for ts in history if ts > now_ts - 3600]
+            _restart_history[agent_key] = history
+            if len(history) >= _MAX_RESTARTS_PER_HOUR:
+                logger.warning(
+                    "[keepalive] Circuit breaker: agent %s (%s) restarted %d times in the last hour "
+                    "(max %d) — skipping until cooldown",
+                    agent_name, agent_id, len(history), _MAX_RESTARTS_PER_HOUR,
+                )
+                continue
+
             try:
-                logger.info("[keepalive] Re-spawning completed session for agent %s (%s)",
-                            agent_name, agent_id)
-                result = await gateway.create_analyst(agent_id)
-                if result and result.startswith("BUDGET_EXCEEDED"):
-                    logger.warning("[keepalive] Budget exceeded for %s — skipping: %s",
-                                   agent_name, result)
-                elif result and result.startswith("NOT_ELIGIBLE"):
-                    logger.warning("[keepalive] Agent %s not eligible — skipping: %s",
-                                   agent_name, result)
+                work_dir = DATA_DIR / "live_agents" / agent_key
+                if work_dir.exists():
+                    logger.info("[keepalive] Resuming session for agent %s (%s)",
+                                agent_name, agent_id)
+                    result = await gateway.resume_agent(agent_id)
+                    status = result.get("status", "") if isinstance(result, dict) else str(result)
                 else:
-                    logger.info("[keepalive] Session started for agent %s: session_row=%s",
-                                agent_name, result)
+                    logger.info("[keepalive] Cold-starting session for agent %s (%s)",
+                                agent_name, agent_id)
+                    result = await gateway.create_analyst(agent_id)
+                    status = str(result) if isinstance(result, str) else result.get("status", "")
+                if status.startswith("BUDGET_EXCEEDED"):
+                    logger.warning("[keepalive] Budget exceeded for %s — skipping: %s",
+                                   agent_name, status)
+                elif status.startswith("NOT_ELIGIBLE"):
+                    logger.warning("[keepalive] Agent %s not eligible — skipping: %s",
+                                   agent_name, status)
+                else:
+                    _restart_history[agent_key].append(now_ts)
+                    logger.info("[keepalive] Session started for agent %s: result=%s",
+                                agent_name, status)
             except Exception as exc:
                 logger.warning("[keepalive] Failed to restart agent %s: %s", agent_name, exc)
 
