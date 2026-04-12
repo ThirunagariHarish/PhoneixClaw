@@ -51,6 +51,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     connector_ids?: string[]
     has_connectors?: boolean
     ingestion?: { running?: boolean; summary?: string } | null
+    error?: string
   }>({
     queryKey: ['channel-messages', agentId],
     queryFn: async () =>
@@ -66,8 +67,12 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
         const detail = result?.error
           || result?.errors?.join('; ')
           || 'Backfill returned 0 messages.'
+        const isDbError = detail.includes('ProgrammingError') || detail.includes('UndefinedTable') || detail.includes('sqlalchemy')
+        const prefix = isDbError
+          ? 'Database error (table may be missing)'
+          : 'Backfill issue'
         setBackfillWarning(
-          `Could not fetch from Discord API: ${detail.slice(0, 200)}. Check connector token and channel configuration.`
+          `${prefix}: ${detail.slice(0, 250)}`
         )
       }
     },
@@ -83,6 +88,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     resolvedConnectorCount > 0 ||
     feedLooksConfigured(agentData)
   const ingestion = data?.ingestion
+  const dbError = data?.error
 
   useEffect(() => {
     if (!isLoading && hasConnectors && messages.length === 0 && !backfillAttemptedRef.current) {
@@ -112,6 +118,9 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
           )}
           {ingestion?.running && ingestion.summary && ingestion.summary.includes('No ingestion') && (
             <p className="text-xs text-amber-500">{ingestion.summary}. Try refreshing ingestion via the scheduler.</p>
+          )}
+          {dbError && (
+            <p className="text-xs text-rose-500">Database error: {dbError}. Run database migrations to fix.</p>
           )}
           {backfillWarning && (
             <p className="text-xs text-amber-500">{backfillWarning}</p>

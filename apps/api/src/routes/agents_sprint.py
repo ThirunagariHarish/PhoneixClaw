@@ -106,15 +106,27 @@ async def get_channel_messages(
             "ingestion": None,
         }
 
-    q = (
-        select(ChannelMessage)
-        .where(ChannelMessage.connector_id.in_(connector_ids))
-        .order_by(ChannelMessage.posted_at.desc())
-        .limit(limit)
-    )
-    if since:
-        q = q.where(ChannelMessage.posted_at >= since)
-    rows = (await session.execute(q)).scalars().all()
+    try:
+        q = (
+            select(ChannelMessage)
+            .where(ChannelMessage.connector_id.in_(connector_ids))
+            .order_by(ChannelMessage.posted_at.desc())
+            .limit(limit)
+        )
+        if since:
+            q = q.where(ChannelMessage.posted_at >= since)
+        rows = (await session.execute(q)).scalars().all()
+    except Exception as exc:
+        logger.exception("[channel-messages] Query failed (table may not exist): %s", exc)
+        return {
+            "messages": [],
+            "count": 0,
+            "connector_ids": [str(x) for x in connector_ids],
+            "has_connectors": True,
+            "ingestion": _get_ingestion_status_for_connectors(connector_ids),
+            "error": f"Database error: {str(exc)[:200]}",
+        }
+
     messages = [
         {
             "id": str(m.id),

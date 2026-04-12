@@ -12,6 +12,7 @@ from shared.db.models.analyst_profile import AnalystProfile
 from shared.db.models.api_key import ApiKeyEntry
 from shared.db.models.audit_log import AuditLog
 from shared.db.models.base import Base
+from shared.db.models.channel_message import ChannelMessage
 from shared.db.models.connector import Connector, ConnectorAgent
 from shared.db.models.consolidation import ConsolidationRun
 from shared.db.models.context_session import ContextSession
@@ -64,6 +65,7 @@ __all__ = [
     "Position",
     "Connector",
     "ConnectorAgent",
+    "ChannelMessage",
     "TradingAccount",
     "Skill",
     "AgentSkill",

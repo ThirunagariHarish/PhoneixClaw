@@ -132,6 +132,30 @@ TABLE_ENSURE = [
             ON trade_outcomes_feedback (closed_at);
         """,
     ),
+    (
+        "channel_messages",
+        """
+        CREATE TABLE IF NOT EXISTS channel_messages (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            connector_id UUID NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+            channel VARCHAR(200) NOT NULL,
+            author VARCHAR(200) NOT NULL,
+            content TEXT NOT NULL,
+            message_type VARCHAR(30) NOT NULL DEFAULT 'unknown',
+            tickers_mentioned JSONB NOT NULL DEFAULT '[]',
+            raw_data JSONB NOT NULL DEFAULT '{}',
+            platform_message_id VARCHAR(100) NOT NULL,
+            posted_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS ix_channel_messages_connector_id
+            ON channel_messages (connector_id);
+        CREATE INDEX IF NOT EXISTS ix_channel_messages_message_type
+            ON channel_messages (message_type);
+        CREATE INDEX IF NOT EXISTS ix_channel_messages_posted_at
+            ON channel_messages (posted_at);
+        """,
+    ),
 ]
 
 
