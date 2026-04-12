@@ -112,10 +112,31 @@ export default function ChatWidget() {
         <ScrollArea className="flex-1 px-4 py-3">
           <div ref={scrollRef} className="space-y-3">
             {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <MessageSquare className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">No messages yet</p>
-                <p className="text-xs text-muted-foreground/70 mt-1">Type a trade signal to get started</p>
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 mb-4">
+                  <TrendingUp className="h-7 w-7 text-primary" />
+                </div>
+                <p className="text-sm font-medium text-foreground">Start a conversation with your AI trading assistant</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">Ask questions, send trade signals, or get market insights</p>
+                <div className="flex flex-col gap-2 w-full">
+                  {[
+                    'How are my agents performing?',
+                    "Show me today's trades",
+                    "What's the market outlook?",
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      onClick={() => {
+                        setInput(suggestion)
+                        setTimeout(() => inputRef.current?.focus(), 50)
+                      }}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {messages.map((m) => (

@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '@/context/AuthContext'
 import { ThemeProvider } from '@/context/ThemeContext'
 import { NotificationProvider } from '@/context/NotificationContext'
-import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { ProtectedRoute, AdminRoute } from '@/components/ProtectedRoute'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import AppShell from '@/components/layout/AppShell'
 import { reportError } from '@/lib/errorLogger'
@@ -119,7 +119,7 @@ function AppRoutes() {
         <Route path="zero-dte" element={<ZeroDteSPXPage />} />
         <Route path="narrative" element={<NarrativeSentimentPage />} />
         <Route path="risk" element={<RiskCompliancePage />} />
-        <Route path="admin" element={<AdminPage />} />
+        <Route path="admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="agent-learning" element={<AgentLearningPage />} />

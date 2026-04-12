@@ -20,6 +20,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shield, AlertTriangle, Lock, BarChart3, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { KillSwitchButton, KillSwitchHistory } from '@/components/KillSwitch'
 
 type CircuitState = 'NORMAL' | 'WARNING' | 'TRIPPED' | 'COOLDOWN'
 
@@ -168,6 +169,14 @@ export default function RiskCompliancePage() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader icon={Shield} title="Risk & Compliance" description="Real-time risk monitoring and position limits" />
+
+      {/* Emergency Kill Switch */}
+      <KillSwitchButton variant="card" />
+
+      {/* Kill Switch History */}
+      <FlexCard title="Kill Switch History" action={<AlertTriangle className="h-4 w-4 text-red-500" />}>
+        <KillSwitchHistory />
+      </FlexCard>
 
       {/* Top Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

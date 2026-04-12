@@ -184,6 +184,56 @@ async def get_performance_summary(
     }
 
 
+@router.get("/by-agent")
+async def get_performance_by_agent(
+    session: AsyncSession = Depends(get_session),
+):
+    """Performance metrics grouped by agent: total_pnl, win_rate, trade_count, sharpe_ratio."""
+    q = await session.execute(
+        select(
+            AgentTrade.agent_id,
+            func.count(AgentTrade.id).label("trade_count"),
+            func.sum(AgentTrade.pnl_dollar).label("total_pnl"),
+            func.avg(AgentTrade.pnl_dollar).label("avg_pnl"),
+            func.avg(
+                case((AgentTrade.pnl_dollar > 0, 1.0), else_=0.0)
+            ).label("win_rate"),
+        )
+        .where(AgentTrade.pnl_dollar.isnot(None))
+        .group_by(AgentTrade.agent_id)
+        .order_by(func.sum(AgentTrade.pnl_dollar).desc())
+    )
+    rows = q.all()
+
+    results = []
+    for row in rows:
+        agent_q = await session.execute(select(Agent.name).where(Agent.id == row.agent_id))
+        name = agent_q.scalar() or str(row.agent_id)
+
+        # Compute Sharpe ratio: mean(pnl) / stddev(pnl) if enough trades
+        sharpe = None
+        if (row.trade_count or 0) >= 2:
+            std_q = await session.execute(
+                select(
+                    func.stddev(AgentTrade.pnl_dollar)
+                ).where(AgentTrade.agent_id == row.agent_id, AgentTrade.pnl_dollar.isnot(None))
+            )
+            std_val = float(std_q.scalar() or 0)
+            if std_val > 0:
+                sharpe = round(float(row.avg_pnl or 0) / std_val, 4)
+
+        results.append({
+            "agent_id": str(row.agent_id),
+            "agent_name": name,
+            "total_pnl": round(float(row.total_pnl or 0), 2),
+            "win_rate": round(float(row.win_rate or 0), 4),
+            "trade_count": int(row.trade_count or 0),
+            "sharpe_ratio": sharpe,
+        })
+
+    return results
+
+
 @router.get("/risk")
 async def get_risk_metrics(
     period: str = Query("7d", pattern="^(1d|7d|30d)$"),

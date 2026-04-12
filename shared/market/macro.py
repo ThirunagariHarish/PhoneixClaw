@@ -124,12 +124,31 @@ class MacroDataFetcher:
                     change = current - prev
                     change_pct = (change / prev * 100) if prev != 0 else 0
 
+                    # Determine trend direction from daily change
+                    if change_pct > 0.1:
+                        trend = "up"
+                    elif change_pct < -0.1:
+                        trend = "down"
+                    else:
+                        trend = "neutral"
+
+                    display_name = name.upper()
+                    # Format value as string for frontend display
+                    if name in ("vix", "tnx"):
+                        display_value = f"{current:.2f}"
+                    elif name in ("btc",):
+                        display_value = f"${current:,.0f}"
+                    else:
+                        display_value = f"${current:.2f}"
+
                     indicators.append({
-                        "name": name,
+                        "name": display_name,
                         "symbol": symbol,
-                        "value": round(current, 2),
+                        "value": display_value,
+                        "numeric_value": round(current, 2),
                         "change": round(change, 2),
                         "change_pct": round(change_pct, 2),
+                        "trend": trend,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
                 except Exception as e:
@@ -236,10 +255,19 @@ class MacroDataFetcher:
         return regime
 
     async def get_calendar(self, limit: int = 10) -> list[dict]:
-        """Return upcoming economic calendar events."""
+        """Return upcoming economic calendar events with frontend-compatible fields."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         upcoming = [e for e in ECONOMIC_CALENDAR_2026 if e["date"] >= today]
-        return upcoming[:limit]
+        result = []
+        for i, e in enumerate(upcoming[:limit]):
+            result.append({
+                "id": f"cal-{i}",
+                "date": e["date"],
+                "event": e["event"],
+                "impact": e.get("importance", "medium").upper(),
+                "importance": e.get("importance", "medium"),
+            })
+        return result
 
     async def close(self):
         if self._redis:

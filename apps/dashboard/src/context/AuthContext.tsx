@@ -12,6 +12,7 @@ export interface UserProfile {
   email: string
   name: string | null
   role: string
+  is_admin: boolean
 }
 
 interface AuthContextValue {
@@ -37,6 +38,7 @@ async function fetchMe(token: string): Promise<UserProfile> {
     email: data.email,
     name: data.name,
     role: data.role ?? 'trader',
+    is_admin: data.is_admin === true || (data.role ?? '').toLowerCase() === 'admin',
   }
 }
 

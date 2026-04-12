@@ -140,23 +140,24 @@ export default function NarrativeSentimentPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           title="Market Sentiment"
-          value={`${((metrics.marketSentiment ?? 0.35) * 100).toFixed(0)}%`}
+          value={`${(((metrics.marketSentiment != null ? metrics.marketSentiment : 0)) * 100).toFixed(0)}%`}
           subtitle="-1 to +1 gauge"
-          trend={(metrics.marketSentiment ?? 0.35) >= 0 ? 'up' : 'down'}
+          trend={(metrics.marketSentiment != null ? metrics.marketSentiment : 0) >= 0 ? 'up' : 'down'}
         />
         <MetricCard
           title="Fear & Greed Index"
-          value={metrics.fearGreed ?? 62}
+          value={metrics.fearGreed != null ? metrics.fearGreed : 50}
           subtitle="0-100"
+          trend={(metrics.fearGreed ?? 50) >= 50 ? 'up' : 'down'}
         />
         <MetricCard
           title="Twitter Velocity"
-          value={((metrics.twitterVelocity ?? 0.78) * 100).toFixed(0) + '%'}
+          value={((metrics.twitterVelocity != null ? metrics.twitterVelocity : 0) * 100).toFixed(0) + '%'}
           subtitle="Activity score"
         />
         <MetricCard
           title="News Sentiment Avg"
-          value={((metrics.newsSentimentAvg ?? 0.42) * 100).toFixed(0) + '%'}
+          value={((metrics.newsSentimentAvg != null ? metrics.newsSentimentAvg : 0) * 100).toFixed(0) + '%'}
           subtitle="Aggregate"
         />
       </div>

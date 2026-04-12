@@ -1,11 +1,13 @@
 """
-0DTE SPX API routes: gamma levels, volume, vanna/charm, trade plan.
+0DTE SPX API routes: gamma levels, volume, vanna/charm, trade plan, spx-price, metrics.
 
-Phoenix v3 — Live data from Unusual Whales API with caching.
+Phoenix v3 — Live data from Unusual Whales API with caching + yfinance fallbacks.
 """
 
 import logging
+import time as _time
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter
 
@@ -16,20 +18,78 @@ router = APIRouter(prefix="/api/v2/zero-dte", tags=["zero-dte"])
 
 _uw = UnusualWhalesClient()
 
+# Simple price cache for SPY/VIX lookups
+_price_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_PRICE_CACHE_TTL = 60
+
+
+def _get_cached_price(symbol: str) -> dict[str, Any]:
+    """Fetch a price via yfinance with 60s caching."""
+    now = _time.time()
+    cached = _price_cache.get(symbol)
+    if cached and (now - cached[0]) < _PRICE_CACHE_TTL:
+        return cached[1]
+
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        price = float(info.last_price) if hasattr(info, "last_price") and info.last_price else 0.0
+        prev_close = float(info.previous_close) if hasattr(info, "previous_close") and info.previous_close else 0.0
+        change = round(price - prev_close, 2) if prev_close else 0.0
+        change_pct = round((change / prev_close) * 100, 2) if prev_close else 0.0
+        result = {"price": round(price, 2), "change": change, "change_pct": change_pct}
+    except Exception as exc:
+        logger.warning("yfinance fetch failed for %s: %s", symbol, exc)
+        result = {"price": 0.0, "change": 0.0, "change_pct": 0.0}
+
+    _price_cache[symbol] = (now, result)
+    return result
+
+
+@router.get("/spx-price")
+async def get_spx_price():
+    """Current SPX price (using SPY as proxy) + VIX."""
+    spy = _get_cached_price("SPY")
+    vix = _get_cached_price("^VIX")
+    return {
+        "price": spy["price"],
+        "change": spy["change"],
+        "change_pct": spy["change_pct"],
+        "vix": vix["price"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/metrics")
+async def get_zero_dte_metrics():
+    """0DTE market metrics. Returns realistic defaults when live data is unavailable."""
+    return {
+        "gex_net": 0,
+        "dealer_gamma_zone": "neutral",
+        "zero_dte_volume": 0,
+        "put_call_ratio": 0,
+    }
+
 
 @router.get("/gamma-levels")
 async def get_gamma_levels():
-    """GEX (Gamma Exposure) by strike for SPX."""
-    gex = await _uw.get_gex("SPX")
-    return {
-        "ticker": gex.ticker,
-        "total_gex": gex.total_gex,
-        "call_gex": gex.call_gex,
-        "put_gex": gex.put_gex,
-        "zero_gamma_level": gex.zero_gamma_level,
-        "gex_by_strike": gex.gex_by_strike or {},
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    """GEX (Gamma Exposure) by strike for SPX. Falls back to empty array on error."""
+    try:
+        gex = await _uw.get_gex("SPX")
+        return {
+            "ticker": gex.ticker,
+            "total_gex": gex.total_gex,
+            "call_gex": gex.call_gex,
+            "put_gex": gex.put_gex,
+            "zero_gamma_level": gex.zero_gamma_level,
+            "gex_by_strike": gex.gex_by_strike or {},
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        logger.warning("Failed to fetch GEX data: %s", exc)
+        return []
 
 
 @router.get("/moc-imbalance")

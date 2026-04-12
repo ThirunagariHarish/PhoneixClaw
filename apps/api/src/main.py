@@ -56,18 +56,21 @@ from apps.api.src.routes import connectors as connector_routes
 from apps.api.src.routes import consolidation as consolidation_routes
 from apps.api.src.routes import daily_signals as daily_signals_routes
 from apps.api.src.routes import dev_agent as dev_agent_routes
+from apps.api.src.routes import emergency as emergency_routes
 from apps.api.src.routes import eod_analysis as eod_analysis_routes
 from apps.api.src.routes import error_logs as error_logs_routes
 from apps.api.src.routes import execution as execution_routes
 from apps.api.src.routes import invitations as invitations_routes
 from apps.api.src.routes import macro_pulse as macro_pulse_routes
 from apps.api.src.routes import market as market_routes
+from apps.api.src.routes import market_data as market_data_routes
 from apps.api.src.routes import monitoring as monitoring_routes
 from apps.api.src.routes import morning_routine as morning_routine_routes
 from apps.api.src.routes import narrative_sentiment as narrative_sentiment_routes
 from apps.api.src.routes import notifications as notifications_routes
 from apps.api.src.routes import onchain_flow as onchain_flow_routes
 from apps.api.src.routes import performance as performance_routes
+from apps.api.src.routes import portfolio as portfolio_routes
 from apps.api.src.routes import pm_agents as pm_agents_routes
 from apps.api.src.routes import pm_chat as pm_chat_routes
 from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
@@ -85,6 +88,8 @@ from apps.api.src.routes import tasks as tasks_routes
 from apps.api.src.routes import token_usage as token_usage_routes
 from apps.api.src.routes import trade_signals as trade_signals_routes
 from apps.api.src.routes import trades as trades_routes
+from apps.api.src.routes import user as user_routes
+from apps.api.src.routes import watchlist as watchlist_routes
 from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
 from apps.api.src.routes import wiki as wiki_routes
 from apps.api.src.routes import ws as ws_routes
@@ -732,6 +737,7 @@ app.include_router(automations_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(performance_routes.router)
 app.include_router(market_routes.router)
+app.include_router(market_data_routes.router)
 app.include_router(ws_routes.router)
 app.include_router(daily_signals_routes.router)
 app.include_router(agent_learning_routes.router)
@@ -751,6 +757,7 @@ app.include_router(morning_routine_routes.router)
 app.include_router(whatsapp_webhook_routes.router)
 app.include_router(scheduler_status_routes.router)
 app.include_router(eod_analysis_routes.router)
+app.include_router(emergency_routes.router)
 app.include_router(trade_signals_routes.router)
 app.include_router(budget_routes.router)
 app.include_router(agents_sprint_routes.router)
@@ -770,6 +777,9 @@ app.include_router(wiki_routes.router)
 app.include_router(wiki_routes.brain_router)
 app.include_router(consolidation_routes.router)
 app.include_router(invitations_routes.router)
+app.include_router(user_routes.router)
+app.include_router(portfolio_routes.router)
+app.include_router(watchlist_routes.router)
 
 # Phase H2: wire Prometheus /metrics endpoint
 try:

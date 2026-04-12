@@ -37,15 +37,18 @@ const YAxis = RechartsYAxis as unknown as ComponentType<any>
 const Tooltip = RechartsTooltip as unknown as ComponentType<any>
 const Line = RechartsLine as unknown as ComponentType<any>
 
-type Regime = 'RISK-ON' | 'RISK-OFF' | 'NEUTRAL' | 'HAWKISH' | 'DOVISH'
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
 const EMPTY_CPI_DATA: Array<{ month: string; value: number }> = []
 
-const regimeColors: Record<Regime, string> = {
+const regimeColors: Record<string, string> = {
   'RISK-ON': 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/50',
+  'RISK_ON': 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/50',
   'RISK-OFF': 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/50',
+  'RISK_OFF': 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/50',
+  'TRANSITION': 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/50',
   NEUTRAL: 'bg-slate-500/20 text-slate-700 dark:text-slate-400 border-slate-500/50',
+  UNKNOWN: 'bg-slate-500/20 text-slate-700 dark:text-slate-400 border-slate-500/50',
   HAWKISH: 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/50',
   DOVISH: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/50',
 }
@@ -79,14 +82,14 @@ export default function MacroPulsePage() {
     },
   })
 
-  const { data: regime = { regime: 'NEUTRAL' as Regime, confidence: 0, updated_at: new Date().toISOString() } } = useQuery({
+  const { data: regime = { regime: 'NEUTRAL' as string, confidence: 0, updated_at: new Date().toISOString() } } = useQuery({
     queryKey: ['macro-pulse-regime'],
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/macro-pulse/regime')
         return res.data
       } catch {
-        return { regime: 'NEUTRAL' as Regime, confidence: 0, updated_at: new Date().toISOString() }
+        return { regime: 'NEUTRAL' as string, confidence: 0, updated_at: new Date().toISOString() }
       }
     },
     refetchInterval: Number(refreshInterval) * 1000,
@@ -176,9 +179,9 @@ export default function MacroPulsePage() {
         <div className="flex items-center gap-4">
           <Badge
             variant="outline"
-            className={`text-lg px-4 py-2 font-bold ${regimeColors[regime.regime as Regime] || regimeColors.NEUTRAL}`}
+            className={`text-lg px-4 py-2 font-bold ${regimeColors[regime.regime] || regimeColors.NEUTRAL}`}
           >
-            {regime.regime}
+            {(regime.regime || 'UNKNOWN').replace('_', '-')}
           </Badge>
           <span className="text-sm text-muted-foreground">
             {(regime.confidence ?? 0) * 100}% confidence
@@ -259,33 +262,82 @@ export default function MacroPulsePage() {
 
         <TabsContent value="regime" className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            <FlexCard title="Current Regime" className="border-emerald-500/30 bg-emerald-500/5">
-              <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">Risk-On</p>
-              <p className="text-sm text-muted-foreground">Equities favored, credit spreads tightening</p>
+            <FlexCard
+              title="Current Regime"
+              className={
+                regime.regime === 'RISK_ON' ? 'border-emerald-500/30 bg-emerald-500/5' :
+                regime.regime === 'RISK_OFF' ? 'border-red-500/30 bg-red-500/5' :
+                'border-amber-500/30 bg-amber-500/5'
+              }
+            >
+              <p className={`text-lg font-semibold ${
+                regime.regime === 'RISK_ON' ? 'text-emerald-600 dark:text-emerald-400' :
+                regime.regime === 'RISK_OFF' ? 'text-red-600 dark:text-red-400' :
+                'text-amber-600 dark:text-amber-400'
+              }`}>
+                {regime.regime === 'RISK_ON' ? 'Risk-On' : regime.regime === 'RISK_OFF' ? 'Risk-Off' : 'Transition'}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {regime.regime === 'RISK_ON' ? 'Equities favored, momentum positive' :
+                 regime.regime === 'RISK_OFF' ? 'Defensive positioning, volatility elevated' :
+                 'Mixed signals, regime transitioning'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {Math.round((regime.confidence ?? 0) * 100)}% confidence
+              </p>
             </FlexCard>
-            <FlexCard title="Fed Stance" className="border-amber-500/30 bg-amber-500/5">
-              <p className="text-lg font-semibold text-amber-600 dark:text-amber-400">Hawkish Hold</p>
-              <p className="text-sm text-muted-foreground">Higher for longer, data-dependent</p>
+            <FlexCard
+              title="VIX Level"
+              className={
+                (regime.vix ?? 0) < 20 ? 'border-emerald-500/30 bg-emerald-500/5' :
+                (regime.vix ?? 0) < 30 ? 'border-amber-500/30 bg-amber-500/5' :
+                'border-red-500/30 bg-red-500/5'
+              }
+            >
+              <p className={`text-lg font-semibold ${
+                (regime.vix ?? 0) < 20 ? 'text-emerald-600 dark:text-emerald-400' :
+                (regime.vix ?? 0) < 30 ? 'text-amber-600 dark:text-amber-400' :
+                'text-red-600 dark:text-red-400'
+              }`}>
+                {regime.vix ?? 'N/A'}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {(regime.vix ?? 0) < 15 ? 'Low volatility — complacency' :
+                 (regime.vix ?? 0) < 20 ? 'Normal volatility' :
+                 (regime.vix ?? 0) < 30 ? 'Elevated volatility — caution' :
+                 'Fear / crisis levels'}
+              </p>
             </FlexCard>
-            <FlexCard title="Inflation Trend" className="border-blue-500/30 bg-blue-500/5">
-              <p className="text-lg font-semibold text-blue-600 dark:text-blue-400">Decelerating</p>
-              <p className="text-sm text-muted-foreground">CPI 3.2% YoY, core easing</p>
+            <FlexCard title="SPY Level" className="border-blue-500/30 bg-blue-500/5">
+              <p className="text-lg font-semibold text-blue-600 dark:text-blue-400">
+                ${regime.spy ?? 'N/A'}
+              </p>
+              <p className="text-sm text-muted-foreground">S&P 500 proxy</p>
             </FlexCard>
-            <FlexCard title="Employment" className="border-emerald-500/30 bg-emerald-500/5">
-              <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">Healthy</p>
-              <p className="text-sm text-muted-foreground">3.7% unemployment, solid payrolls</p>
+            <FlexCard title="Regime Score" className="border-slate-500/30 bg-slate-500/5">
+              <p className={`text-lg font-semibold ${
+                (regime.score ?? 0) > 0 ? 'text-emerald-600 dark:text-emerald-400' :
+                (regime.score ?? 0) < 0 ? 'text-red-600 dark:text-red-400' :
+                'text-slate-600 dark:text-slate-400'
+              }`}>
+                {(regime.score ?? 0) > 0 ? '+' : ''}{regime.score ?? 0}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Composite score (positive = risk-on, negative = risk-off)
+              </p>
             </FlexCard>
-            <FlexCard title="GDP Trajectory" className="border-slate-500/30 bg-slate-500/5">
-              <p className="text-lg font-semibold">Moderate Growth</p>
-              <p className="text-sm text-muted-foreground">~2.5% real GDP, soft landing scenario</p>
-            </FlexCard>
-            <FlexCard title="Key Risks" className="border-red-500/30 bg-red-500/5">
-              <ul className="text-sm space-y-1 list-disc list-inside">
-                <li>Geopolitical escalation</li>
-                <li>Inflation reacceleration</li>
-                <li>Commercial real estate</li>
-              </ul>
-            </FlexCard>
+            {(regime.signals ?? []).length > 0 && (
+              <FlexCard title="Regime Signals" className="border-slate-500/30 bg-slate-500/5 sm:col-span-2">
+                <ul className="text-sm space-y-1">
+                  {(regime.signals ?? []).map((s: { indicator: string; signal: string; value: number }, i: number) => (
+                    <li key={i} className="flex justify-between">
+                      <span className="font-medium">{s.indicator}</span>
+                      <span className="text-muted-foreground">{s.signal} ({s.value})</span>
+                    </li>
+                  ))}
+                </ul>
+              </FlexCard>
+            )}
           </div>
         </TabsContent>
 

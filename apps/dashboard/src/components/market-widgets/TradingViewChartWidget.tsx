@@ -1,5 +1,11 @@
 import TradingViewEmbed from './TradingViewEmbed'
 
+/**
+ * TradingView advanced chart widget.
+ * Uses the raw symbol without a hardcoded exchange prefix — TradingView
+ * auto-resolves the correct exchange for most US equities. Callers can
+ * still pass an explicit prefix like "NYSE:IBM" if needed.
+ */
 export default function TradingViewChartWidget({ symbol = 'AAPL' }: { symbol?: string }) {
   return (
     <TradingViewEmbed
@@ -7,7 +13,7 @@ export default function TradingViewChartWidget({ symbol = 'AAPL' }: { symbol?: s
       configKey={symbol}
       config={{
         autosize: true,
-        symbol: `NASDAQ:${symbol}`,
+        symbol,
         interval: "D",
         timezone: "Etc/UTC",
         theme: "dark",

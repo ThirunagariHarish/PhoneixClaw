@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phoenix Trading Platform — Complete Architecture Guide</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 40px auto; max-width: 900px; line-height: 1.6; color: #1a1a2e; font-size: 11pt; }
+  h1 { color: #16213e; border-bottom: 3px solid #0f3460; padding-bottom: 8px; margin-top: 40px; font-size: 22pt; }
+  h2 { color: #0f3460; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 30px; font-size: 16pt; }
+  h3 { color: #1a1a2e; margin-top: 20px; font-size: 13pt; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 10pt; font-family: "SF Mono", Menlo, monospace; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 9pt; line-height: 1.4; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 10pt; }
+  th { background: #0f3460; color: white; padding: 10px 12px; text-align: left; font-weight: 600; }
+  td { border: 1px solid #e2e8f0; padding: 8px 12px; }
+  tr:nth-child(even) { background: #f8fafc; }
+  strong { color: #0f3460; }
+  hr { border: none; border-top: 2px solid #e2e8f0; margin: 30px 0; }
+</style>
+</head>
+<body>
+<h1 id="phoenix-trading-platform-complete-architecture-guide">Phoenix Trading Platform — Complete Architecture Guide</h1>
+<p><strong>Version:</strong> 1.15.3 | <strong>Date:</strong> April 2026 | <strong>Author:</strong> Phoenix Engineering</p>
+<hr />
+<h1 id="table-of-contents">Table of Contents</h1>
+<ol>
+<li><a href="#1-project-overview">Project Overview</a></li>
+<li><a href="#2-core-philosophy">Core Philosophy — Agent-First Design</a></li>
+<li><a href="#3-system-architecture">System Architecture</a></li>
+<li><a href="#4-agent-types">Agent Types</a></li>
+<li><a href="#5-end-to-end-flow">End-to-End Flow: Channel to Live Trades</a></li>
+<li><a href="#6-backtesting-pipeline">Backtesting Pipeline (12-Step)</a></li>
+<li><a href="#7-live-trading-pipeline">Live Trading Pipeline</a></li>
+<li><a href="#8-position-monitoring">Position Monitoring Sub-Agents</a></li>
+<li><a href="#9-inter-agent-communication">Inter-Agent Communication</a></li>
+<li><a href="#10-agent-gateway">Agent Gateway — The Orchestrator</a></li>
+<li><a href="#11-robinhood-mcp-server">Robinhood MCP Server</a></li>
+<li><a href="#12-risk-management">Risk Management Chain</a></li>
+<li><a href="#13-ml-pipeline">ML Pipeline &amp; Models</a></li>
+<li><a href="#14-discord-ingestion">Discord Message Ingestion</a></li>
+<li><a href="#15-notification-system">Notification System</a></li>
+<li><a href="#16-scheduler">Scheduler &amp; Cron Jobs</a></li>
+<li><a href="#17-state-machine">Agent Lifecycle State Machine</a></li>
+<li><a href="#18-database-schema">Database Schema</a></li>
+<li><a href="#19-file-system">File System Layout</a></li>
+<li><a href="#20-dashboard">Dashboard (React Frontend)</a></li>
+<li><a href="#21-api-endpoints">API Endpoints Reference</a></li>
+<li><a href="#22-security">Security &amp; Sandboxing</a></li>
+<li><a href="#23-deployment">Deployment Architecture</a></li>
+<li><a href="#24-connecting-to-agents">Connecting to Running Agents</a></li>
+<li><a href="#25-debugging">Debugging &amp; Troubleshooting</a></li>
+<li><a href="#26-tech-stack">Technology Stack</a></li>
+<li><a href="#27-roadmap">Future Roadmap</a></li>
+</ol>
+<hr />
+<h1 id="1-project-overview">1. Project Overview</h1>
+<p>Phoenix is a <strong>multi-agent AI trading platform</strong> built as a monorepo. Every trading agent is a <strong>Claude Code session</strong> — a real AI process that reads instructions, reasons about market signals, calls Python tools, and takes trades autonomously.</p>
+<p><strong>What makes Phoenix different:</strong>
+- Agents are NOT Python scripts or microservices. They are Claude Code AI sessions that can reason, debug, and self-correct.
+- The intelligence lives in the agents' instruction files (CLAUDE.md) and the tools they invoke.
+- Python code serves as focused, single-purpose tools that agents call — not the orchestration layer.
+- Every trade decision is auditable: full reasoning chain from signal to execution.</p>
+<p><strong>Tech Stack:</strong> Python 3.11+, Node.js 18+, FastAPI, React 18, PostgreSQL, Redis, Claude SDK, Robinhood API.</p>
+<hr />
+<h1 id="2-core-philosophy-agent-first-design">2. Core Philosophy — Agent-First Design</h1>
+<div class="codehilite"><pre><span></span><code><span class="n">Traditional</span><span class="w"> </span><span class="n">approach</span><span class="p">:</span><span class="w">       </span><span class="n">Phoenix</span><span class="w"> </span><span class="n">approach</span><span class="p">:</span>
+<span class="n">Python</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">brain</span><span class="w">     </span><span class="n">Claude</span><span class="w"> </span><span class="n">Agent</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">brain</span>
+<span class="n">If</span><span class="o">/</span><span class="k">else</span><span class="w"> </span><span class="n">logic</span><span class="w"> </span><span class="n">decides</span><span class="w">       </span><span class="n">AI</span><span class="w"> </span><span class="n">reasons</span><span class="w"> </span><span class="n">about</span><span class="w"> </span><span class="n">each</span><span class="w"> </span><span class="k">signal</span>
+<span class="n">Fixed</span><span class="w"> </span><span class="n">pipelines</span><span class="w">             </span><span class="n">Agent</span><span class="w"> </span><span class="n">adapts</span><span class="p">,</span><span class="w"> </span><span class="n">debugs</span><span class="p">,</span><span class="w"> </span><span class="bp">self</span><span class="o">-</span><span class="n">corrects</span>
+<span class="n">Manual</span><span class="w"> </span><span class="n">monitoring</span><span class="w">           </span><span class="n">Sub</span><span class="o">-</span><span class="n">agents</span><span class="w"> </span><span class="n">per</span><span class="w"> </span><span class="n">position</span>
+</code></pre></div>
+
+<p><strong>Core principle:</strong> Claude SDK agents are the brain. Python tools are focused, single-purpose scripts the agents invoke. The Agent Gateway (<code>agent_gateway.py</code>) is the single entry point for all agent lifecycle operations.</p>
+<hr />
+<h1 id="3-system-architecture">3. System Architecture</h1>
+<h2 id="high-level-diagram">High-Level Diagram</h2>
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│                          USER (You)                                  │
+│   ┌────────────┐    ┌────────────┐    ┌───────────────┐            │
+│   │  Dashboard │    │  WhatsApp  │    │  Terminal     │            │
+│   │  (React)   │    │  (replies) │    │  (SSH/docker) │            │
+│   └─────┬──────┘    └──────┬─────┘    └───────┬───────┘            │
+└─────────┼──────────────────┼──────────────────┼────────────────────┘
+          │                  │                  │
+          │ REST + WS        │ Webhook          │ docker exec
+          ▼                  ▼                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       PHOENIX API (FastAPI)                          │
+│   ┌──────────────────────────────────────────────────────────────┐ │
+│   │  Routes: agents, trades, positions, agent-messages,          │ │
+│   │          chat, morning-routine, whatsapp_webhook, ...        │ │
+│   └──────────────────────────────────────────────────────────────┘ │
+│   ┌──────────────────────────────────────────────────────────────┐ │
+│   │  Services:                                                    │ │
+│   │   • AgentGateway       (spawns Claude Code sessions)         │ │
+│   │   • NotificationDispatcher (DB + WS + WhatsApp)              │ │
+│   │   • MessageIngestion   (Discord → DB + Redis)                │ │
+│   │   • Scheduler          (cron jobs + heartbeat)               │ │
+│   └──────────────────────────────────────────────────────────────┘ │
+└──────┬─────────────────────┬────────────────┬─────────────────────┘
+       │                     │                │
+       ▼                     ▼                ▼
+┌──────────┐         ┌──────────────┐    ┌──────────────────────┐
+│PostgreSQL│         │ Redis        │    │ Claude Code Sessions │
+│  29+     │         │ • Streams    │    │  (one per agent)     │
+│  tables  │         │ • Pub/Sub    │    │                      │
+└──────────┘         │ • Cache      │    │  Each session is a   │
+                     └──────────────┘    │  separate process    │
+                                         │  with its own        │
+                                         │  working directory   │
+                                         └──────────────────────┘
+                                                  │
+                            ┌─────────────────────┼─────────────────────┐
+                            ▼                     ▼                     ▼
+                    ┌───────────────┐   ┌──────────────────┐   ┌─────────────┐
+                    │ Backtester    │   │ Live Analyst     │   │ Sub-Agents  │
+                    │ (one-shot)    │   │ (continuous)     │   │ (per pos.)  │
+                    └───────┬───────┘   └────────┬─────────┘   └──────┬──────┘
+                            │                    │                    │
+                            ▼                    ▼                    ▼
+                    ┌───────────────────────────────────────────────────┐
+                    │              External Services                    │
+                    │  Discord  •  Robinhood  •  yfinance  •  Reddit  │
+                    │  Twitter  •  Unusual Whales  •  Anthropic API   │
+                    │  WhatsApp Cloud API  •  OpenAI                  │
+                    └───────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h2 id="the-three-layers">The Three Layers</h2>
+<h3 id="layer-1-control-plane-fastapi-postgres-redis-dashboard">Layer 1: Control Plane (FastAPI + Postgres + Redis + Dashboard)</h3>
+<ul>
+<li><strong>FastAPI app</strong> — REST API + WebSocket gateway</li>
+<li><strong>PostgreSQL</strong> — single source of truth for ALL state (29+ tables)</li>
+<li><strong>Redis</strong> — pub/sub for inter-agent messages, streams for Discord, cache</li>
+<li><strong>React Dashboard</strong> — Vite + Tailwind + Radix UI</li>
+</ul>
+<h3 id="layer-2-execution-plane-claude-code-agents">Layer 2: Execution Plane (Claude Code Agents)</h3>
+<p>Each agent is a <code>claude-agent-sdk</code> Python <code>query()</code> invocation that spawns a Claude Code subprocess with:
+- A working directory (e.g., <code>/app/data/live_agents/{id}/</code>)
+- A <code>CLAUDE.md</code> instructions file
+- A <code>tools/</code> subfolder of Python scripts
+- <code>permission_mode="dontAsk"</code> for unattended operation
+- <code>allowed_tools=["Bash", "Read", "Write", "Edit", "Grep", "Glob"]</code></p>
+<h3 id="layer-3-data-plane-external-apis-ml-models">Layer 3: Data Plane (External APIs + ML Models)</h3>
+<ul>
+<li><strong>yfinance</strong> — historical OHLCV with disk cache</li>
+<li><strong>Robinhood</strong> — broker via <code>robin_stocks</code> + custom MCP server</li>
+<li><strong>Discord API</strong> — channel monitoring</li>
+<li><strong>Unusual Whales API</strong> — options flow data</li>
+<li><strong>Anthropic API</strong> — Claude Code SDK + LLM analysis</li>
+</ul>
+<hr />
+<h1 id="4-agent-types">4. Agent Types</h1>
+<table>
+<thead>
+<tr>
+<th>Agent Type</th>
+<th>Purpose</th>
+<th>Lifecycle</th>
+<th>Template Directory</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Backtesting Agent</strong></td>
+<td>Pulls Discord history, trains ML models, discovers patterns</td>
+<td>One-shot (~15-30 min)</td>
+<td><code>agents/backtesting/</code></td>
+</tr>
+<tr>
+<td><strong>Analyst Agent</strong></td>
+<td>Live trading from Discord signals</td>
+<td>Continuous (until stopped)</td>
+<td><code>agents/templates/live-trader-v1/</code></td>
+</tr>
+<tr>
+<td><strong>Position Monitor</strong></td>
+<td>One per open position; finds optimal exit</td>
+<td>Continuous (until position closes)</td>
+<td><code>agents/templates/position-monitor-agent/</code></td>
+</tr>
+<tr>
+<td><strong>Unusual Whales Agent</strong></td>
+<td>Monitors options flow + dark pool prints</td>
+<td>Continuous polling</td>
+<td><code>agents/templates/unusual-whales-agent/</code></td>
+</tr>
+<tr>
+<td><strong>Social Sentiment Agent</strong></td>
+<td>Reddit + Twitter signal scanning</td>
+<td>Continuous polling</td>
+<td><code>agents/templates/social-sentiment-agent/</code></td>
+</tr>
+<tr>
+<td><strong>Strategy Agent</strong></td>
+<td>Rule-based strategies (EMA crossover, 52w levels)</td>
+<td>Continuous polling</td>
+<td><code>agents/templates/strategy-agent/</code></td>
+</tr>
+<tr>
+<td><strong>Supervisor Agent</strong></td>
+<td>Nightly AutoResearch — analyzes performance</td>
+<td>Daily (one-shot)</td>
+<td><code>agents/templates/supervisor-agent/</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="5-end-to-end-flow-channel-to-live-trades">5. End-to-End Flow: Channel to Live Trades</h1>
+<h3 id="step-1-user-creates-an-agent-in-the-dashboard">Step 1 — User creates an agent in the dashboard</h3>
+<div class="codehilite"><pre><span></span><code>Dashboard → &quot;+ New Agent&quot; → 3-step wizard:
+  1. Pick a connector (Discord channel)
+  2. Set risk parameters (stop loss %, max position %, daily loss limit)
+  3. Review and create
+</code></pre></div>
+
+<h3 id="step-2-api-spawns-a-backtesting-claude-session">Step 2 — API spawns a backtesting Claude session</h3>
+<ol>
+<li>Inserts a new <code>Agent</code> row (status = <code>BACKTESTING</code>)</li>
+<li>Inserts a new <code>AgentBacktest</code> row (status = <code>RUNNING</code>)</li>
+<li>Calls <code>gateway.create_backtester(agent_id, backtest_id, config)</code></li>
+<li>Spawns a Claude Code session via <code>claude_agent_sdk.query()</code></li>
+</ol>
+<h3 id="step-3-claude-code-runs-the-12-step-backtesting-pipeline">Step 3 — Claude Code runs the 12-step backtesting pipeline</h3>
+<p>(See Section 6 for full details)</p>
+<h3 id="step-4-backtest-completes-user-reviews-and-approves">Step 4 — Backtest completes → user reviews and approves</h3>
+<ol>
+<li><code>_auto_create_analyst()</code> loads the manifest into the Agent record</li>
+<li>Dashboard shows metrics (win rate, Sharpe, drawdown, patterns)</li>
+<li>User clicks <strong>Approve</strong> → API stores Robinhood credentials → auto-spawns live agent</li>
+</ol>
+<h3 id="step-5-live-analyst-agent-runs-continuously">Step 5 — Live analyst agent runs continuously</h3>
+<ol>
+<li>Starts Discord listener → watches configured channel</li>
+<li>For each signal → runs decision engine (parse → enrich → inference → risk → TA → execute)</li>
+<li>After successful trade → spawns position monitor sub-agent</li>
+</ol>
+<h3 id="step-6-position-sub-agent-monitors-each-trade">Step 6 — Position sub-agent monitors each trade</h3>
+<p>One Claude Code session per open position, running exit analysis every 30s-2min.</p>
+<h3 id="step-7-inter-agent-knowledge-sharing">Step 7 — Inter-agent knowledge sharing</h3>
+<p>Agents share market intelligence, sell signals, and morning research via the agent message bus.</p>
+<h3 id="step-8-notifications">Step 8 — Notifications</h3>
+<p>Trade events fire WhatsApp notifications (entry, exit, morning briefing, agent wake-up).</p>
+<h3 id="step-9-nightly-autoresearch">Step 9 — Nightly AutoResearch</h3>
+<p>At 4:30 PM ET, the Supervisor agent collects the day's data, analyzes performance, proposes improvements, and mini-backtests each proposal.</p>
+<hr />
+<h1 id="6-backtesting-pipeline-12-step">6. Backtesting Pipeline (12-Step)</h1>
+<p>The backtesting agent reads <code>agents/backtesting/CLAUDE.md</code> and executes:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Tool</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>transform.py</code></td>
+<td>Pull Discord history, parse trade signals</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>enrich.py</code></td>
+<td>Add ~200 market features per trade</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>embed_text.py</code></td>
+<td>Sentence-transformer vectors for Discord messages</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>preprocess.py</code></td>
+<td>Train/val/test split</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>model_selector.py</code></td>
+<td>Pick optimal models based on dataset size</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>train_*.py</code></td>
+<td>Train selected models sequentially (memory-constrained)</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>evaluate.py</code></td>
+<td>Evaluate all models, pick best</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>explain.py</code></td>
+<td>Feature importance / explainability</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>discover_patterns.py</code></td>
+<td>Multi-condition trading rule discovery</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>llm_analysis.py</code></td>
+<td>LLM narrative interpretation of patterns</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>validate_models.py</code></td>
+<td>Validate predictions on hold-out data</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>create_live_agent.py</code></td>
+<td>Build manifest.json with rules, character, models</td>
+</tr>
+</tbody>
+</table>
+<p>After each step, the agent calls <code>POST /api/v2/agents/{id}/backtest-progress</code> for real-time dashboard updates.</p>
+<p><strong>Output artifacts:</strong>
+- <code>transformed.parquet</code> — raw trade data from Discord
+- <code>enriched.parquet</code> — with ~200 market features
+- <code>models/</code> — trained ML model files
+- <code>model_selection.json</code> — which models were chosen and why
+- <code>patterns.json</code> — discovered trading patterns
+- <code>explainability.json</code> — top features
+- <code>live_agent/manifest.json</code> — configuration for the live agent</p>
+<hr />
+<h1 id="7-live-trading-pipeline">7. Live Trading Pipeline</h1>
+<div class="codehilite"><pre><span></span><code><span class="n">Discord</span><span class="w"> </span><span class="n">Channel</span>
+<span class="w">      </span><span class="err">│</span><span class="w"> </span><span class="p">(</span><span class="n">message</span><span class="w"> </span><span class="n">posted</span><span class="p">)</span>
+<span class="w">      </span><span class="err">▼</span>
+<span class="n">Message</span><span class="w"> </span><span class="n">Ingestion</span><span class="w"> </span><span class="n">Daemon</span>
+<span class="w">      </span><span class="err">│</span><span class="w"> </span><span class="p">(</span><span class="n">persists</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">channel_messages</span><span class="w"> </span><span class="n">table</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">Redis</span><span class="w"> </span><span class="n">stream</span><span class="p">)</span>
+<span class="w">      </span><span class="err">▼</span>
+<span class="n">signal_listener</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="p">(</span><span class="n">Redis</span><span class="w"> </span><span class="n">consumer</span><span class="p">)</span>
+<span class="w">      </span><span class="err">│</span><span class="w"> </span><span class="p">(</span><span class="n">writes</span><span class="w"> </span><span class="k">signal</span><span class="w"> </span><span class="n">JSON</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="n">workspace</span><span class="p">)</span>
+<span class="w">      </span><span class="err">▼</span>
+<span class="n">Claude</span><span class="w"> </span><span class="n">Agent</span><span class="w"> </span><span class="n">reads</span><span class="w"> </span><span class="k">signal</span><span class="w"> </span><span class="n">file</span>
+<span class="w">      </span><span class="err">│</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">parse_signal</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">extract</span><span class="w"> </span><span class="n">ticker</span><span class="p">,</span><span class="w"> </span><span class="n">direction</span><span class="p">,</span><span class="w"> </span><span class="n">price</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">enrich_single</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mi">200</span><span class="o">+</span><span class="w"> </span><span class="n">market</span><span class="w"> </span><span class="n">features</span><span class="w">  </span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">inference</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">ML</span><span class="w"> </span><span class="n">model</span><span class="w"> </span><span class="n">prediction</span><span class="w"> </span><span class="p">(</span><span class="n">TRADE</span><span class="o">/</span><span class="n">SKIP</span><span class="p">)</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">Agent</span><span class="w"> </span><span class="n">applies</span><span class="w"> </span><span class="n">its</span><span class="w"> </span><span class="n">own</span><span class="w"> </span><span class="n">reasoning</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">learned</span><span class="w"> </span><span class="n">rules</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">risk_check</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">position</span><span class="o">/</span><span class="n">exposure</span><span class="w"> </span><span class="n">limits</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">technical_analysis</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">TA</span><span class="w"> </span><span class="n">confirmation</span>
+<span class="w">      </span><span class="err">│</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="n">confidence</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">threshold</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">add</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">watchlist</span>
+<span class="w">      </span><span class="err">├──</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="n">paper</span><span class="w"> </span><span class="n">mode</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">add</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">Robinhood</span><span class="w"> </span><span class="n">watchlist</span>
+<span class="w">      </span><span class="err">└──</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="n">live</span><span class="w"> </span><span class="n">mode</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">execute_trade</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">Robinhood</span><span class="w"> </span><span class="n">MCP</span><span class="w"> </span><span class="n">order</span>
+<span class="w">                                </span><span class="err">│</span>
+<span class="w">                                </span><span class="err">▼</span>
+<span class="w">                    </span><span class="n">Spawn</span><span class="w"> </span><span class="n">position</span><span class="w"> </span><span class="n">monitor</span><span class="w"> </span><span class="n">sub</span><span class="o">-</span><span class="n">agent</span>
+</code></pre></div>
+
+<p><strong>Key Design:</strong> The Claude agent is the decision-maker, not a Python if/else chain. It can reason about edge cases, combine multiple signals, and explain its decisions in plain English.</p>
+<hr />
+<h1 id="8-position-monitoring-sub-agents">8. Position Monitoring Sub-Agents</h1>
+<p>For each open position, a NEW Claude Code session spawns:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">data</span><span class="o">/</span><span class="n">live_agents</span><span class="o">/</span><span class="p">{</span><span class="n">agent_id</span><span class="p">}</span><span class="o">/</span><span class="n">positions</span><span class="o">/</span><span class="p">{</span><span class="n">ticker</span><span class="p">}</span><span class="n">_</span><span class="p">{</span><span class="n">timestamp</span><span class="p">}</span><span class="o">/</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">CLAUDE</span><span class="o">.</span><span class="n">md</span><span class="w">           </span><span class="c1"># Position monitor instructions</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">position</span><span class="o">.</span><span class="n">json</span><span class="w">       </span><span class="c1"># Assigned position details</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">tools</span><span class="o">/</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">exit_monitor</span><span class="o">.</span><span class="n">py</span><span class="w">     </span><span class="c1"># Main monitoring loop</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">exit_decision</span><span class="o">.</span><span class="n">py</span><span class="w">    </span><span class="c1"># Combined exit analysis</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">ta_check</span><span class="o">.</span><span class="n">py</span><span class="w">         </span><span class="c1"># RSI, MACD, Bollinger, S/R</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">mag7_correlation</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="c1"># MAG-7 stock correlation</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">discord_sell_signal</span><span class="o">.</span><span class="n">py</span><span class="w"> </span><span class="c1"># Analyst sell signal detection</span>
+<span class="err">└──</span><span class="w"> </span><span class="n">exit_check_</span><span class="o">*.</span><span class="n">json</span><span class="w">   </span><span class="c1"># Historical exit decisions</span>
+</code></pre></div>
+
+<p><strong>Monitoring cadence:</strong>
+- First 5 minutes: check every 30 seconds
+- After: check every 2 minutes (or 30s if urgency &gt;= 50)</p>
+<p><strong>Exit decision combines:</strong>
+1. Technical analysis (RSI, MACD, Bollinger Bands, support/resistance)
+2. MAG-7 correlation (broad market direction)
+3. Discord sell signal detection (if the analyst sells)
+4. Risk levels (stop loss, take profit from backtesting data)</p>
+<p><strong>Actions:</strong> HOLD / PARTIAL_EXIT / FULL_EXIT based on combined urgency score.</p>
+<hr />
+<h1 id="9-inter-agent-communication">9. Inter-Agent Communication</h1>
+<h3 id="persistent-layer-db-rest">Persistent Layer (DB + REST)</h3>
+<div class="codehilite"><pre><span></span><code>Agent A → POST /api/v2/agent-messages → Postgres → Agent B polls → reads message
+</code></pre></div>
+
+<h3 id="real-time-layer-redis-pubsub">Real-time Layer (Redis Pub/Sub)</h3>
+<p>Messages also published to <code>phoenix:agent-knowledge:{agent_id}</code> for instant delivery.</p>
+<h3 id="knowledge-intents-standardized-message-types">Knowledge Intents (standardized message types):</h3>
+<ul>
+<li><code>MARKET_BRIEFING</code> — pre-market research summary</li>
+<li><code>POSITION_UPDATE</code> — position P&amp;L changes</li>
+<li><code>RISK_ALERT</code> — risk threshold breached</li>
+<li><code>EXIT_SIGNAL</code> — time to close a position</li>
+<li><code>SELL_SIGNAL</code> — analyst is selling</li>
+<li><code>UNUSUAL_FLOW</code> — options flow anomaly detected</li>
+<li><code>MORNING_RESEARCH</code> — shared morning analysis</li>
+</ul>
+<hr />
+<h1 id="10-agent-gateway-the-orchestrator">10. Agent Gateway — The Orchestrator</h1>
+<p><code>apps/api/src/services/agent_gateway.py</code> is the <strong>single entry point</strong> for all agent operations:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>create_backtester()</code></td>
+<td>Spawn backtesting Claude session</td>
+</tr>
+<tr>
+<td><code>start_analyst_agent()</code></td>
+<td>Spawn live trading Claude session</td>
+</tr>
+<tr>
+<td><code>spawn_position_agent()</code></td>
+<td>Spawn position monitor sub-agent</td>
+</tr>
+<tr>
+<td><code>resume_agent()</code></td>
+<td>Resume a paused agent</td>
+</tr>
+<tr>
+<td><code>pause_agent()</code></td>
+<td>Pause a running agent</td>
+</tr>
+<tr>
+<td><code>chat_with_agent()</code></td>
+<td>Route chat messages through Claude SDK</td>
+</tr>
+<tr>
+<td><code>dispatch_trigger()</code></td>
+<td>Push typed triggers via Redis</td>
+</tr>
+<tr>
+<td><code>_auto_create_analyst()</code></td>
+<td>Auto-spawn analyst after backtest completes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key features:</strong>
+- In-memory <code>_running_tasks</code> dict tracks all active asyncio tasks
+- <code>_session_ids</code> dict maps agent IDs to Claude Code session IDs for resume
+- Budget enforcement (Phase H7) before spawning any agent
+- Credit error detection with clear user-facing messages
+- Heartbeat monitoring (30-minute stale timeout)
+- Auto-restart of stale analyst/live_trader agents</p>
+<hr />
+<h1 id="11-robinhood-mcp-server">11. Robinhood MCP Server</h1>
+<p><code>agents/templates/live-trader-v1/tools/robinhood_mcp.py</code> — a JSON-RPC over stdio MCP server that agents call for broker operations.</p>
+<p><strong>Available tools (25+):</strong>
+| Tool | Description |
+|------|-------------|
+| <code>robinhood_login</code> | Authenticate with TOTP 2FA + session persistence |
+| <code>get_positions</code> | List stock positions |
+| <code>get_option_positions</code> | List options with Greeks, P&amp;L |
+| <code>get_all_positions</code> | Combined stock + options view |
+| <code>get_account</code> / <code>get_account_snapshot</code> | Balance, buying power |
+| <code>get_quote</code> / <code>get_nbbo</code> | Real-time quotes |
+| <code>get_option_chain</code> / <code>get_option_greeks</code> | Options data |
+| <code>place_stock_order</code> / <code>place_option_order</code> | Execute trades |
+| <code>smart_limit_order</code> | Intelligent limit order placement |
+| <code>close_position</code> / <code>close_option_position</code> | Close positions |
+| <code>get_order_status</code> / <code>get_order_history</code> | Order tracking |
+| <code>get_watchlist</code> | Watchlist management |</p>
+<p><strong>Session persistence:</strong> Uses <code>robin_stocks</code> with pickle-based session storage (24-hour expiry) and TOTP auto-generation to avoid repeated 2FA.</p>
+<hr />
+<h1 id="12-risk-management-chain">12. Risk Management Chain</h1>
+<p>Every trade passes through 3 layers before execution:</p>
+<div class="codehilite"><pre><span></span><code>Signal from Discord/UW/Reddit/Strategy
+              │
+              ▼
+   ┌─────────────────────┐
+   │ 1. Agent-Level Risk │ ── Per-agent: position size, daily limits
+   └──────────┬──────────┘
+              │ pass
+              ▼
+   ┌─────────────────────┐
+   │ 2. Execution Risk   │ ── Per-trade: stop loss valid, price reasonable
+   └──────────┬──────────┘
+              │ pass
+              ▼
+   ┌─────────────────────┐
+   │ 3. Global Risk      │ ── Account-wide: total exposure, drawdown
+   └──────────┬──────────┘
+              │ pass
+              ▼
+        BROKER EXECUTION
+        (Robinhood MCP)
+</code></pre></div>
+
+<hr />
+<h1 id="13-ml-pipeline-models">13. ML Pipeline &amp; Models</h1>
+<p>Training runs 8+ models sequentially (memory-constrained):</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Type</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XGBoost</td>
+<td>Gradient Boosting</td>
+<td>General-purpose, fast</td>
+</tr>
+<tr>
+<td>LightGBM</td>
+<td>Gradient Boosting</td>
+<td>Large datasets, categorical features</td>
+</tr>
+<tr>
+<td>CatBoost</td>
+<td>Gradient Boosting</td>
+<td>Handles missing data natively</td>
+</tr>
+<tr>
+<td>Random Forest</td>
+<td>Ensemble</td>
+<td>Baseline, interpretable</td>
+</tr>
+<tr>
+<td>LSTM</td>
+<td>Deep Learning</td>
+<td>Sequential patterns</td>
+</tr>
+<tr>
+<td>Transformer</td>
+<td>Deep Learning</td>
+<td>Attention-based temporal patterns</td>
+</tr>
+<tr>
+<td>TFT (Temporal Fusion)</td>
+<td>Deep Learning</td>
+<td>Multi-horizon forecasting</td>
+</tr>
+<tr>
+<td>TCN (Temporal Conv)</td>
+<td>Deep Learning</td>
+<td>Long-range dependencies</td>
+</tr>
+<tr>
+<td>Hybrid Ensemble</td>
+<td>Meta-learner</td>
+<td>Combines best of all models</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Features span ~200 attributes:</strong>
+- Price action (OHLCV, returns, gaps)
+- Technical indicators (RSI, MACD, Bollinger, ATR, etc.)
+- Volume analysis (VWAP, OBV, volume spikes)
+- Market context (S&amp;P 500, VIX, sector rotation)
+- Time features (day of week, time of day, earnings proximity)
+- Sentiment (Discord message embeddings, FinBERT)
+- Options data (put/call ratio, unusual flow)</p>
+<hr />
+<h1 id="14-discord-message-ingestion">14. Discord Message Ingestion</h1>
+<div class="codehilite"><pre><span></span><code><span class="n">Discord</span><span class="w"> </span><span class="n">Channel</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">Discord</span><span class="w"> </span><span class="n">API</span>
+<span class="w">                       </span><span class="err">│</span>
+<span class="w">                       </span><span class="err">▼</span>
+<span class="w">              </span><span class="n">Message</span><span class="w"> </span><span class="n">Ingestion</span><span class="w"> </span><span class="n">Daemon</span>
+<span class="w">              </span><span class="p">(</span><span class="n">runs</span><span class="w"> </span><span class="n">inside</span><span class="w"> </span><span class="n">API</span><span class="w"> </span><span class="n">lifespan</span><span class="p">)</span>
+<span class="w">                       </span><span class="err">│</span>
+<span class="w">            </span><span class="err">┌──────────┼──────────┐</span>
+<span class="w">            </span><span class="err">▼</span><span class="w">                     </span><span class="err">▼</span>
+<span class="w">     </span><span class="n">channel_messages</span><span class="w">        </span><span class="n">Redis</span><span class="w"> </span><span class="n">Stream</span>
+<span class="w">     </span><span class="p">(</span><span class="n">PostgreSQL</span><span class="p">)</span><span class="w">            </span><span class="n">stream</span><span class="p">:</span><span class="n">channel</span><span class="p">:{</span><span class="n">id</span><span class="p">}</span>
+<span class="w">            </span><span class="err">│</span><span class="w">                     </span><span class="err">│</span>
+<span class="w">            </span><span class="err">▼</span><span class="w">                     </span><span class="err">▼</span>
+<span class="w">     </span><span class="n">Dashboard</span><span class="w"> </span><span class="n">Feed</span><span class="w"> </span><span class="n">Tab</span><span class="w">    </span><span class="n">signal_listener</span><span class="o">.</span><span class="n">py</span>
+<span class="w">                           </span><span class="p">(</span><span class="n">agent</span><span class="w"> </span><span class="k">tool</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>Features:</strong>
+- Auto-starts on API boot for all active Discord connectors
+- Auto-refreshes every 5 minutes (restarts dead connectors, picks up new ones)
+- On-demand backfill via <code>POST /api/v2/agents/{id}/channel-messages/backfill</code>
+- Fan-out trigger: wakes agents via Redis trigger bus on new messages</p>
+<hr />
+<h1 id="15-notification-system">15. Notification System</h1>
+<div class="codehilite"><pre><span></span><code>Trade event → NotificationDispatcher.dispatch()
+                       │
+            ┌──────────┼──────────┬─────────┐
+            ▼          ▼          ▼         ▼
+         ┌─────┐  ┌────────┐  ┌──────┐  ┌────────┐
+         │ DB  │  │  WS    │  │WhatsApp│ │Twitter │
+         │     │  │(Redis  │  │        │ │(future)│
+         └─────┘  │Stream) │  └──────┘  └────────┘
+                  └────────┘
+</code></pre></div>
+
+<p><strong>Notification types:</strong> Agent wake-up, morning research briefing, trade entry, trade exit, position alerts.</p>
+<hr />
+<h1 id="16-scheduler-cron-jobs">16. Scheduler &amp; Cron Jobs</h1>
+<table>
+<thead>
+<tr>
+<th>Time (ET)</th>
+<th>Job</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>9:00 AM</td>
+<td>Morning Briefing</td>
+<td>Wake agents, pre-market research</td>
+</tr>
+<tr>
+<td>4:30 PM</td>
+<td>AutoResearch Supervisor</td>
+<td>Analyze day's performance, propose improvements</td>
+</tr>
+<tr>
+<td>4:45 PM</td>
+<td>EOD Analysis</td>
+<td>Enrich trade signals with outcomes</td>
+</tr>
+<tr>
+<td>5:00 PM</td>
+<td>Daily Summary</td>
+<td>WhatsApp summary across all agents</td>
+</tr>
+<tr>
+<td>Every 5 min</td>
+<td>Heartbeat Check</td>
+<td>Mark stale sessions, auto-restart agents, refresh ingestion</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Heartbeat:</strong> Sessions without a heartbeat for 30+ minutes are marked stale. Analyst and live_trader agents are automatically restarted.</p>
+<hr />
+<h1 id="17-agent-lifecycle-state-machine">17. Agent Lifecycle State Machine</h1>
+<div class="codehilite"><pre><span></span><code><span class="w">          </span><span class="err">┌─────────┐</span>
+<span class="w">          </span><span class="err">│</span><span class="w"> </span><span class="n">CREATED</span><span class="w"> </span><span class="err">│</span><span class="w"> </span><span class="err">◄──</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="n">creates</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">dashboard</span>
+<span class="w">          </span><span class="err">└────┬────┘</span>
+<span class="w">               </span><span class="err">│</span><span class="w"> </span><span class="n">Backtest</span><span class="w"> </span><span class="n">spawned</span>
+<span class="w">               </span><span class="err">▼</span>
+<span class="w">        </span><span class="err">┌─────────────┐</span>
+<span class="w">        </span><span class="err">│</span><span class="w"> </span><span class="n">BACKTESTING</span><span class="w"> </span><span class="err">│</span><span class="w"> </span><span class="err">◄──</span><span class="w"> </span><span class="n">Claude</span><span class="w"> </span><span class="n">Code</span><span class="w"> </span><span class="n">session</span><span class="w"> </span><span class="n">running</span><span class="w"> </span><span class="n">pipeline</span>
+<span class="w">        </span><span class="err">└──────┬──────┘</span>
+<span class="w">               </span><span class="err">│</span><span class="w"> </span><span class="n">Pipeline</span><span class="w"> </span><span class="n">complete</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">manifest</span><span class="w"> </span><span class="n">loaded</span>
+<span class="w">               </span><span class="err">▼</span>
+<span class="w">    </span><span class="err">┌────────────────────┐</span>
+<span class="w">    </span><span class="err">│</span><span class="w"> </span><span class="n">BACKTEST_COMPLETE</span><span class="w">  </span><span class="err">│</span><span class="w"> </span><span class="err">◄──</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="n">reviews</span><span class="w"> </span><span class="n">metrics</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">dashboard</span>
+<span class="w">    </span><span class="err">└─────────┬──────────┘</span>
+<span class="w">              </span><span class="err">│</span><span class="w"> </span><span class="n">POST</span><span class="w"> </span><span class="o">/</span><span class="n">approve</span>
+<span class="w">              </span><span class="err">▼</span>
+<span class="w">        </span><span class="err">┌──────────┐</span><span class="w">         </span><span class="err">┌─────────┐</span>
+<span class="w">        </span><span class="err">│</span><span class="w"> </span><span class="n">APPROVED</span><span class="w"> </span><span class="err">│</span><span class="w"> </span><span class="ow">or</span><span class="w">      </span><span class="err">│</span><span class="w">  </span><span class="n">PAPER</span><span class="w">  </span><span class="err">│</span>
+<span class="w">        </span><span class="err">└─────┬────┘</span><span class="w">         </span><span class="err">└────┬────┘</span>
+<span class="w">              </span><span class="err">│</span><span class="w"> </span><span class="n">Auto</span><span class="o">-</span><span class="n">spawn</span><span class="w"> </span><span class="n">live</span><span class="w">    </span><span class="err">│</span>
+<span class="w">              </span><span class="err">▼</span><span class="w">                    </span><span class="err">▼</span>
+<span class="w">          </span><span class="err">┌─────────┐</span>
+<span class="w">          </span><span class="err">│</span><span class="w"> </span><span class="n">RUNNING</span><span class="w"> </span><span class="err">│</span><span class="w"> </span><span class="err">◄──</span><span class="w"> </span><span class="n">Claude</span><span class="w"> </span><span class="n">Code</span><span class="w"> </span><span class="n">session</span><span class="w"> </span><span class="n">live</span>
+<span class="w">          </span><span class="err">└────┬────┘</span>
+<span class="w">               </span><span class="err">│</span>
+<span class="w">    </span><span class="err">┌──────────┼──────────┐</span>
+<span class="w">    </span><span class="err">▼</span><span class="w">          </span><span class="err">▼</span><span class="w">          </span><span class="err">▼</span>
+<span class="err">┌─────────┐</span><span class="w"> </span><span class="err">┌──────┐</span><span class="w">  </span><span class="err">┌────────┐</span>
+<span class="err">│</span><span class="w"> </span><span class="n">PAUSED</span><span class="w">  </span><span class="err">│</span><span class="w"> </span><span class="err">│</span><span class="n">ERROR</span><span class="w"> </span><span class="err">│</span><span class="w">  </span><span class="err">│</span><span class="n">STOPPED</span><span class="w"> </span><span class="err">│</span>
+<span class="err">└─────┬───┘</span><span class="w"> </span><span class="err">└──────┘</span><span class="w">  </span><span class="err">└────────┘</span>
+<span class="w">      </span><span class="err">│</span><span class="w"> </span><span class="n">POST</span><span class="w"> </span><span class="o">/</span><span class="n">resume</span>
+<span class="w">      </span><span class="err">▼</span>
+<span class="w">  </span><span class="p">[</span><span class="n">back</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">RUNNING</span><span class="p">]</span>
+</code></pre></div>
+
+<hr />
+<h1 id="18-database-schema-key-tables">18. Database Schema (Key Tables)</h1>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents</code></td>
+<td>Master agent records (status, manifest, model_type, pending_improvements)</td>
+</tr>
+<tr>
+<td><code>agent_backtests</code></td>
+<td>Backtest runs with versioning, metrics, model_selection</td>
+</tr>
+<tr>
+<td><code>agent_sessions</code></td>
+<td>Every Claude Code session (parent_agent_id, position_ticker, session_role)</td>
+</tr>
+<tr>
+<td><code>agent_trades</code></td>
+<td>Live trades with decision_status (accepted/rejected/paper/watchlist)</td>
+</tr>
+<tr>
+<td><code>agent_messages</code></td>
+<td>Inter-agent knowledge sharing</td>
+</tr>
+<tr>
+<td><code>agent_logs</code></td>
+<td>Per-agent log entries</td>
+</tr>
+<tr>
+<td><code>agent_chat_messages</code></td>
+<td>Dashboard chat history (user ↔ agent)</td>
+</tr>
+<tr>
+<td><code>system_logs</code></td>
+<td>System-wide log entries</td>
+</tr>
+<tr>
+<td><code>notifications</code></td>
+<td>WhatsApp/dashboard notifications</td>
+</tr>
+<tr>
+<td><code>watchlist</code></td>
+<td>Paper trading positions tracked for simulated P&amp;L</td>
+</tr>
+<tr>
+<td><code>connectors</code></td>
+<td>Discord/Reddit/Twitter/UW credentials</td>
+</tr>
+<tr>
+<td><code>connector_agents</code></td>
+<td>Many-to-many linking agents to connectors</td>
+</tr>
+<tr>
+<td><code>trading_accounts</code></td>
+<td>Robinhood broker accounts</td>
+</tr>
+<tr>
+<td><code>channel_messages</code></td>
+<td>Ingested Discord messages</td>
+</tr>
+<tr>
+<td><code>trade_signals</code></td>
+<td>Parsed trading signals</td>
+</tr>
+<tr>
+<td><code>positions</code></td>
+<td>Open trading positions</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="19-file-system-layout">19. File System Layout</h1>
+<div class="codehilite"><pre><span></span><code><span class="n">data</span><span class="o">/</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">backtest_</span><span class="p">{</span><span class="n">agent_id</span><span class="p">}</span><span class="o">/</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">config</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">latest</span><span class="o">.</span><span class="n">json</span><span class="w">                 </span><span class="c1"># Pointer to latest version</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">output</span><span class="o">/</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">v1</span><span class="o">/</span><span class="w">                     </span><span class="c1"># First backtest run</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">v2</span><span class="o">/</span><span class="w">                     </span><span class="c1"># Re-runs (non-destructive)</span>
+<span class="err">│</span><span class="w">       </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">transformed</span><span class="o">.</span><span class="n">parquet</span>
+<span class="err">│</span><span class="w">       </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">enriched</span><span class="o">.</span><span class="n">parquet</span>
+<span class="err">│</span><span class="w">       </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">models</span><span class="o">/</span>
+<span class="err">│</span><span class="w">       </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="n">patterns</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">       </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="n">live_agent</span><span class="o">/</span><span class="n">manifest</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">       </span><span class="err">└──</span><span class="w"> </span><span class="n">v3</span><span class="o">/</span>
+<span class="err">│</span>
+<span class="err">├──</span><span class="w"> </span><span class="n">live_agents</span><span class="o">/</span>
+<span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="p">{</span><span class="n">agent_id</span><span class="p">}</span><span class="o">/</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">CLAUDE</span><span class="o">.</span><span class="n">md</span><span class="w">               </span><span class="c1"># Rendered live agent instructions</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">config</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">tools</span><span class="o">/</span><span class="w">                  </span><span class="c1"># Python tool scripts</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">skills</span><span class="o">/</span><span class="w">                 </span><span class="c1"># Markdown skill files</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">models</span><span class="o">/</span><span class="w">                 </span><span class="c1"># Copied trained models</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">pending_tasks</span><span class="o">.</span><span class="n">json</span><span class="w">      </span><span class="c1"># User instructions queue</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">positions</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="n">watchlist</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">       </span><span class="err">└──</span><span class="w"> </span><span class="n">positions</span><span class="o">/</span><span class="w">              </span><span class="c1"># Sub-agent working dirs</span>
+<span class="err">│</span><span class="w">           </span><span class="err">└──</span><span class="w"> </span><span class="n">AAPL_20260406_143000</span><span class="o">/</span>
+<span class="err">│</span><span class="w">               </span><span class="err">├──</span><span class="w"> </span><span class="n">CLAUDE</span><span class="o">.</span><span class="n">md</span>
+<span class="err">│</span><span class="w">               </span><span class="err">├──</span><span class="w"> </span><span class="n">position</span><span class="o">.</span><span class="n">json</span>
+<span class="err">│</span><span class="w">               </span><span class="err">└──</span><span class="w"> </span><span class="n">tools</span><span class="o">/</span>
+<span class="err">│</span>
+<span class="err">└──</span><span class="w"> </span><span class="n">supervisor</span><span class="o">/</span>
+<span class="w">    </span><span class="err">└──</span><span class="w"> </span><span class="mi">20260406</span><span class="o">/</span>
+<span class="w">        </span><span class="err">├──</span><span class="w"> </span><span class="n">CLAUDE</span><span class="o">.</span><span class="n">md</span>
+<span class="w">        </span><span class="err">├──</span><span class="w"> </span><span class="n">tools</span><span class="o">/</span>
+<span class="w">        </span><span class="err">└──</span><span class="w"> </span><span class="n">results</span><span class="o">.</span><span class="n">json</span>
+</code></pre></div>
+
+<hr />
+<h1 id="20-dashboard-react-frontend">20. Dashboard (React Frontend)</h1>
+<p><code>apps/dashboard/</code> — React 18 + Vite + TypeScript + Tailwind CSS + Radix UI + TanStack Query</p>
+<p><strong>Key pages:</strong>
+- <strong>Agents List</strong> — all agents with status, win rate, P&amp;L
+- <strong>Agent Dashboard</strong> — per-agent view with tabs:
+  - <strong>Live</strong> — real-time status, recent trades, equity curve
+  - <strong>Backtesting</strong> — metrics, patterns, model comparison
+  - <strong>Feed</strong> — raw Discord messages from connected channels
+  - <strong>Logs</strong> — agent system logs with SSE streaming
+  - <strong>Chat</strong> — direct conversation with the Claude agent
+  - <strong>Trades</strong> — trade history with decision audit trail
+  - <strong>Portfolio</strong> — positions, P&amp;L, risk metrics
+- <strong>Connectors</strong> — manage Discord/Reddit/Twitter/Robinhood connections
+- <strong>Settings</strong> — risk parameters, notification preferences</p>
+<hr />
+<h1 id="21-api-endpoints-reference">21. API Endpoints Reference</h1>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/v2/agents</code></td>
+<td>POST</td>
+<td>Create agent + start backtest</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}</code></td>
+<td>GET</td>
+<td>Agent details</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/approve</code></td>
+<td>POST</td>
+<td>Approve backtest → spawn live agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/pause</code></td>
+<td>POST</td>
+<td>Pause running agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/resume</code></td>
+<td>POST</td>
+<td>Resume paused agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/stop</code></td>
+<td>POST</td>
+<td>Stop agent permanently</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/chat</code></td>
+<td>GET/POST</td>
+<td>Chat with agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/channel-messages</code></td>
+<td>GET</td>
+<td>Discord feed for agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/channel-messages/backfill</code></td>
+<td>POST</td>
+<td>On-demand Discord fetch</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/logs</code></td>
+<td>GET</td>
+<td>Agent logs</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/logs/stream</code></td>
+<td>GET</td>
+<td>SSE live log tail</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/trades</code></td>
+<td>GET</td>
+<td>Trade history</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/spawn-position-agent</code></td>
+<td>POST</td>
+<td>Spawn position monitor</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/instruct</code></td>
+<td>POST</td>
+<td>Send instruction to agent</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/runtime-info</code></td>
+<td>GET</td>
+<td>Host, PID, working dir, uptime</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/{id}/activity-feed</code></td>
+<td>GET</td>
+<td>Unified logs + trades + messages</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/graph</code></td>
+<td>GET</td>
+<td>Agent topology for visualization</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/morning-briefing</code></td>
+<td>POST</td>
+<td>Trigger morning routine</td>
+</tr>
+<tr>
+<td><code>/api/v2/agents/supervisor/run</code></td>
+<td>POST</td>
+<td>Trigger AutoResearch</td>
+</tr>
+<tr>
+<td><code>/api/v2/scheduler/status</code></td>
+<td>GET</td>
+<td>Scheduler + ingestion health</td>
+</tr>
+<tr>
+<td><code>/api/v2/scheduler/ingestion/refresh</code></td>
+<td>POST</td>
+<td>Restart dead connectors</td>
+</tr>
+<tr>
+<td><code>/webhook/whatsapp</code></td>
+<td>POST</td>
+<td>Incoming WhatsApp handler</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="22-security-sandboxing">22. Security &amp; Sandboxing</h1>
+<p>Each agent has a <code>.claude/settings.json</code> that controls permissions:</p>
+<p><strong>ALLOWED:</strong>
+- Run Python scripts in <code>tools/</code>
+- Make HTTP calls to Phoenix API and external services
+- Read/write within its own working directory</p>
+<p><strong>DENIED:</strong>
+- Access files outside its working directory
+- Run destructive commands (<code>rm -rf /</code>, <code>git push --force</code>)
+- Access other agents' data</p>
+<p><strong>Credential security:</strong>
+- All credentials encrypted with Fernet (AES-128-CBC)
+- Decrypted only at runtime in memory
+- Robinhood sessions persisted via pickle with 24-hour expiry
+- TOTP auto-generation for 2FA (no manual device approval)</p>
+<hr />
+<h1 id="23-deployment-architecture">23. Deployment Architecture</h1>
+<p>Deployed via <strong>Coolify</strong> on a VPS:</p>
+<div class="codehilite"><pre><span></span><code>Coolify (Git-based Deploy)
+    │ push to main → auto-deploy
+    ▼
+┌─────────────────────────────────┐
+│ VPS (69.62.86.166)              │
+│                                 │
+│  ┌─────────────────────┐       │
+│  │ phoenix-api          │ :8011 │
+│  │ (FastAPI + agents)   │       │
+│  └──────────┬──────────┘       │
+│             │                   │
+│  ┌──────────┤──────────┐       │
+│  ▼          ▼          ▼       │
+│ Postgres  Redis    Dashboard   │
+│  :5432    :6379      :3000     │
+└─────────────────────────────────┘
+</code></pre></div>
+
+<ul>
+<li><code>docker-compose.coolify.yml</code> defines the service stack</li>
+<li><code>apps/api/Dockerfile</code> builds the API container</li>
+<li><code>apps/api/entrypoint.sh</code> runs migrations on startup, then <code>uvicorn</code></li>
+</ul>
+<hr />
+<h1 id="24-connecting-to-running-agents">24. Connecting to Running Agents</h1>
+<p>Every Claude Code agent is a subprocess of the <code>phoenix-api</code> Docker container.</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># SSH to VPS</span>
+ssh<span class="w"> </span>root@69.62.86.166
+
+<span class="c1"># Find API container</span>
+<span class="nv">API</span><span class="o">=</span><span class="k">$(</span>docker<span class="w"> </span>ps<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>phoenix-api<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
+
+<span class="c1"># Exec into container</span>
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-it<span class="w"> </span><span class="nv">$API</span><span class="w"> </span>bash
+
+<span class="c1"># List agent working directories</span>
+ls<span class="w"> </span>/app/data/live_agents/
+
+<span class="c1"># See running Claude processes</span>
+ps<span class="w"> </span>auxf<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>claude
+
+<span class="c1"># Watch an agent&#39;s activity</span>
+docker<span class="w"> </span>logs<span class="w"> </span>-f<span class="w"> </span><span class="nv">$API</span><span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;&lt;agent-id&gt;&quot;</span>
+
+<span class="c1"># Read agent&#39;s state files</span>
+cat<span class="w"> </span>/app/data/live_agents/&lt;id&gt;/positions.json
+cat<span class="w"> </span>/app/data/live_agents/&lt;id&gt;/pending_tasks.json
+cat<span class="w"> </span>/app/data/live_agents/&lt;id&gt;/CLAUDE.md
+</code></pre></div>
+
+<hr />
+<h1 id="25-debugging-troubleshooting">25. Debugging &amp; Troubleshooting</h1>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Solution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent says RUNNING but no activity</td>
+<td>Check if Claude process is alive: <code>ps aux \| grep claude</code></td>
+</tr>
+<tr>
+<td>Backtest stuck</td>
+<td>Check <code>latest.json</code> for version, inspect latest output files</td>
+</tr>
+<tr>
+<td>Chat not responding</td>
+<td>Check API logs for timeout/SDK errors</td>
+</tr>
+<tr>
+<td>Discord messages not in Feed</td>
+<td>Call <code>POST /scheduler/ingestion/refresh</code> or use backfill endpoint</td>
+</tr>
+<tr>
+<td>"Credit balance too low"</td>
+<td>This is Anthropic API billing, not Phoenix. Add credits at console.anthropic.com</td>
+</tr>
+<tr>
+<td>Agents auto-shutting off</td>
+<td>Check heartbeat (30min timeout). Agents auto-restart on stale detection.</td>
+</tr>
+<tr>
+<td>Robinhood 2FA prompts</td>
+<td>Set <code>RH_TOTP_SECRET</code> env var for automatic TOTP generation</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="26-technology-stack">26. Technology Stack</h1>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Technology</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Backend API</td>
+<td>Python 3.11+, FastAPI, Uvicorn</td>
+</tr>
+<tr>
+<td>Frontend</td>
+<td>React 18, Vite, TypeScript, Tailwind CSS, Radix UI</td>
+</tr>
+<tr>
+<td>Database</td>
+<td>PostgreSQL (SQLAlchemy async ORM, Alembic migrations)</td>
+</tr>
+<tr>
+<td>Cache/Pub-Sub</td>
+<td>Redis (Streams, Pub/Sub)</td>
+</tr>
+<tr>
+<td>AI Agents</td>
+<td>Claude Code SDK (<code>claude-agent-sdk</code>)</td>
+</tr>
+<tr>
+<td>ML Training</td>
+<td>XGBoost, LightGBM, CatBoost, PyTorch (LSTM/Transformer/TFT/TCN)</td>
+</tr>
+<tr>
+<td>Broker</td>
+<td>Robinhood via <code>robin_stocks</code> + custom MCP server</td>
+</tr>
+<tr>
+<td>Deployment</td>
+<td>Docker, Coolify (git-push deploy)</td>
+</tr>
+<tr>
+<td>Testing</td>
+<td>pytest, Vitest, Playwright</td>
+</tr>
+<tr>
+<td>Linting</td>
+<td>Ruff (Python), ESLint (TypeScript)</td>
+</tr>
+<tr>
+<td>Notifications</td>
+<td>WhatsApp Cloud API, WebSocket</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="27-future-roadmap">27. Future Roadmap</h1>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Feature</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>V2</strong></td>
+<td>Reddit agent, Twitter agent, Unusual Whales agent with full tool access</td>
+</tr>
+<tr>
+<td><strong>V3</strong></td>
+<td>Plain-English strategy builder ("buy TQQ/SQQQ based on 8/24 EMA crossover")</td>
+</tr>
+<tr>
+<td><strong>V4</strong></td>
+<td>Multi-agent teams with shared strategy meetings</td>
+</tr>
+<tr>
+<td><strong>V5</strong></td>
+<td>AutoResearch (Karpathy-style) — agents that improve themselves daily</td>
+</tr>
+<tr>
+<td><strong>V6</strong></td>
+<td>Distributed agent execution across multiple VPS nodes</td>
+</tr>
+<tr>
+<td><strong>V7</strong></td>
+<td>Terminal tab in dashboard — SSH directly into agent workspace</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>Phoenix is not "code that trades" — it's an army of Claude Code agents that read instructions, run Python tools, share knowledge, and self-improve. The Python services exist to spawn agents, persist state, route messages, serve the dashboard, and dispatch notifications. The actual intelligence lives in the agents.</em></p>
+</body>
+</html>

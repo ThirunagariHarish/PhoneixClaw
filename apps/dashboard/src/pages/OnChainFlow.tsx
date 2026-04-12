@@ -118,12 +118,18 @@ export default function OnChainFlowPage() {
     queryKey: ['onchain-flow-metrics'],
     queryFn: async () => {
       try {
-        const res = await api.get('/api/v2/onchain-flow/whale-alerts')
-        return { ...EMPTY_FLOW_METRICS, whale_alerts_24h: Array.isArray(res.data) ? res.data.length : 0 }
+        const res = await api.get('/api/v2/onchain-flow/metrics')
+        return {
+          whale_alerts_24h: res.data?.whale_alerts_24h ?? 0,
+          unusual_flow_volume: res.data?.unusual_flow_volume ?? '$0',
+          dark_pool_activity: res.data?.dark_pool_activity ?? '0%',
+          institutional_sentiment: res.data?.institutional_sentiment ?? 'NEUTRAL',
+        }
       } catch {
         return EMPTY_FLOW_METRICS
       }
     },
+    refetchInterval: 30000,
   })
 
   const { data: whaleAlerts = [] } = useQuery<WhaleAlert[]>({

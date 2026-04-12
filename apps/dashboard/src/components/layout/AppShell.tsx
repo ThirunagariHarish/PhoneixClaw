@@ -34,6 +34,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import ChatWidget from '@/components/ChatWidget'
+import { KillSwitchButton } from '@/components/KillSwitch'
 import { TokenMonitor } from '@/components/TokenMonitor'
 
 const SIDEBAR_COLLAPSED_KEY = 'phoenix-sidebar-collapsed'
@@ -94,7 +95,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/connectors', icon: Plug, label: 'Connectors' },
       { to: '/tasks', icon: ListTodo, label: 'Tasks' },
       { to: '/logs', icon: Terminal, label: 'Logs' },
-      { to: '/admin', icon: Shield, label: 'Admin' },
+      { to: '/admin', icon: Shield, label: 'Admin', adminOnly: true },
       { to: '/dev-sprint', icon: Bug, label: 'Dev Sprint Board', adminOnly: true },
       { to: '/settings', icon: Settings, label: 'Settings' },
     ],
@@ -326,9 +327,14 @@ export default function AppShell() {
           <img src="/phoenix-logo.png" alt="" className="h-7 w-7 shrink-0" />
           {!collapsed && <span className="font-semibold truncate">Phoenix Claw</span>}
           {!collapsed && (
+            <div className="ml-auto flex items-center gap-1">
+              <KillSwitchButton variant="topbar" />
+            </div>
+          )}
+          {!collapsed && (
             <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications() } }}>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="ml-auto relative h-8 w-8">
+                <Button variant="ghost" size="icon" className="relative h-8 w-8">
                   <Bell className="h-4 w-4" />
                   {unreadCount?.count > 0 && (
                     <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-primary text-[10px] font-medium text-primary-foreground flex items-center justify-center px-1 animate-pulse">
@@ -465,6 +471,7 @@ export default function AppShell() {
         </Sheet>
         <img src="/phoenix-logo.png" alt="" className="h-7 w-7" />
         <span className="font-semibold flex-1 truncate">Phoenix Claw</span>
+        <KillSwitchButton variant="topbar" />
         <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications() } }}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="relative h-9 w-9">
