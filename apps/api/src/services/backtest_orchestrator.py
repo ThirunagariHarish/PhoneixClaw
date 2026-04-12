@@ -119,6 +119,23 @@ class BacktestOrchestrator:
 
             if result.get("success"):
                 self._write_checkpoint(step_num, script)
+
+                # After preprocess completes, check if there is enough data to train.
+                # 0 training rows means no trades were reconstructed — skip all
+                # downstream training and post-training steps gracefully.
+                if "preprocess" in script:
+                    meta_path = self.work_dir / "preprocessed" / "meta.json"
+                    try:
+                        meta = json.loads(meta_path.read_text())
+                        if meta.get("n_train", 1) == 0:
+                            logger.warning(
+                                "Preprocess produced 0 training rows for agent %s — "
+                                "skipping all training and post-training steps.",
+                                self.agent_id,
+                            )
+                            break  # failed_step is None → status = "completed"
+                    except Exception as e:
+                        logger.debug("Could not read preprocessed/meta.json: %s", e)
             else:
                 # Retry once — log stdout/stderr as separate calls for structured log backends
                 logger.warning("Step %d (%s) failed, retrying once.", step_num, script)
@@ -183,7 +200,9 @@ class BacktestOrchestrator:
         ))
         steps.append((
             "compute_text_embeddings.py", "Feature: compute_text_embeddings", "python",
-            ["--input", "enriched.parquet", "--output", "embeddings"],
+            # Output to work_dir root ('.') so preprocess.py finds text_embeddings.npy
+            # at input_path.parent/text_embeddings.npy as it expects.
+            ["--input", "enriched.parquet", "--output", "."],
         ))
         steps.append((
             "compute_labels.py", "Feature: compute_labels", "python",

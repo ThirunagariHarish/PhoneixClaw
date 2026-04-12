@@ -74,7 +74,8 @@ def main():
         df["entry_time"] = pd.to_datetime(df.get("entry_time", pd.Timestamp.now()))
     df = df.sort_values("entry_time").reset_index(drop=True)
 
-    y = df["is_profitable"].astype(int).values
+    # NaN-safe: trades with no exit signal have is_profitable=NaN — treat as False
+    y = df["is_profitable"].fillna(False).astype(int).values
 
     # --- Tabular features ---
     # Convert bool columns to int so they survive the numeric filter
