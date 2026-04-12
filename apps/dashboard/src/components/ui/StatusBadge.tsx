@@ -14,13 +14,15 @@ const statusVariant: Record<string, BadgeProps['variant']> = {
   paused: 'warning',
   backlog: 'secondary',
   in_progress: 'default',
+  'setting up': 'warning',
+  starting: 'warning',
   under_review: 'warning',
   offline: 'destructive',
   error: 'destructive',
   failed: 'destructive',
 }
 
-const statusDotAnimated = new Set(['active', 'online', 'running'])
+const statusDotAnimated = new Set(['active', 'online', 'running', 'setting up', 'starting'])
 
 export interface StatusBadgeProps {
   status: string

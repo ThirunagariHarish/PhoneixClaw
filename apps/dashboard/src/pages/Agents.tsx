@@ -491,9 +491,10 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
         </div>
 
         {/* Status badge */}
-        <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${sc.bgColor} ${sc.color}`}>
-          {agent.status === 'RUNNING' && <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />}
-          {sc.label}
+        <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${agent.status === 'RUNNING' && agent.worker_status === 'STARTING' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : `${sc.bgColor} ${sc.color}`}`}>
+          {agent.status === 'RUNNING' && agent.worker_status !== 'STARTING' && <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />}
+          {agent.status === 'RUNNING' && agent.worker_status === 'STARTING' && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />}
+          {agent.status === 'RUNNING' && agent.worker_status === 'STARTING' ? 'Setting up…' : sc.label}
         </div>
 
         {/* ERROR: error message banner */}
@@ -1767,7 +1768,7 @@ export default function AgentsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <span className="text-muted-foreground">Status</span>
-              <StatusBadge status={selected.status} />
+              <StatusBadge status={selected.worker_status === 'STARTING' && selected.status === 'RUNNING' ? 'Setting up' : selected.status} />
               <span className="text-muted-foreground">Type</span>
               <span className="capitalize">{selected.type}</span>
               <span className="text-muted-foreground">Worker</span>

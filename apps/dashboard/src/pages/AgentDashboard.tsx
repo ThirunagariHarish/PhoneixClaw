@@ -1835,7 +1835,7 @@ export default function AgentDashboardPage() {
             <h1 className="text-xl sm:text-2xl font-bold truncate">{agent.name}</h1>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <Badge variant="outline" className="text-xs">{agent.type}</Badge>
-              <StatusBadge status={agent.status} />
+              <StatusBadge status={agent.worker_status === 'STARTING' && agent.status === 'RUNNING' ? 'Setting up' : agent.status} />
               {agent.channel_name && <span className="text-xs text-muted-foreground">#{agent.channel_name}</span>}
               {agent.analyst_name && <span className="text-xs text-muted-foreground">by {agent.analyst_name}</span>}
                 </div>
