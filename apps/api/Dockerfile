@@ -30,6 +30,7 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 COPY shared/ shared/
 COPY apps/api/ apps/api/
 COPY agents/ agents/
+COPY services/ services/
 COPY scripts/ scripts/
 COPY pyproject.toml .
 
