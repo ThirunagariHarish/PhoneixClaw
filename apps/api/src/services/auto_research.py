@@ -19,9 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, date, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +58,10 @@ async def run_auto_research(agent_id: uuid.UUID | None = None) -> dict:
 async def _get_active_agents() -> list[uuid.UUID]:
     """Get all agents with status RUNNING or PAPER."""
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent import Agent
-        from sqlalchemy import select
 
         async for db in get_session():
             stmt = select(Agent.id).where(Agent.status.in_(["RUNNING", "PAPER"]))
@@ -112,9 +112,10 @@ async def _research_agent(agent_id: uuid.UUID) -> dict:
 async def _gather_performance(agent_id: uuid.UUID) -> dict:
     """Step 1: Query all trades from the last 24h and compute metrics."""
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent_trade import AgentTrade
-        from sqlalchemy import select, func
 
         since = datetime.now(timezone.utc) - timedelta(days=1)
 
@@ -222,9 +223,10 @@ async def _write_wiki_entries(agent_id: uuid.UUID, analysis: dict) -> int:
     entries_created = 0
 
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.wiki import AgentWikiEntry
-        from sqlalchemy import select
 
         improvements = analysis.get("improvements", [])
         patterns = analysis.get("patterns", {})
@@ -295,9 +297,10 @@ async def _update_instructions(agent_id: uuid.UUID, analysis: dict) -> list[str]
         return updates
 
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent import Agent
-        from sqlalchemy import select
 
         async for db in get_session():
             agent = (await db.execute(
@@ -347,9 +350,10 @@ async def _check_retrain_trigger(agent_id: uuid.UUID, perf_data: dict) -> bool:
     )
 
     try:
+        from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent import Agent
-        from sqlalchemy import select
 
         async for db in get_session():
             agent = (await db.execute(

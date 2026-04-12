@@ -134,7 +134,11 @@ export default function DailySignalsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['daily-signals-pipeline'] }),
   })
 
-  const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const formatTime = (iso: string | null | undefined) => {
+    if (!iso) return 'N/A'
+    const d = new Date(iso)
+    return isNaN(d.getTime()) ? 'N/A' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -269,12 +273,12 @@ export default function DailySignalsPage() {
                         {sig.direction}
                       </Badge>
                     </TableCell>
-                    <TableCell>{(sig.confidence * 100).toFixed(0)}%</TableCell>
+                    <TableCell>{((sig.confidence ?? 0) * 100).toFixed(0)}%</TableCell>
                     <TableCell className="text-muted-foreground truncate">{sig.source_agent}</TableCell>
-                    <TableCell>${sig.entry_price.toFixed(2)}</TableCell>
-                    <TableCell>${sig.stop_loss.toFixed(2)}</TableCell>
-                    <TableCell>${sig.take_profit.toFixed(2)}</TableCell>
-                    <TableCell>{sig.risk_reward.toFixed(1)}</TableCell>
+                    <TableCell>${(sig.entry_price ?? 0).toFixed(2)}</TableCell>
+                    <TableCell>${(sig.stop_loss ?? 0).toFixed(2)}</TableCell>
+                    <TableCell>${(sig.take_profit ?? 0).toFixed(2)}</TableCell>
+                    <TableCell>{(sig.risk_reward ?? 0).toFixed(1)}</TableCell>
                     <TableCell>
                       <StatusBadge status={sig.status} />
                     </TableCell>
@@ -295,13 +299,13 @@ export default function DailySignalsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <span className="text-muted-foreground">Entry</span>
-              <span>${selectedSignal.entry_price.toFixed(2)}</span>
+              <span>${(selectedSignal.entry_price ?? 0).toFixed(2)}</span>
               <span className="text-muted-foreground">Stop Loss</span>
-              <span>${selectedSignal.stop_loss.toFixed(2)}</span>
+              <span>${(selectedSignal.stop_loss ?? 0).toFixed(2)}</span>
               <span className="text-muted-foreground">Take Profit</span>
-              <span>${selectedSignal.take_profit.toFixed(2)}</span>
+              <span>${(selectedSignal.take_profit ?? 0).toFixed(2)}</span>
               <span className="text-muted-foreground">R:R</span>
-              <span>{selectedSignal.risk_reward.toFixed(1)}</span>
+              <span>{(selectedSignal.risk_reward ?? 0).toFixed(1)}</span>
             </div>
             {selectedSignal.research_note && (
               <div>

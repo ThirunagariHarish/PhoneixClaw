@@ -3,8 +3,8 @@
 Revision ID: 039_dead_letter_messages
 Revises: 038_decision_trail
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "039_dead_letter_messages"

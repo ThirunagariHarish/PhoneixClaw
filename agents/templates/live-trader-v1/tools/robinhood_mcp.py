@@ -20,7 +20,6 @@ import sys
 import threading
 import time
 import uuid
-from collections import deque
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1104,8 @@ def _tool_get_order_history(args: dict) -> dict:
 
     if order_type in ("all", "option"):
         try:
-            from datetime import datetime as _dt, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
             start = (_dt.now() - _td(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
             option_orders = _retry(rh.orders.get_all_option_orders, start_date=start) or []
         except TypeError:

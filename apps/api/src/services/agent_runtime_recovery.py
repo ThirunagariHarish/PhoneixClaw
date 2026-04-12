@@ -44,6 +44,7 @@ async def recover_agents_on_startup() -> dict:
 
     try:
         from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent_session import AgentSession
         from shared.db.models.system_log import SystemLog
@@ -160,8 +161,9 @@ async def recover_agents_on_startup() -> dict:
             position = _json.loads(position_file.read_text())
             config = _json.loads(config_file.read_text()) if config_file.exists() else {}
 
-            from apps.api.src.services.position_micro_agent import PositionMicroAgent
             import asyncio as _asyncio
+
+            from apps.api.src.services.position_micro_agent import PositionMicroAgent
 
             new_session_id = uuid.uuid4()
             agent = PositionMicroAgent(

@@ -3,8 +3,8 @@
 Revision ID: 040_analyst_profiles
 Revises: 039_dead_letter_messages
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "040_analyst_profiles"

@@ -27,7 +27,7 @@ import {
   ChevronDown, ChevronUp, Check, X, Eye,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
-  CircleDot, AlertTriangle, CheckCircle2, XCircle, Loader2,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -40,6 +40,7 @@ import { AgentSkillsTab } from '@/components/AgentSkillsTab'
 import { AgentWikiTab } from '@/components/AgentWikiTab'
 import { ConsolidationPanel } from '@/components/ConsolidationPanel'
 import { ContextDebugger } from '@/components/ContextDebugger'
+import { DecisionTrailVisualizer } from '@/components/DecisionTrailVisualizer'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
@@ -294,68 +295,7 @@ function PortfolioTab({ id, agent }: { id: string; agent: AgentData }) {
 /* ================================================================
    TRADES TAB
    ================================================================ */
-function TradeTimeline({ trail }: { trail: DecisionTrail }) {
-  if (!trail?.steps?.length) return <p className="text-xs text-muted-foreground">No decision trail available.</p>
-
-  const stepIcon = (s: DecisionTrailStep) => {
-    if (s.status === 'ok' || s.status === 'passed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-    if (s.status === 'failed' || s.status === 'rejected') return <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
-    if (s.status === 'skipped') return <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-    return <CircleDot className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-  }
-
-  const stepLabel = (s: DecisionTrailStep) => {
-    const name = s.step.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-    const details: string[] = []
-    if (s.features_count) details.push(`${s.features_count} features`)
-    if (s.prediction) details.push(s.prediction)
-    if (s.confidence != null) details.push(`conf=${(s.confidence * 100).toFixed(0)}%`)
-    if (s.approved != null) details.push(s.approved ? 'PASS' : 'FAIL')
-    if (s.verdict) details.push(s.verdict)
-    if (s.error) details.push(`error: ${s.error.slice(0, 80)}`)
-    return { name, details: details.join(', ') }
-  }
-
-    return (
-    <div className="space-y-3">
-      <div className="relative pl-5">
-        <div className="absolute left-[6.5px] top-1 bottom-1 w-px bg-border" />
-        {trail.steps.map((s, i) => {
-          const { name, details } = stepLabel(s)
-          return (
-            <div key={i} className="relative flex items-start gap-2.5 pb-2.5">
-              <div className="relative z-10 bg-background">{stepIcon(s)}</div>
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-semibold">{name}</span>
-                {details && <span className="text-[10px] text-muted-foreground ml-1.5">({details})</span>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      {trail.reasoning && trail.reasoning.length > 0 && (
-        <div className="bg-muted/50 rounded p-2">
-          <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">Reasoning Chain</p>
-          <ul className="space-y-0.5">
-            {trail.reasoning.map((r, i) => (
-              <li key={i} className="text-xs text-foreground/80">{i + 1}. {r}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {trail.execution_params && (
-        <div className="bg-muted/50 rounded p-2">
-          <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">Execution Params</p>
-          <div className="grid grid-cols-3 gap-1 text-[10px] font-mono">
-            {Object.entries(trail.execution_params).filter(([, v]) => v != null).slice(0, 12).map(([k, v]) => (
-              <span key={k}><span className="text-muted-foreground">{k}:</span> {typeof v === 'number' ? (v as number).toFixed(4) : String(v)}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      </div>
-    )
-  }
+/* TradeTimeline replaced by DecisionTrailVisualizer component */
 
 function TradesTab({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -482,17 +422,30 @@ function TradesTab({ id }: { id: string }) {
         </div>
 
                   {timelineOpen === t.id && (
-                    <div className="ml-4 mr-4 mb-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Eye className="h-4 w-4 text-primary" />
-                        <span className="font-semibold text-primary">Decision Trail</span>
-                        <span className="text-muted-foreground ml-auto">{t.entry_time ? new Date(t.entry_time).toLocaleString() : ''}</span>
-                      </div>
-                      {t.decision_trail ? (
-                        <TradeTimeline trail={t.decision_trail} />
-                      ) : (
-                        <p className="text-muted-foreground text-xs">No decision trail recorded for this trade.</p>
-                      )}
+                    <div className="ml-2 mr-2 mb-2 p-4 rounded-lg bg-primary/5 border border-primary/20">
+                      <DecisionTrailVisualizer trade={{
+                        ticker: t.ticker,
+                        direction: t.side,
+                        side: t.side,
+                        entry_price: t.entry_price,
+                        exit_price: t.exit_price,
+                        quantity: t.quantity,
+                        entry_time: t.entry_time,
+                        exit_time: t.exit_time,
+                        status: t.status,
+                        signal_raw: t.signal_raw,
+                        reasoning: t.reasoning,
+                        model_confidence: t.model_confidence,
+                        pattern_matches: t.pattern_matches,
+                        broker_order_id: t.broker_order_id,
+                        option_type: t.option_type,
+                        strike: t.strike,
+                        decision_status: t.decision_status,
+                        rejection_reason: t.rejection_reason,
+                        decision_trail: t.decision_trail,
+                        pnl_dollar: t.pnl_dollar,
+                        pnl_pct: t.pnl_pct,
+                      }} />
                     </div>
                   )}
 

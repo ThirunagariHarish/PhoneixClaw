@@ -5,6 +5,7 @@ M1.1: Minimal app with health endpoint. M1.3: Auth routes and JWT middleware.
 Reference: ImplementationPlan.md Section 2, Section 5 M1.1, M1.3.
 """
 
+import json
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -33,61 +34,61 @@ from fastapi.middleware.cors import CORSMiddleware
 from apps.api.src.config import settings
 from apps.api.src.middleware.auth import JWTAuthMiddleware
 from apps.api.src.middleware.error_handler import ErrorHandlerMiddleware
-from apps.api.src.middleware.rate_limit import RateLimitMiddleware
-from apps.api.src.middleware.logging import LoggingMiddleware
 from apps.api.src.middleware.idempotency import IdempotencyMiddleware, set_shutting_down
-from apps.api.src.routes import auth as auth_routes
-from apps.api.src.routes import connectors as connector_routes
-from apps.api.src.routes import trades as trades_routes
-from apps.api.src.routes import positions as positions_routes
-from apps.api.src.routes import agents as agents_routes
-from apps.api.src.routes import execution as execution_routes
-from apps.api.src.routes import skills as skills_routes
-from apps.api.src.routes import backtests as backtests_routes
-from apps.api.src.routes import strategies as strategies_routes
-from apps.api.src.routes import monitoring as monitoring_routes
-from apps.api.src.routes import dev_agent as dev_agent_routes
-from apps.api.src.routes import tasks as tasks_routes
-from apps.api.src.routes import automations as automations_routes
+from apps.api.src.middleware.logging import LoggingMiddleware
+from apps.api.src.middleware.rate_limit import RateLimitMiddleware
 from apps.api.src.routes import admin as admin_routes
-from apps.api.src.routes import performance as performance_routes
-from apps.api.src.routes import market as market_routes
-from apps.api.src.routes import ws as ws_routes
 from apps.api.src.routes import agent_learning as agent_learning_routes
-from apps.api.src.routes import daily_signals as daily_signals_routes
-from apps.api.src.routes import onchain_flow as onchain_flow_routes
-from apps.api.src.routes import macro_pulse as macro_pulse_routes
-from apps.api.src.routes import zero_dte as zero_dte_routes
-from apps.api.src.routes import narrative_sentiment as narrative_sentiment_routes
-from apps.api.src.routes import risk_compliance as risk_compliance_routes
 from apps.api.src.routes import agent_messages as agent_messages_routes
-from apps.api.src.routes import chat as chat_routes
-from apps.api.src.routes import notifications as notifications_routes
-from apps.api.src.routes import error_logs as error_logs_routes
-from apps.api.src.routes import ai_expand as ai_expand_routes
-from apps.api.src.routes import token_usage as token_usage_routes
-from apps.api.src.routes import system_logs as system_logs_routes
-from apps.api.src.routes import morning_routine as morning_routine_routes
-from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
-from apps.api.src.routes import scheduler_status as scheduler_status_routes
-from apps.api.src.routes import eod_analysis as eod_analysis_routes
-from apps.api.src.routes import trade_signals as trade_signals_routes
-from apps.api.src.routes import budget as budget_routes
-from apps.api.src.routes import agents_sprint as agents_sprint_routes
 from apps.api.src.routes import agent_terminal as agent_terminal_routes
-from apps.api.src.routes import briefing_history as briefing_history_routes
-from apps.api.src.routes import claude_sdk_check as claude_sdk_check_routes
-from apps.api.src.routes import polymarket as polymarket_routes
+from apps.api.src.routes import agents as agents_routes
+from apps.api.src.routes import agents_sprint as agents_sprint_routes
+from apps.api.src.routes import ai_expand as ai_expand_routes
 from apps.api.src.routes import analyst as analyst_routes
-from apps.api.src.routes import pm_top_bets as pm_top_bets_routes
-from apps.api.src.routes import pm_chat as pm_chat_routes
-from apps.api.src.routes import pm_agents as pm_agents_routes
-from apps.api.src.routes import pm_research as pm_research_routes
-from apps.api.src.routes import pm_venues as pm_venues_routes
-from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
-from apps.api.src.routes import wiki as wiki_routes
+from apps.api.src.routes import auth as auth_routes
+from apps.api.src.routes import automations as automations_routes
+from apps.api.src.routes import backtests as backtests_routes
+from apps.api.src.routes import briefing_history as briefing_history_routes
+from apps.api.src.routes import budget as budget_routes
+from apps.api.src.routes import chat as chat_routes
+from apps.api.src.routes import claude_sdk_check as claude_sdk_check_routes
+from apps.api.src.routes import connectors as connector_routes
 from apps.api.src.routes import consolidation as consolidation_routes
+from apps.api.src.routes import daily_signals as daily_signals_routes
+from apps.api.src.routes import dev_agent as dev_agent_routes
+from apps.api.src.routes import eod_analysis as eod_analysis_routes
+from apps.api.src.routes import error_logs as error_logs_routes
+from apps.api.src.routes import execution as execution_routes
 from apps.api.src.routes import invitations as invitations_routes
+from apps.api.src.routes import macro_pulse as macro_pulse_routes
+from apps.api.src.routes import market as market_routes
+from apps.api.src.routes import monitoring as monitoring_routes
+from apps.api.src.routes import morning_routine as morning_routine_routes
+from apps.api.src.routes import narrative_sentiment as narrative_sentiment_routes
+from apps.api.src.routes import notifications as notifications_routes
+from apps.api.src.routes import onchain_flow as onchain_flow_routes
+from apps.api.src.routes import performance as performance_routes
+from apps.api.src.routes import pm_agents as pm_agents_routes
+from apps.api.src.routes import pm_chat as pm_chat_routes
+from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
+from apps.api.src.routes import pm_research as pm_research_routes
+from apps.api.src.routes import pm_top_bets as pm_top_bets_routes
+from apps.api.src.routes import pm_venues as pm_venues_routes
+from apps.api.src.routes import polymarket as polymarket_routes
+from apps.api.src.routes import positions as positions_routes
+from apps.api.src.routes import risk_compliance as risk_compliance_routes
+from apps.api.src.routes import scheduler_status as scheduler_status_routes
+from apps.api.src.routes import skills as skills_routes
+from apps.api.src.routes import strategies as strategies_routes
+from apps.api.src.routes import system_logs as system_logs_routes
+from apps.api.src.routes import tasks as tasks_routes
+from apps.api.src.routes import token_usage as token_usage_routes
+from apps.api.src.routes import trade_signals as trade_signals_routes
+from apps.api.src.routes import trades as trades_routes
+from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
+from apps.api.src.routes import wiki as wiki_routes
+from apps.api.src.routes import ws as ws_routes
+from apps.api.src.routes import zero_dte as zero_dte_routes
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
@@ -107,6 +108,7 @@ async def _ensure_prod_schema() -> None:
 
     try:
         from sqlalchemy import text
+
         from shared.db.engine import get_engine
     except Exception as exc:
         _log.warning("[schema_heal] import failed: %s", exc)
@@ -371,11 +373,12 @@ async def _heal_stuck_backtests(log=None) -> None:
 
     try:
         from datetime import timedelta
-        from sqlalchemy import text, update
-        from shared.db.engine import get_engine
-        from shared.db.models.agent import Agent, AgentBacktest
+
+        from sqlalchemy import text
         from sqlalchemy.ext.asyncio import AsyncSession
         from sqlalchemy.orm import sessionmaker
+
+        from shared.db.engine import get_engine
 
         timeout_seconds = int(os.getenv("BACKTEST_QUERY_TIMEOUT_SECONDS", "1800")) + 60
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
@@ -515,6 +518,7 @@ async def _seed_system_agents() -> None:
     ]
 
     from sqlalchemy import text
+
     from shared.db.engine import get_engine
 
     engine = get_engine()
@@ -628,8 +632,8 @@ async def lifespan(app: FastAPI):
 
     # Install SIGTERM handler: mark all running sessions as 'interrupted'
     # so recovery on next startup knows they were gracefully stopped.
-    import signal as _signal
     import asyncio as _asyncio
+    import signal as _signal
 
     def _sigterm_handler(signum, frame):
         _log.info("[shutdown] SIGTERM received — marking sessions interrupted")
@@ -656,10 +660,13 @@ async def lifespan(app: FastAPI):
 
     # Mark all running agent sessions as interrupted in DB
     try:
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from sqlalchemy import update
+
         from shared.db.engine import get_session
         from shared.db.models.agent_session import AgentSession
-        from sqlalchemy import update
-        from datetime import datetime as _dt, timezone as _tz
 
         async for db in get_session():
             await db.execute(

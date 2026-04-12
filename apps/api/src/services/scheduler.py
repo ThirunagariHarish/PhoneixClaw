@@ -69,6 +69,7 @@ def _try_acquire_scheduler_lock() -> bool:
     global _lock_engine, _lock_connection
     try:
         from sqlalchemy import create_engine, text
+
         from shared.db.engine import get_database_url
 
         # Use a SYNC engine for the lock connection — we want long-lived,
@@ -185,9 +186,9 @@ async def _job_nightly_retention() -> None:
     Runs at 3:00 AM ET. Keeps the system from growing forever.
     """
     try:
-        from datetime import timedelta
-        from shared.db.engine import get_session
         from sqlalchemy import text
+
+        from shared.db.engine import get_session
 
         results = {}
         retention_rules = [
@@ -241,8 +242,8 @@ async def _job_agent_cron_fire(cron_id: str, agent_id: str, action_type: str,
                                 action_payload: dict) -> None:
     """P11: fires a single per-agent cron row — publishes to the trigger bus."""
     try:
-        from shared.triggers import get_bus, Trigger, TriggerType
-        import uuid as _uuid
+
+        from shared.triggers import Trigger, TriggerType, get_bus
 
         await get_bus().publish(Trigger(
             agent_id=agent_id,
@@ -254,6 +255,7 @@ async def _job_agent_cron_fire(cron_id: str, agent_id: str, action_type: str,
         # Bump run metadata in DB
         try:
             from sqlalchemy import text
+
             from shared.db.engine import get_session
             async for sess in get_session():
                 await sess.execute(
@@ -304,6 +306,7 @@ async def _load_agent_crons() -> None:
     """Load all enabled agent_crons rows and register them."""
     try:
         from sqlalchemy import text
+
         from shared.db.engine import get_session
         async for sess in get_session():
             res = await sess.execute(
@@ -348,9 +351,9 @@ async def _job_consolidation_run() -> None:
         return
 
     try:
-        from shared.db.engine import get_session
         from apps.api.src.repositories.consolidation_repo import ConsolidationRepository
         from apps.api.src.services.consolidation_service import ConsolidationService
+        from shared.db.engine import get_session
 
         async for session in get_session():
             repo = ConsolidationRepository(session)
@@ -412,12 +415,12 @@ async def _job_live_agent_keepalive() -> None:
     try:
         from datetime import timedelta
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
 
+        from apps.api.src.services.agent_gateway import _running_tasks, gateway
         from shared.db.engine import get_session
         from shared.db.models.agent import Agent
         from shared.db.models.agent_session import AgentSession
-        from apps.api.src.services.agent_gateway import gateway, _running_tasks
 
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=_KEEPALIVE_RESTART_DELAY_SECONDS)

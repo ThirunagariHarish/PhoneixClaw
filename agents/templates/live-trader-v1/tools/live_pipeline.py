@@ -46,8 +46,8 @@ def _json_safe(obj: object) -> object:
 
 async def process_signal(raw_signal: dict, config: dict) -> dict:
     """Process a single signal through the full pipeline in-process."""
-    from parse_signal import parse as parse_signal
     from decision_engine import _build_execution_params
+    from parse_signal import parse as parse_signal
 
     steps: list[dict] = []
     reasoning: list[str] = []

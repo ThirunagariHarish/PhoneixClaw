@@ -170,6 +170,7 @@ async def refresh_all_profiles(db_session) -> dict[str, int]:
     Returns summary: {"profiles_created": N, "profiles_updated": M}
     """
     from sqlalchemy import select
+
     from shared.db.models.agent_trade import AgentTrade
     from shared.db.models.analyst_profile import AnalystProfile
 

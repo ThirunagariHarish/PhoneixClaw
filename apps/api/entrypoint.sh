@@ -77,17 +77,23 @@ PYTHONPATH=/app python3 scripts/init_db.py || {
   echo "[entrypoint] WARNING: init_db.py failed — continuing anyway"
 }
 
-# Check current Alembic revision
+# Apply Alembic migrations.
+# Strategy:
+#   1. Try "upgrade head" — idempotent, safe for all revision ID formats (e.g. "041_invitations").
+#   2. If no alembic_version table exists yet, stamp head so Alembic knows all tables
+#      were created by init_db.py / create_all() above.
 echo "[entrypoint] Checking Alembic revision..."
-CURRENT_REV=$(PYTHONPATH=/app alembic -c shared/db/migrations/alembic.ini current 2>/dev/null | grep -oE '[0-9]+ \(head\)|[0-9]+$' | head -1 | grep -oE '^[0-9]+' || echo "")
+ALEMBIC_CURRENT=$(PYTHONPATH=/app alembic -c shared/db/migrations/alembic.ini current 2>&1 || true)
+echo "[entrypoint] Alembic current: ${ALEMBIC_CURRENT:-<none>}"
 
-if [ -z "$CURRENT_REV" ]; then
-  echo "[entrypoint] No Alembic revision found — stamping at head"
+if echo "$ALEMBIC_CURRENT" | grep -q "no such table\|Can't locate\|relation.*does not exist\|alembic_version"; then
+  # No alembic_version table — fresh DB, tables already created by init_db.py above.
+  echo "[entrypoint] No Alembic version table — stamping at head"
   PYTHONPATH=/app alembic -c shared/db/migrations/alembic.ini stamp head || {
     echo "[entrypoint] WARNING: stamp failed"
   }
 else
-  echo "[entrypoint] Current revision: $CURRENT_REV — running upgrade"
+  echo "[entrypoint] Running alembic upgrade head..."
   PYTHONPATH=/app alembic -c shared/db/migrations/alembic.ini upgrade head || {
     echo "[entrypoint] WARNING: alembic upgrade failed — continuing anyway"
   }

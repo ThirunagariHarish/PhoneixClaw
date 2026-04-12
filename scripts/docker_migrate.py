@@ -7,8 +7,7 @@ import asyncio
 import os
 import sys
 
-
-CURRENT_MIGRATION = "09b0dd176f5d"
+CURRENT_MIGRATION = "041_invitations"
 
 V3_CLEANUP_SQL = [
     "ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_instance_id_fkey",

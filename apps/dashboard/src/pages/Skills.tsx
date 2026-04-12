@@ -88,22 +88,30 @@ export default function SkillsPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            {skills.map((s: { id: string; name: string; category: string; description: string }) => (
-              <FlexCard key={s.id} className="cursor-pointer hover:border-primary/50">
-                <div onClick={() => setSelectedSkill(s)}>
-                <div className="flex items-start gap-2">
-                  <BookOpen className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-semibold truncate">{s.name}</span>
-                    <Badge variant="outline" className="ml-2">{s.category}</Badge>
-                    <p className="text-sm text-muted-foreground mt-1">{s.description}</p>
+          {Array.isArray(skills) && skills.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              {skills.map((s: { id: string; name: string; category: string; description: string }) => (
+                <FlexCard key={s.id} className="cursor-pointer hover:border-primary/50">
+                  <div onClick={() => setSelectedSkill(s)}>
+                  <div className="flex items-start gap-2">
+                    <BookOpen className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold truncate">{s.name}</span>
+                      <Badge variant="outline" className="ml-2">{s.category}</Badge>
+                      <p className="text-sm text-muted-foreground mt-1">{s.description}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-              </FlexCard>
-            ))}
-          </div>
+                </FlexCard>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 border border-dashed border-border rounded-xl">
+              <BookOpen className="h-12 w-12 text-muted-foreground/30 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">No skills found</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Click "Sync Skills" to discover available skills from your agents</p>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="config" className="mt-4 space-y-4">

@@ -7,10 +7,12 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '@/context/AuthContext'
 import { ThemeProvider } from '@/context/ThemeContext'
+import { NotificationProvider } from '@/context/NotificationContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import AppShell from '@/components/layout/AppShell'
 import { reportError } from '@/lib/errorLogger'
+import HomePage from '@/pages/Home'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import TradesPage from '@/pages/Trades'
@@ -42,6 +44,10 @@ import BriefingHistoryPage from '@/pages/BriefingHistory'
 import AutoResearchPage from '@/pages/AutoResearch'
 import PolymarketPage from '@/pages/polymarket'
 import BrainWikiPage from '@/pages/BrainWikiPage'
+import NotificationsPage from '@/pages/Notifications'
+import PnlCalendarPage from '@/pages/PnlCalendar'
+import WatchlistPage from '@/pages/Watchlist'
+import AgentHealthPage from '@/pages/AgentHealth'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -97,7 +103,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/trades" replace />} />
+        <Route index element={<HomePage />} />
         <Route path="trades" element={<TradesPage />} />
         <Route path="positions" element={<PositionsPage />} />
         <Route path="performance" element={<PerformancePage />} />
@@ -127,6 +133,10 @@ function AppRoutes() {
         <Route path="autoresearch" element={<AutoResearchPage />} />
         <Route path="polymarket" element={<PolymarketPage />} />
         <Route path="brain/wiki" element={<BrainWikiPage />} />
+        <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="pnl-calendar" element={<PnlCalendarPage />} />
+        <Route path="watchlist" element={<WatchlistPage />} />
+        <Route path="agent-health" element={<AgentHealthPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -138,15 +148,17 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider delayDuration={300}>
-            <ErrorBoundary>
-              <GlobalErrorHandlers />
-              <BrowserRouter>
-                <AppRoutes />
-              </BrowserRouter>
-              <Toaster position="top-right" richColors />
-            </ErrorBoundary>
-          </TooltipProvider>
+          <NotificationProvider>
+            <TooltipProvider delayDuration={300}>
+              <ErrorBoundary>
+                <GlobalErrorHandlers />
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
+                <Toaster position="top-right" richColors />
+              </ErrorBoundary>
+            </TooltipProvider>
+          </NotificationProvider>
         </QueryClientProvider>
       </AuthProvider>
     </ThemeProvider>

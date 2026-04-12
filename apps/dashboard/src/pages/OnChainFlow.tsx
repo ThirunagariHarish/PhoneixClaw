@@ -199,8 +199,15 @@ export default function OnChainFlowPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['onchain-flow-metrics'] }),
   })
 
-  const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const formatPremium = (n: number) => (n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`)
+  const formatTime = (iso: string) => {
+    if (!iso) return 'N/A'
+    const d = new Date(iso)
+    return isNaN(d.getTime()) ? 'N/A' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  const formatPremium = (n: number) => {
+    if (n == null || isNaN(n)) return '$0'
+    return n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`
+  }
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -236,24 +243,24 @@ export default function OnChainFlowPage() {
 
             <TabsContent value="mag7" className="mt-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                {mag7.map((card) => (
+                {(Array.isArray(mag7) ? mag7 : []).map((card) => (
                   <FlexCard key={card.ticker} title={card.ticker}>
                     <div className="space-y-2 text-sm">
                       <div>
                         <p className="text-muted-foreground text-xs mb-1">Latest whale trades</p>
                         <ul className="space-y-0.5">
-                          {card.whale_trades.slice(0, 2).map((t, i) => (
+                          {(card.whale_trades || []).slice(0, 2).map((t, i) => (
                             <li key={i} className="font-mono text-xs truncate">{t}</li>
                           ))}
                         </ul>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">C/P ratio</span>
-                        <span>{card.call_put_ratio.toFixed(2)}</span>
+                        <span>{(card.call_put_ratio ?? 0).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Dark pool %</span>
-                        <span>{card.dark_pool_pct}%</span>
+                        <span>{card.dark_pool_pct ?? 0}%</span>
                       </div>
                       <Badge className={flowColor(card.institutional_flow)}><FlowIcon dir={card.institutional_flow} />{card.institutional_flow}</Badge>
                     </div>
@@ -264,24 +271,24 @@ export default function OnChainFlowPage() {
 
             <TabsContent value="meme" className="mt-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                {meme.map((card) => (
+                {(Array.isArray(meme) ? meme : []).map((card) => (
                   <FlexCard key={card.ticker} title={card.ticker}>
                     <div className="space-y-2 text-sm">
                       <div>
                         <p className="text-muted-foreground text-xs mb-1">Latest whale trades</p>
                         <ul className="space-y-0.5">
-                          {card.whale_trades.slice(0, 2).map((t, i) => (
+                          {(card.whale_trades || []).slice(0, 2).map((t, i) => (
                             <li key={i} className="font-mono text-xs truncate">{t}</li>
                           ))}
                         </ul>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Social sentiment</span>
-                        <span>{card.social_sentiment}%</span>
+                        <span>{card.social_sentiment ?? 0}%</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">C/P ratio</span>
-                        <span>{card.call_put_ratio.toFixed(2)}</span>
+                        <span>{(card.call_put_ratio ?? 0).toFixed(2)}</span>
                       </div>
                       <Badge className={flowColor(card.institutional_flow)}><FlowIcon dir={card.institutional_flow} />{card.institutional_flow}</Badge>
                     </div>
@@ -292,12 +299,12 @@ export default function OnChainFlowPage() {
 
             <TabsContent value="sectors" className="mt-4">
               <div className="space-y-4">
-                {sectors.map((s) => (
+                {(Array.isArray(sectors) ? sectors : []).map((s) => (
                   <FlexCard key={s.sector} title={s.sector}>
                     <div className="flex flex-wrap items-center gap-4">
                       <Badge className={flowColor(s.net_direction)}><FlowIcon dir={s.net_direction} />{s.net_direction}</Badge>
                       <div className="flex gap-4">
-                        {s.top_movers.map((m) => (
+                        {(s.top_movers || []).map((m) => (
                           <span key={m.ticker} className="font-mono text-sm">
                             {m.ticker} <span className={m.flow_pct >= 0 ? 'text-emerald-600' : 'text-red-600'}>{m.flow_pct >= 0 ? '+' : ''}{m.flow_pct}%</span>
                           </span>
@@ -311,7 +318,7 @@ export default function OnChainFlowPage() {
 
             <TabsContent value="indices" className="mt-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                {indices.map((idx) => (
+                {(Array.isArray(indices) ? indices : []).map((idx) => (
                   <FlexCard key={idx.symbol} title={idx.symbol}>
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <span className="text-muted-foreground">GEX level</span>
@@ -319,9 +326,9 @@ export default function OnChainFlowPage() {
                       <span className="text-muted-foreground">0DTE volume</span>
                       <span>{idx.odte_volume}</span>
                       <span className="text-muted-foreground">Put/call skew</span>
-                      <span>{idx.put_call_skew.toFixed(2)}</span>
+                      <span>{(idx.put_call_skew ?? 0).toFixed(2)}</span>
                       <span className="text-muted-foreground">Dark pool %</span>
-                      <span>{idx.dark_pool_pct}%</span>
+                      <span>{idx.dark_pool_pct ?? 0}%</span>
                     </div>
                   </FlexCard>
                 ))}
@@ -344,7 +351,7 @@ export default function OnChainFlowPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {whaleAlerts.map((a, i) => (
+                      {(Array.isArray(whaleAlerts) ? whaleAlerts : []).map((a, i) => (
                         <TableRow key={i}>
                           <TableCell className="text-muted-foreground">{formatTime(a.timestamp)}</TableCell>
                           <TableCell className="font-mono font-semibold">{a.ticker}</TableCell>

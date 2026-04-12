@@ -157,8 +157,9 @@ async def _persist_message(connector_id: str, msg) -> bool:
 async def _send_to_dead_letter(connector_id: str, msg, error: str, attempts: int) -> None:
     """Write a failed message to the dead_letter_messages table."""
     try:
-        from shared.db.engine import get_session
         from sqlalchemy import text
+
+        from shared.db.engine import get_session
 
         payload = {
             "connector_id": connector_id,

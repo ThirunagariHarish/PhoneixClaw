@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 
 from apps.api.src.deps import DbSession
 from shared.db.models.agent import Agent, AgentBacktest
@@ -170,9 +170,9 @@ async def agent_stats(session: DbSession):
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=AgentResponse)
 async def create_agent(request: Request, payload: AgentCreate, session: DbSession):
     """Create a new agent and kick off backtesting locally."""
-    import secrets
-    import re
     import os
+    import re
+    import secrets
 
     agent_type = "trend" if payload.type == "sentiment" else payload.type
 
@@ -786,6 +786,7 @@ async def get_runtime_info(agent_id: str, session: DbSession):
     """
     import os as _os
     import socket as _socket
+
     from shared.db.models.agent_session import AgentSession
 
     sess_result = await session.execute(
@@ -843,8 +844,8 @@ async def instruct_agent(agent_id: str, payload: dict, session: DbSession):
 async def activity_feed(agent_id: str, session: DbSession, limit: int = 100):
     """Unified activity feed: logs + trades + messages sorted by time."""
     from shared.db.models.agent import AgentLog
-    from shared.db.models.agent_trade import AgentTrade
     from shared.db.models.agent_message import AgentMessage
+    from shared.db.models.agent_trade import AgentTrade
     from shared.db.models.system_log import SystemLog
 
     aid = uuid.UUID(agent_id)
@@ -1377,8 +1378,9 @@ async def get_live_trades(agent_id: str, session: DbSession, status_filter: str 
 @router.post("/{agent_id}/live-trades", status_code=status.HTTP_201_CREATED)
 async def report_live_trade(agent_id: str, payload: LiveTradeCreate, session: DbSession):
     """Agent reports a new trade (callback from trading worker or Claude Code)."""
-    from shared.db.models.agent_trade import AgentTrade
     from datetime import date as date_type
+
+    from shared.db.models.agent_trade import AgentTrade
 
     trade_status = payload.status or "open"
     trade = AgentTrade(
@@ -1697,9 +1699,10 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
 
         if m.get("auto_create_analyst"):
             try:
-                from apps.api.src.services.agent_gateway import gateway, DATA_DIR
                 # Look up the latest backtest version dir from latest.json
                 from pathlib import Path
+
+                from apps.api.src.services.agent_gateway import DATA_DIR, gateway
                 latest_pointer = DATA_DIR / f"backtest_{agent_id}" / "latest.json"
                 bt_dir = None
                 if latest_pointer.exists():
@@ -1799,7 +1802,6 @@ async def get_worker_status(agent_id: str, session: DbSession):
 @router.get("/{agent_id}/backtest-artifacts")
 async def get_backtest_artifacts(agent_id: str, session: DbSession):
     """Return comprehensive backtesting artifacts: all model results, features, preprocessing summary, and available files."""
-    import os
     from pathlib import Path
 
     bt_result = await session.execute(
@@ -1970,8 +1972,9 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
         )
         if enriched_for_patterns:
             try:
-                import pandas as _pd
                 import sys
+
+                import pandas as _pd
                 sys.path.insert(0, str(repo_root / "agents" / "backtesting" / "tools"))
                 from discover_patterns import discover_patterns as _discover
                 _edf = _pd.read_parquet(enriched_for_patterns)
@@ -2116,6 +2119,7 @@ def _human_size(nbytes: int) -> str:
 async def download_backtest_file(agent_id: str, file_path: str):
     """Download a raw file from the backtesting work directory."""
     from pathlib import Path
+
     from fastapi.responses import FileResponse
 
     repo_root = Path(__file__).resolve().parents[4]
@@ -2139,9 +2143,10 @@ async def download_backtest_file(agent_id: str, file_path: str):
 @router.get("/{agent_id}/backtest-csv/{file_path:path}")
 async def download_backtest_csv(agent_id: str, file_path: str):
     """Convert a .parquet file to CSV on-the-fly and serve it for download."""
-    from pathlib import Path
-    from fastapi.responses import StreamingResponse
     import io
+    from pathlib import Path
+
+    from fastapi.responses import StreamingResponse
 
     repo_root = Path(__file__).resolve().parents[4]
     work_dir = repo_root / "data" / f"backtest_{agent_id}"

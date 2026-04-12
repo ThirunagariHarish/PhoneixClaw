@@ -70,19 +70,19 @@ export default function Backtests() {
 
   const { data: backtests = [] } = useQuery({
     queryKey: ['backtests'],
-    queryFn: () => api.get<Backtest[]>('/api/v2/backtests').then(r => r.data),
+    queryFn: () => api.get<Backtest[]>('/api/v2/backtests').then(r => Array.isArray(r.data) ? r.data : []),
     refetchInterval: 30000, // Fallback polling (WS handles real-time)
   })
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents-list'],
-    queryFn: () => api.get<{ id: string; name: string }[]>('/api/v2/agents').then(r => r.data),
+    queryFn: () => api.get<{ id: string; name: string }[]>('/api/v2/agents').then(r => Array.isArray(r.data) ? r.data : []),
   })
 
   const { data: logs = [] } = useQuery({
     queryKey: ['backtest-logs', selectedId],
     queryFn: () => selectedId
-      ? api.get<LogEntry[]>(`/api/v2/system-logs?backtest_id=${selectedId}&limit=200`).then(r => r.data)
+      ? api.get<LogEntry[]>(`/api/v2/system-logs?backtest_id=${selectedId}&limit=200`).then(r => Array.isArray(r.data) ? r.data : [])
       : Promise.resolve([]),
     enabled: !!selectedId,
     refetchInterval: selectedId ? 15000 : false, // Fallback; WS handles real-time
@@ -156,11 +156,11 @@ export default function Backtests() {
                 </div>
                 <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
                   <span>{bt.total_trades} trades</span>
-                  {bt.win_rate !== null && <span>{(bt.win_rate * 100).toFixed(1)}% win</span>}
-                  {bt.sharpe_ratio !== null && <span>SR {bt.sharpe_ratio.toFixed(2)}</span>}
+                  {bt.win_rate != null && <span>{((bt.win_rate ?? 0) * 100).toFixed(1)}% win</span>}
+                  {bt.sharpe_ratio != null && <span>SR {(bt.sharpe_ratio ?? 0).toFixed(2)}</span>}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {new Date(bt.created_at).toLocaleString()}
+                  {bt.created_at ? (() => { const d = new Date(bt.created_at); return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString() })() : 'N/A'}
                 </div>
               </button>
             )
@@ -239,7 +239,7 @@ export default function Backtests() {
                     const ls = log.level === 'ERROR' ? 'text-red-400' :
                                log.level === 'WARN' ? 'text-yellow-400' :
                                log.level === 'INFO' ? 'text-blue-400' : 'text-zinc-500'
-                    const time = log.created_at ? new Date(log.created_at).toLocaleTimeString('en-US', { hour12: false }) : ''
+                    const time = log.created_at ? (() => { const d = new Date(log.created_at); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour12: false }) })() : ''
                     return (
                       <div key={log.id} className="px-4 py-1.5 hover:bg-muted/30 flex items-start gap-2">
                         <span className="text-muted-foreground shrink-0 w-[65px]">{time}</span>

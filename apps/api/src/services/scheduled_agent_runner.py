@@ -117,7 +117,6 @@ class ScheduledAgentRunner:
         start_time = datetime.now(timezone.utc)
         steps = self._pipeline.get("steps", [])
         status = "completed"
-        error_msg = ""
 
         await self._update_session_status("running")
 
@@ -296,9 +295,10 @@ Generate a concise, well-structured report."""
     async def _update_session_status(self, status: str) -> None:
         """Update the AgentSession status in the DB."""
         try:
+            from sqlalchemy import update
+
             from shared.db.engine import get_session
             from shared.db.models.agent_session import AgentSession
-            from sqlalchemy import update
 
             async for db in get_session():
                 values: dict[str, Any] = {
@@ -319,16 +319,10 @@ Generate a concise, well-structured report."""
     async def _report_progress(self, step: int, total: int, description: str) -> None:
         """Report progress for dashboard display."""
         try:
-            from shared.db.engine import get_session
-            from shared.db.models.agent_session import AgentSession
             from sqlalchemy import update
 
-            progress = {
-                "current_step": step,
-                "total_steps": total,
-                "description": description,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+            from shared.db.engine import get_session
+            from shared.db.models.agent_session import AgentSession
 
             async for db in get_session():
                 await db.execute(

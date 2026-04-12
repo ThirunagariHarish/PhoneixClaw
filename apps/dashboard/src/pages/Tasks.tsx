@@ -154,7 +154,7 @@ function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: strin
         <div className="flex items-center gap-1.5 mb-2">
           <div className="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5">
             <User className="h-3 w-3 text-muted-foreground" />
-            <span className="text-[11px] font-medium capitalize">{task.agent_role.replace(/-/g, ' ')}</span>
+            <span className="text-[11px] font-medium capitalize">{(task.agent_role ?? '').replace(/-/g, ' ')}</span>
           </div>
         </div>
 
@@ -172,7 +172,7 @@ function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: strin
         {/* Footer */}
         <div className="flex items-center justify-between pt-1.5 border-t border-border/50">
           <span className="text-[10px] text-muted-foreground">
-            {new Date(task.created_at).toLocaleDateString()}
+            {task.created_at ? (() => { const d = new Date(task.created_at); return isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString() })() : 'N/A'}
           </span>
           <div className="flex items-center gap-1">
             <button
@@ -209,7 +209,7 @@ function TaskOverlayCard({ task }: { task: Task }) {
         <div className="flex items-center gap-1.5">
           <div className="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5">
             <User className="h-3 w-3 text-muted-foreground" />
-            <span className="text-[11px] font-medium capitalize">{task.agent_role.replace(/-/g, ' ')}</span>
+            <span className="text-[11px] font-medium capitalize">{(task.agent_role ?? '').replace(/-/g, ' ')}</span>
           </div>
         </div>
       </div>
@@ -304,7 +304,7 @@ export default function TasksPage() {
     queryKey: ['tasks'],
     queryFn: async () => {
       const res = await api.get('/api/v2/tasks')
-      return res.data
+      return Array.isArray(res.data) ? res.data : []
     },
   })
 

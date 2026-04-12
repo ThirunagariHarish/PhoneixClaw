@@ -219,9 +219,11 @@ export default function ZeroDteSPXPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['zero-dte'] }),
   })
 
-  const formatGex = (v: number) =>
-    v >= 1e9 ? `${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(0)}M` : `${(v / 1e3).toFixed(0)}K`
-  const formatMoc = (v: number) => `${(v / 1e6).toFixed(0)}M`
+  const formatGex = (v: number) => {
+    const n = v ?? 0
+    return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(0)}M` : `${(n / 1e3).toFixed(0)}K`
+  }
+  const formatMoc = (v: number) => `${((v ?? 0) / 1e6).toFixed(0)}M`
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -257,7 +259,7 @@ export default function ZeroDteSPXPage() {
           tooltip={getMetricTooltip('Dealer Gamma Zone')}
         />
         <MetricCard title="0DTE Volume" value={spxMetrics.zeroDteVolume ? formatGex(spxMetrics.zeroDteVolume) : '—'} tooltip={getMetricTooltip('ODTE Volume')} />
-        <MetricCard title="Put/Call Ratio" value={spxMetrics.putCallRatio ? spxMetrics.putCallRatio.toFixed(2) : '—'} tooltip={getMetricTooltip('Put/Call Ratio')} />
+        <MetricCard title="Put/Call Ratio" value={spxMetrics.putCallRatio ? (spxMetrics.putCallRatio ?? 0).toFixed(2) : '—'} tooltip={getMetricTooltip('Put/Call Ratio')} />
         <MetricCard
           title="MOC Imbalance"
           value={spxMetrics.mocImbalance ? `$${formatMoc(Math.abs(spxMetrics.mocImbalance))}` : '—'}
@@ -314,7 +316,7 @@ export default function ZeroDteSPXPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {gammaLevels.map((row: { strike: number; gex: number; type: string; distance: number }) => (
+                      {(Array.isArray(gammaLevels) ? gammaLevels : []).map((row: { strike: number; gex: number; type: string; distance: number }) => (
                         <TableRow
                           key={row.strike}
                           className={
@@ -396,7 +398,7 @@ export default function ZeroDteSPXPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <MetricCard
                     title="Vanna Level"
-                    value={vannaCharm.vannaLevel.toFixed(2)}
+                    value={(vannaCharm.vannaLevel ?? 0).toFixed(2)}
                     trend={vannaCharm.vannaDirection === 'up' ? 'up' : 'down'}
                   />
                   <MetricCard
@@ -418,11 +420,11 @@ export default function ZeroDteSPXPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {vannaCharm.strikes.map((s: { strike: number; vanna: number; charm: number }) => (
+                      {(Array.isArray(vannaCharm.strikes) ? vannaCharm.strikes : []).map((s: { strike: number; vanna: number; charm: number }) => (
                         <TableRow key={s.strike}>
                           <TableCell className="font-mono">{s.strike}</TableCell>
-                          <TableCell>{s.vanna.toFixed(2)}</TableCell>
-                          <TableCell>{s.charm.toFixed(2)}</TableCell>
+                          <TableCell>{(s.vanna ?? 0).toFixed(2)}</TableCell>
+                          <TableCell>{(s.charm ?? 0).toFixed(2)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -459,7 +461,7 @@ export default function ZeroDteSPXPage() {
                 <div>
                   <h4 className="font-medium mb-2">Volume by Strike (heatmap)</h4>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                    {volume.volumeByStrike?.map((v: { strike: number; calls: number; puts: number }) => {
+                    {(Array.isArray(volume.volumeByStrike) ? volume.volumeByStrike : []).map((v: { strike: number; calls: number; puts: number }) => {
                       const total = v.calls + v.puts
                       const intensity = Math.min(100, (total / 150) * 100)
                       return (
@@ -478,10 +480,10 @@ export default function ZeroDteSPXPage() {
                 <div>
                   <h4 className="font-medium mb-2">Largest Trades</h4>
                   <div className="space-y-2">
-                    {volume.largestTrades?.map((t: { strike: number; type: string; size: number; premium: number }, i: number) => (
+                    {(Array.isArray(volume.largestTrades) ? volume.largestTrades : []).map((t: { strike: number; type: string; size: number; premium: number }, i: number) => (
                       <div key={i} className="flex justify-between text-sm p-2 rounded border">
                         <span className="font-mono">{t.strike}{t.type}</span>
-                        <span>{t.size} @ ${(t.premium / t.size / 100).toFixed(2)}</span>
+                        <span>{t.size} @ ${(t.size ? (t.premium / t.size / 100) : 0).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -525,7 +527,7 @@ export default function ZeroDteSPXPage() {
                   <div className="pt-2">
                     <p className="text-xs text-muted-foreground mb-1">Signals:</p>
                     <div className="flex flex-wrap gap-1">
-                      {tradePlan.signals?.map((s: string, i: number) => (
+                      {(Array.isArray(tradePlan.signals) ? tradePlan.signals : []).map((s: string, i: number) => (
                         <Badge key={i} variant="outline" className="text-xs">{s}</Badge>
                       ))}
                     </div>

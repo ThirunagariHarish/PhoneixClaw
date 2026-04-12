@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   DndContext,
@@ -22,10 +22,11 @@ import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, TrendingUp, BarChart3, Bot, Target, Plug, BookOpen,
+  Home, LayoutDashboard, TrendingUp, BarChart3, Bot, Target, Plug, BookOpen,
   LineChart, Settings, Shield, ListTodo, Moon, Sun, LogOut, Zap,
   Activity, Fish, MessageCircle, ShieldCheck, Bell, PanelLeftClose, PanelLeft,
-  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network, Mail, Brain,
+  Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network, Mail, Brain, CalendarDays,
+  Eye, HeartPulse,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -43,6 +44,12 @@ type NavSection = { label: string; items: NavItem[] }
 
 const DEFAULT_NAV_SECTIONS: NavSection[] = [
   {
+    label: 'Overview',
+    items: [
+      { to: '/', icon: Home, label: 'Home' },
+    ],
+  },
+  {
     label: 'Agents',
     items: [
       { to: '/agents', icon: Bot, label: 'Agents' },
@@ -55,6 +62,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/briefings', icon: Mail, label: 'Briefing History' },
       { to: '/autoresearch', icon: FlaskConical, label: 'AutoResearch' },
       { to: '/brain/wiki', icon: Brain, label: 'Phoenix Brain' },
+      { to: '/agent-health', icon: HeartPulse, label: 'Agent Health' },
     ],
   },
   {
@@ -65,11 +73,13 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
       { to: '/zero-dte', icon: Activity, label: '0DTE SPX' },
       { to: '/positions', icon: TrendingUp, label: 'Positions' },
       { to: '/polymarket', icon: Activity, label: 'Prediction Markets' },
+      { to: '/watchlist', icon: Eye, label: 'Watchlist' },
     ],
   },
   {
     label: 'Analytics',
     items: [
+      { to: '/pnl-calendar', icon: CalendarDays, label: 'P&L Calendar' },
       { to: '/onchain-flow', icon: Fish, label: 'On-Chain' },
       { to: '/macro-pulse', icon: Activity, label: 'Macro-Pulse' },
       { to: '/narrative', icon: MessageCircle, label: 'Narrative' },
@@ -80,6 +90,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
   {
     label: 'System',
     items: [
+      { to: '/notifications', icon: Bell, label: 'Notifications' },
       { to: '/connectors', icon: Plug, label: 'Connectors' },
       { to: '/tasks', icon: ListTodo, label: 'Tasks' },
       { to: '/logs', icon: Terminal, label: 'Logs' },
@@ -208,6 +219,7 @@ export default function AppShell() {
   const { theme, setTheme } = useTheme()
   const qc = useQueryClient()
   const location = useLocation()
+  const navigate = useNavigate()
 
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
@@ -314,32 +326,85 @@ export default function AppShell() {
           <img src="/phoenix-logo.png" alt="" className="h-7 w-7 shrink-0" />
           {!collapsed && <span className="font-semibold truncate">Phoenix Claw</span>}
           {!collapsed && (
-            <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications(); markReadMutation.mutate() } }}>
+            <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications() } }}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="icon" className="ml-auto relative h-8 w-8">
                   <Bell className="h-4 w-4" />
                   {unreadCount?.count > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-primary text-[10px] font-medium text-primary-foreground flex items-center justify-center px-1">
+                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-primary text-[10px] font-medium text-primary-foreground flex items-center justify-center px-1 animate-pulse">
                       {unreadCount.count > 9 ? '9+' : unreadCount.count}
                     </span>
                   )}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-80 max-h-80 overflow-y-auto">
-                <p className="font-medium text-sm mb-2">Notifications</p>
-                {Array.isArray(notifications) && notifications.length === 0 && (
-                  <p className="text-xs text-muted-foreground py-4 text-center">No notifications</p>
-                )}
-                {Array.isArray(notifications) && notifications.length > 0 && (
-                  <ul className="space-y-2 text-sm">
-                    {notifications.slice(0, 10).map((n: { id?: number; title?: string; body?: string }) => (
-                      <li key={n.id ?? n.title} className="border-b pb-2 last:border-0">
-                        <p className="font-medium">{n.title ?? 'Notification'}</p>
-                        {n.body && <p className="text-xs text-muted-foreground">{n.body}</p>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <PopoverContent align="end" className="w-80 max-h-[420px] overflow-hidden flex flex-col p-0">
+                <div className="flex items-center justify-between px-4 py-3 border-b">
+                  <p className="font-semibold text-sm">Notifications</p>
+                  {unreadCount?.count > 0 && (
+                    <button
+                      className="text-[11px] text-primary hover:underline font-medium"
+                      onClick={() => markReadMutation.mutate()}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  {Array.isArray(notifications) && notifications.length === 0 && (
+                    <div className="flex flex-col items-center py-8">
+                      <Bell className="h-8 w-8 text-muted-foreground/20 mb-2" />
+                      <p className="text-xs text-muted-foreground">No notifications yet</p>
+                    </div>
+                  )}
+                  {Array.isArray(notifications) && notifications.length > 0 && (
+                    <ul className="divide-y">
+                      {notifications.slice(0, 10).map((n: { id?: string; title?: string; body?: string; read?: boolean; created_at?: string }) => (
+                        <li
+                          key={n.id ?? n.title}
+                          className={cn(
+                            'px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer',
+                            !n.read && 'bg-primary/5 border-l-2 border-l-primary',
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className={cn('text-sm leading-tight', !n.read ? 'font-semibold' : 'font-medium text-muted-foreground')}>
+                                {n.title ?? 'Notification'}
+                              </p>
+                              {n.body && (
+                                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {n.created_at && (
+                                <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                  {(() => {
+                                    const diff = Date.now() - new Date(n.created_at).getTime()
+                                    const mins = Math.floor(diff / 60000)
+                                    if (mins < 1) return 'now'
+                                    if (mins < 60) return `${mins}m`
+                                    const hrs = Math.floor(mins / 60)
+                                    if (hrs < 24) return `${hrs}h`
+                                    return `${Math.floor(hrs / 24)}d`
+                                  })()}
+                                </span>
+                              )}
+                              {!n.read && <span className="h-2 w-2 rounded-full bg-primary" />}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="border-t px-4 py-2">
+                  <button
+                    className="w-full text-center text-xs font-medium text-primary hover:underline py-1"
+                    onClick={() => navigate('/notifications')}
+                  >
+                    View All Notifications
+                  </button>
+                </div>
               </PopoverContent>
             </Popover>
           )}
@@ -400,22 +465,85 @@ export default function AppShell() {
         </Sheet>
         <img src="/phoenix-logo.png" alt="" className="h-7 w-7" />
         <span className="font-semibold flex-1 truncate">Phoenix Claw</span>
-        <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications(); markReadMutation.mutate() } }}>
+        <Popover onOpenChange={(open: boolean) => { if (open) { refetchNotifications() } }}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="relative h-9 w-9">
               <Bell className="h-4 w-4" />
               {unreadCount?.count > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-primary text-[10px] font-medium text-primary-foreground flex items-center justify-center px-1">
+                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-primary text-[10px] font-medium text-primary-foreground flex items-center justify-center px-1 animate-pulse">
                   {unreadCount.count > 9 ? '9+' : unreadCount.count}
                 </span>
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 max-h-80 overflow-y-auto">
-            <p className="font-medium text-sm mb-2">Notifications</p>
-            {Array.isArray(notifications) && notifications.length === 0 && (
-              <p className="text-xs text-muted-foreground py-4 text-center">No notifications</p>
-            )}
+          <PopoverContent align="end" className="w-80 max-h-[420px] overflow-hidden flex flex-col p-0">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <p className="font-semibold text-sm">Notifications</p>
+              {unreadCount?.count > 0 && (
+                <button
+                  className="text-[11px] text-primary hover:underline font-medium"
+                  onClick={() => markReadMutation.mutate()}
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {Array.isArray(notifications) && notifications.length === 0 && (
+                <div className="flex flex-col items-center py-8">
+                  <Bell className="h-8 w-8 text-muted-foreground/20 mb-2" />
+                  <p className="text-xs text-muted-foreground">No notifications yet</p>
+                </div>
+              )}
+              {Array.isArray(notifications) && notifications.length > 0 && (
+                <ul className="divide-y">
+                  {notifications.slice(0, 10).map((n: { id?: string; title?: string; body?: string; read?: boolean; created_at?: string }) => (
+                    <li
+                      key={n.id ?? n.title}
+                      className={cn(
+                        'px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer',
+                        !n.read && 'bg-primary/5 border-l-2 border-l-primary',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className={cn('text-sm leading-tight', !n.read ? 'font-semibold' : 'font-medium text-muted-foreground')}>
+                            {n.title ?? 'Notification'}
+                          </p>
+                          {n.body && (
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {n.created_at && (
+                            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                              {(() => {
+                                const diff = Date.now() - new Date(n.created_at).getTime()
+                                const mins = Math.floor(diff / 60000)
+                                if (mins < 1) return 'now'
+                                if (mins < 60) return `${mins}m`
+                                const hrs = Math.floor(mins / 60)
+                                if (hrs < 24) return `${hrs}h`
+                                return `${Math.floor(hrs / 24)}d`
+                              })()}
+                            </span>
+                          )}
+                          {!n.read && <span className="h-2 w-2 rounded-full bg-primary" />}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border-t px-4 py-2">
+              <button
+                className="w-full text-center text-xs font-medium text-primary hover:underline py-1"
+                onClick={() => navigate('/notifications')}
+              >
+                View All Notifications
+              </button>
+            </div>
           </PopoverContent>
         </Popover>
       </header>

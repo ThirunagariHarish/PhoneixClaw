@@ -997,7 +997,6 @@ class AgentGateway:
         # Smart Context Builder (feature-flagged)
         if os.environ.get("ENABLE_SMART_CONTEXT", "false").lower() == "true":
             try:
-                from shared.context.builder import ContextBuilderService
                 async for db in _get_session():
                     builder = ContextBuilderService(db)
                     ctx = await builder.build(
@@ -1811,7 +1810,7 @@ class AgentGateway:
                     session_id=session_row_id,
                     work_dir=work_dir,
                 )
-                result = await runner.run()
+                await runner.run()
 
                 # Run auto-research after supervisor pipeline
                 try:
