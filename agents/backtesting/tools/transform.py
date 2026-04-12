@@ -13,75 +13,74 @@ from typing import Optional
 
 import pandas as pd
 
+# ── Signal Parsing (delegated to shared intelligent parser) ─────────────────
+# The shared parser handles all format variations, date normalization,
+# price disambiguation, and expiry parsing robustly.
 
-# ── Signal Parsing ──────────────────────────────────────────────────────────
+try:
+    from shared.utils.signal_parser import parse_signal_transform_compat as _shared_parse
+    _HAS_SHARED_PARSER = True
+except ImportError:
+    _HAS_SHARED_PARSER = False
 
-TICKER_RE = re.compile(r"\$([A-Z]{1,5})\b|(?<!\w)([A-Z]{2,5})(?:\s+\d+[cp]|\s+(?:calls?|puts?))", re.IGNORECASE)
-ENTRY_PRICE_RE = re.compile(r"(?:filled|in\s+at|entry|avg|entered\s+at|got\s+in|@)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
-PRICE_RE = re.compile(r"(?:@|at|entry|price|for)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
-OPTION_RE = re.compile(r"(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*(\d+(?:\.\d+)?)\s*([cpCP])", re.IGNORECASE)
-BUY_WORDS = re.compile(r"\b(buy|bought|long|entered|taking|grabbed|added|opening)\b", re.IGNORECASE)
-SELL_WORDS = re.compile(r"\b(sell|sold|closing|closed|exited|trimmed?|trim|profit|out)\b", re.IGNORECASE)
-EXIT_PCT_RE = re.compile(r"(?:sold|trim(?:med)?|closed?|out)\s+(\d+)\s*%", re.IGNORECASE)
-PCT_RE = re.compile(r"(\d+)\s*%", re.IGNORECASE)
-TARGET_RE = re.compile(r"(?:target|tp|take.?profit|pt)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
-STOP_RE = re.compile(r"(?:stop|sl|stop.?loss)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
+# Legacy regex patterns kept as fallback if shared parser is unavailable
+# (e.g., running in an isolated backtesting container without shared/ on PYTHONPATH)
+_TICKER_RE = re.compile(r"\$([A-Z]{1,5})\b|(?<!\w)([A-Z]{2,5})(?:\s+\d+[cp]|\s+(?:calls?|puts?))", re.IGNORECASE)
+_ENTRY_PRICE_RE = re.compile(
+    r"(?:filled|in\s+at|entry|avg|entered\s+at|got\s+in|@)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE,
+)
+_PRICE_RE = re.compile(r"(?:@|at|entry|price|for)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
+_OPTION_RE = re.compile(r"(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*(\d+(?:\.\d+)?)\s*([cpCP])", re.IGNORECASE)
+_BUY_WORDS = re.compile(r"\b(buy|bought|long|entered|taking|grabbed|added|opening)\b", re.IGNORECASE)
+_SELL_WORDS = re.compile(r"\b(sell|sold|closing|closed|exited|trimmed?|trim|profit|out)\b", re.IGNORECASE)
+_EXIT_PCT_RE = re.compile(r"(?:sold|trim(?:med)?|closed?|out)\s+(\d+)\s*%", re.IGNORECASE)
+_PCT_RE = re.compile(r"(\d+)\s*%", re.IGNORECASE)
+_TARGET_RE = re.compile(r"(?:target|tp|take.?profit|pt)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
+_STOP_RE = re.compile(r"(?:stop|sl|stop.?loss)\s*\$?([\d]+(?:\.\d+)?)", re.IGNORECASE)
 
-KNOWN_TICKERS = {"SPX", "SPY", "QQQ", "AAPL", "TSLA", "AMZN", "GOOGL", "MSFT", "NVDA", "META",
-                  "AMD", "NFLX", "BA", "DIS", "JPM", "GS", "V", "MA", "WMT", "HD",
-                  "COST", "NKE", "PYPL", "SQ", "SHOP", "COIN", "PLTR", "SOFI", "HOOD",
-                  "IWM", "DIA", "XLF", "XLE", "XLK", "GLD", "SLV", "TLT", "VIX",
-                  "SPXW", "NDX", "NDXP", "RUT"}
+_KNOWN_TICKERS = {"SPX", "SPY", "QQQ", "AAPL", "TSLA", "AMZN", "GOOGL", "MSFT", "NVDA", "META",
+                   "AMD", "NFLX", "BA", "DIS", "JPM", "GS", "V", "MA", "WMT", "HD",
+                   "COST", "NKE", "PYPL", "SQ", "SHOP", "COIN", "PLTR", "SOFI", "HOOD",
+                   "IWM", "DIA", "XLF", "XLE", "XLK", "GLD", "SLV", "TLT", "VIX",
+                   "SPXW", "NDX", "NDXP", "RUT"}
 
 
-def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
-    """Parse a Discord message into a trade signal."""
-    content_upper = content.upper()
-
-    # Extract tickers
+def _parse_signal_legacy(content: str, posted_at: datetime) -> Optional[dict]:
+    """Legacy regex parser — only used when shared parser is not available."""
     tickers = set()
-    for m in TICKER_RE.finditer(content):
+    for m in _TICKER_RE.finditer(content):
         t = (m.group(1) or m.group(2) or "").upper()
         if t and len(t) >= 2:
             tickers.add(t)
-
     if not tickers:
         return None
+    ticker = sorted(tickers, key=lambda t: (t not in _KNOWN_TICKERS, t))[0]
 
-    ticker = sorted(tickers, key=lambda t: (t not in KNOWN_TICKERS, t))[0]
-
-    # Signal type
-    has_buy = bool(BUY_WORDS.search(content))
-    has_sell = bool(SELL_WORDS.search(content))
-
+    has_buy = bool(_BUY_WORDS.search(content))
+    has_sell = bool(_SELL_WORDS.search(content))
     if has_buy and not has_sell:
         signal_type = "buy"
     elif has_sell and not has_buy:
         signal_type = "sell"
     elif has_sell and has_buy:
-        signal_type = "sell"  # Ambiguous, lean sell
+        signal_type = "sell"
     else:
-        return None  # Info/noise
+        return None
 
-    # Target and stop (parse first so we can disambiguate prices)
-    target_match = TARGET_RE.search(content)
+    target_match = _TARGET_RE.search(content)
     target = float(target_match.group(1)) if target_match else None
-    stop_match = STOP_RE.search(content)
+    stop_match = _STOP_RE.search(content)
     stop = float(stop_match.group(1)) if stop_match else None
 
-    # Price — prefer explicit entry-related keywords, fall back to generic
-    entry_match = ENTRY_PRICE_RE.search(content)
-    price_match = PRICE_RE.search(content)
+    entry_match = _ENTRY_PRICE_RE.search(content)
+    price_match = _PRICE_RE.search(content)
     raw_price = float(entry_match.group(1)) if entry_match else (float(price_match.group(1)) if price_match else None)
-
-    # Disambiguate: if the parsed price equals target or stop, it's not the fill
     if raw_price is not None:
         if (target and abs(raw_price - target) < 0.01) or (stop and abs(raw_price - stop) < 0.01):
             raw_price = None
     price = raw_price
 
-    # Options
-    option_match = OPTION_RE.search(content)
+    option_match = _OPTION_RE.search(content)
     option_type = None
     strike = None
     expiry = None
@@ -92,28 +91,29 @@ def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
         option_type = "call" if option_match.group(3).lower() == "c" else "put"
         trade_type = "option"
 
-    # Percentage for partial exits — prefer "sold/trimmed/closed X%" over generic "%"
-    exit_pct_match = EXIT_PCT_RE.search(content)
+    exit_pct_match = _EXIT_PCT_RE.search(content)
     if exit_pct_match:
         exit_pct = int(exit_pct_match.group(1)) / 100.0
     else:
-        pct_match = PCT_RE.search(content)
+        pct_match = _PCT_RE.search(content)
         exit_pct = int(pct_match.group(1)) / 100.0 if pct_match and signal_type == "sell" else None
 
     return {
-        "ticker": ticker,
-        "signal_type": signal_type,
-        "price": price,
-        "option_type": option_type,
-        "strike": strike,
-        "expiry": expiry,
-        "exit_pct": exit_pct,
-        "target": target,
-        "stop_loss": stop,
-        "trade_type": trade_type,
-        "timestamp": posted_at,
-        "raw_message": content,
+        "ticker": ticker, "signal_type": signal_type, "price": price,
+        "option_type": option_type, "strike": strike, "expiry": expiry,
+        "exit_pct": exit_pct, "target": target, "stop_loss": stop,
+        "trade_type": trade_type, "timestamp": posted_at, "raw_message": content,
     }
+
+
+def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
+    """Parse a Discord message into a trade signal.
+
+    Uses the shared intelligent parser when available, with legacy fallback.
+    """
+    if _HAS_SHARED_PARSER:
+        return _shared_parse(content, posted_at)
+    return _parse_signal_legacy(content, posted_at)
 
 
 # ── Discord Fetching ────────────────────────────────────────────────────────

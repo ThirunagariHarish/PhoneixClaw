@@ -1,58 +1,19 @@
 """
 Signal parser — extracts buy/sell/close signals from trading messages.
 Pairs entry signals with corresponding exit signals to form complete trades.
+
+NOTE: Signal parsing is now delegated to the shared intelligent parser at
+shared.utils.signal_parser. This module maintains the same public API
+(ParsedSignal, parse_signal, MessageSignal, TradePair, pair_trades) for
+backward compatibility with existing consumers.
 """
 
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from shared.nlp.ticker_extractor import TickerExtractor
-
-_extractor = TickerExtractor()
-
-# ── Signal patterns ──────────────────────────────────────────────────────────
-
-BUY_PATTERNS = [
-    re.compile(r"\b(?:buy|bought|buying|long|entered|entry|going long|opening)\b", re.I),
-    re.compile(r"\b(?:call|calls)\b.*\b(?:buy|bought|picked up|opened)\b", re.I),
-    re.compile(r"\b(?:buy|bought|picked up|opened)\b.*\b(?:call|calls)\b", re.I),
-    re.compile(r"BTO\b", re.I),  # Buy to Open
-]
-
-SELL_PATTERNS = [
-    re.compile(r"\b(?:sell|sold|selling|short|exited|exit|closing|closed|going short)\b", re.I),
-    re.compile(r"\b(?:put|puts)\b.*\b(?:buy|bought|picked up|opened)\b", re.I),
-    re.compile(r"\b(?:buy|bought|picked up|opened)\b.*\b(?:put|puts)\b", re.I),
-    re.compile(r"STC\b", re.I),  # Sell to Close
-    re.compile(r"STO\b", re.I),  # Sell to Open
-]
-
-CLOSE_PATTERNS = [
-    re.compile(r"\b(?:closed|out of|exited|took profit|stopped out|cut loss|trimmed)\b", re.I),
-    re.compile(r"\b(?:target hit|target reached|SL hit|stop loss hit)\b", re.I),
-]
-
-PRICE_PATTERN = re.compile(
-    r"(?:\$|@|at\s+)\s*(\d+(?:\.\d{1,2})?)"
-)
-
-# Date-first: "3/21 190C" or "2025-03-21 190C"
-_OPTION_DATE_FIRST = re.compile(
-    r"(\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{2}-\d{2})\s*"
-    r"(\d+(?:\.\d+)?)\s*([CcPp])",
-)
-# Strike-first: "190C 3/21" or "190C" (no date)
-_OPTION_STRIKE_FIRST = re.compile(
-    r"(\d+(?:\.\d+)?)\s*([CcPp])\b"
-    r"(?:\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{4}-\d{2}-\d{2}))?",
-)
-
-PROFIT_PATTERN = re.compile(
-    r"[+\-]?\s*\$?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*%?"
-    r"|\b(\d+(?:\.\d{1,2})?)\s*%"
-)
+# Import the intelligent parser
+from shared.utils.signal_parser import parse_trade_signal as _parse_trade_signal
 
 
 @dataclass
@@ -88,74 +49,24 @@ class MessageSignal:
 
 
 def parse_signal(content: str) -> ParsedSignal:
-    """Parse a single message and classify its signal type."""
-    tickers = _extractor.extract(content)
-    primary = tickers[0] if tickers else None
+    """Parse a single message and classify its signal type.
 
-    price = None
-    pm = PRICE_PATTERN.search(content)
-    if pm:
-        try:
-            price = float(pm.group(1))
-        except (ValueError, TypeError):
-            pass
+    Delegates to the shared intelligent parser for robust multi-format
+    support including text-month expiry dates, price disambiguation,
+    and expanded direction detection.
+    """
+    result = _parse_trade_signal(content)
 
-    option_strike = None
-    option_type = None
-    option_expiry = None
-    om = _OPTION_DATE_FIRST.search(content)
-    if om:
-        option_expiry = om.group(1)
-        try:
-            option_strike = float(om.group(2))
-        except ValueError:
-            pass
-        option_type = om.group(3).upper()
-    else:
-        om2 = _OPTION_STRIKE_FIRST.search(content)
-        if om2:
-            try:
-                option_strike = float(om2.group(1))
-            except ValueError:
-                pass
-            option_type = om2.group(2).upper()
-            option_expiry = om2.group(3)  # may be None if no date
-
-    # Classify signal type with confidence scoring
-    buy_score = sum(1 for p in BUY_PATTERNS if p.search(content))
-    sell_score = sum(1 for p in SELL_PATTERNS if p.search(content))
-    close_score = sum(1 for p in CLOSE_PATTERNS if p.search(content))
-
-    if close_score > 0 and close_score >= buy_score:
-        signal_type = "close_signal"
-        confidence = min(0.9, 0.4 + close_score * 0.2)
-    elif buy_score > sell_score:
-        signal_type = "buy_signal"
-        confidence = min(0.9, 0.3 + buy_score * 0.2)
-    elif sell_score > buy_score:
-        signal_type = "sell_signal"
-        confidence = min(0.9, 0.3 + sell_score * 0.2)
-    elif tickers:
-        signal_type = "info"
-        confidence = 0.3
-    else:
-        signal_type = "noise"
-        confidence = 0.1
-
-    if tickers:
-        confidence += 0.1
-    if price:
-        confidence += 0.1
-
+    # Map back to this module's ParsedSignal dataclass for compatibility
     return ParsedSignal(
-        signal_type=signal_type,
-        tickers=tickers,
-        primary_ticker=primary,
-        price=price,
-        option_strike=option_strike,
-        option_type=option_type,
-        option_expiry=option_expiry,
-        confidence=min(1.0, confidence),
+        signal_type=result.signal_type or "noise",
+        tickers=result.tickers,
+        primary_ticker=result.primary_ticker,
+        price=result.entry_price,
+        option_strike=result.strike_price,
+        option_type=result.option_type,
+        option_expiry=result.option_expiry if result.option_expiry else result.expiry_date,
+        confidence=result.confidence,
     )
 
 
