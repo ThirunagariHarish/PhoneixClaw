@@ -365,8 +365,24 @@ async def create_trade_signal(
         import hmac as _hmac
         if stored_key and not _hmac.compare_digest(stored_key, supplied_key):
             raise HTTPException(status_code=403, detail="Invalid agent API key")
-    # If no key is supplied we fall through — the outer API gateway/JWT
-    # middleware has already authenticated the dashboard user.
+    else:
+        # No Bearer key supplied — caller is likely the dashboard (JWT session).
+        # Verify that the authenticated session user owns this agent.
+        caller_id = getattr(request.state, "user_id", None)
+        is_admin = getattr(request.state, "is_admin", False)
+        if caller_id and not is_admin:
+            agent_row = (await session.execute(
+                select(Agent).where(Agent.id == agent_id)
+            )).scalar_one_or_none()
+            if agent_row is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            import uuid as _uuid
+            try:
+                owner_id = _uuid.UUID(str(caller_id))
+            except (ValueError, AttributeError):
+                owner_id = None
+            if owner_id and agent_row.user_id != owner_id:
+                raise HTTPException(status_code=403, detail="Access denied")
 
     _VALID_DECISIONS = {"watchlist", "executed", "rejected", "paper"}
     ticker = str(body.get("ticker") or "").upper().strip()

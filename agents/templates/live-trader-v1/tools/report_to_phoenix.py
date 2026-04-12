@@ -77,7 +77,11 @@ async def report_signal(config: dict, signal: dict):
         "author": signal.get("author", ""),
         "signal_source": signal.get("signal_source", "discord"),
         "source_message_id": signal.get("source_message_id") or signal.get("message_id") or "",
-        "confidence": signal.get("confidence") or signal.get("model_confidence"),
+        # R-002: use is-not-None check so confidence=0.0 is preserved, not dropped by 'or'
+        "confidence": (
+            signal["confidence"] if signal.get("confidence") is not None
+            else signal.get("model_confidence")
+        ),
         "features": signal.get("features") or {},
     }
 
@@ -160,12 +164,12 @@ def main():
         if not args.data:
             return {}
         import os
-        # R-005: detect path-like strings that don't exist before trying json.loads
+        # R-004: guard requires len >= 3 before indexing [1] and [2]
         _looks_like_path = (
             args.data.startswith("/")
             or args.data.startswith("./")
-            or args.data.startswith(".\\")
-            or (len(args.data) > 2 and args.data[1] == ":" and args.data[2] in "/\\")
+            or args.data.startswith(".\\\\")  # .\  on Windows
+            or (len(args.data) >= 3 and args.data[1] == ":" and args.data[2] in "/\\")
         )
         if _looks_like_path:
             if not os.path.exists(args.data):
