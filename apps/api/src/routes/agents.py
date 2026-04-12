@@ -40,6 +40,26 @@ class AgentCreate(BaseModel):
     connector_ids: list[str] = Field(default_factory=list)
 
 
+def assert_trading_connector_when_discord_channel(payload: AgentCreate) -> None:
+    """Trading + selected Discord channel requires connector_ids (ingestion + Feed routing)."""
+    if payload.type != "trading":
+        return
+    selected_channel = (payload.config or {}).get("selected_channel")
+    if not isinstance(selected_channel, dict):
+        return
+    ch_id = selected_channel.get("channel_id")
+    if ch_id is None or not str(ch_id).strip():
+        return
+    if not payload.connector_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Trading agents with a selected Discord channel require at least one connector_id "
+                "so ingestion and the activity feed can route messages to this agent."
+            ),
+        )
+
+
 class AgentUpdate(BaseModel):
     name: str | None = None
     status: str | None = None
@@ -176,6 +196,8 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
     import os
     import re
     import secrets
+
+    assert_trading_connector_when_discord_channel(payload)
 
     agent_type = "trend" if payload.type == "sentiment" else payload.type
 

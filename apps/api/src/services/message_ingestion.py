@@ -9,6 +9,11 @@ For every active Discord connector:
 
 This is the SINGLE source of truth for Discord messages. Analyst agents
 no longer run their own Discord clients — they consume from Redis.
+
+The dashboard Feed (``GET /api/v2/agents/{id}/channel-messages``) reads the same
+``channel_messages`` rows, resolving ``connector_id`` via
+``feed_connector_resolution.resolve_agent_connector_ids_for_feed`` so it matches
+ingestion and Redis routing.
 """
 from __future__ import annotations
 

@@ -28,6 +28,24 @@ interface Connector {
   status: string
 }
 
+interface AgentDetail {
+  id: string
+  config?: {
+    connector_ids?: unknown[]
+    selected_channel?: { channel_id?: string }
+  }
+}
+
+function feedLooksConfigured(agent: AgentDetail | undefined): boolean {
+  if (!agent?.config) return false
+  const ids = agent.config.connector_ids
+  if (Array.isArray(ids) && ids.length > 0) return true
+  const ch = agent.config.selected_channel
+  if (ch && typeof ch === 'object' && ch.channel_id != null && String(ch.channel_id).trim() !== '')
+    return true
+  return false
+}
+
 export function AgentMessagesTab({ agentId }: { agentId: string }) {
   const qc = useQueryClient()
   const [linking, setLinking] = useState(false)
@@ -39,7 +57,17 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   const backfillAttemptedRef = useRef<boolean>(false)
   useEffect(() => () => { if (successTimerRef.current) clearTimeout(successTimerRef.current) }, [])
 
-  const { data, isLoading, refetch, isFetching } = useQuery<{ messages: Msg[]; count: number; has_connectors: boolean }>({
+  const { data: agentData } = useQuery<AgentDetail>({
+    queryKey: ['agent', agentId],
+    queryFn: async () => (await api.get(`/api/v2/agents/${agentId}`)).data,
+  })
+
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    messages: Msg[]
+    count: number
+    connector_ids?: string[]
+    has_connectors?: boolean
+  }>({
     queryKey: ['channel-messages', agentId],
     queryFn: async () =>
       (await api.get(`/api/v2/agents/${agentId}/channel-messages?limit=200`)).data,
@@ -62,6 +90,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
       setLinking(false)
       setLinkError(null)
       qc.invalidateQueries({ queryKey: ['channel-messages', agentId] })
+      qc.invalidateQueries({ queryKey: ['agent', agentId] })
       successTimerRef.current = setTimeout(() => setLinkSuccess(false), 4000)
     },
     onError: (e: unknown) => {
@@ -83,7 +112,11 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   })
 
   const messages = data?.messages ?? []
-  const hasConnectors = data?.has_connectors ?? false
+  const resolvedConnectorCount = Array.isArray(data?.connector_ids) ? data.connector_ids.length : 0
+  const hasConnectors =
+    data?.has_connectors === true ||
+    resolvedConnectorCount > 0 ||
+    feedLooksConfigured(agentData)
 
   // Auto-trigger backfill once when connectors exist but no messages are present
   useEffect(() => {
@@ -103,15 +136,20 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
             {backfillMut.isPending && hasConnectors
               ? 'Fetching latest messages from Discord…'
               : hasConnectors
-              ? 'No messages yet — waiting for new activity in the connected channel.'
-              : 'No channel messages yet. Link a Discord/Reddit connector to start seeing the feed.'}
+                ? 'No messages yet for this agent\'s connector(s). The ingestion service may still be catching up, or the channel may be quiet.'
+                : 'No channel messages yet. Link a Discord/Reddit connector to start seeing the feed.'}
           </div>
 
           {!linking ? (
-            <div className="flex justify-center gap-2">
+            <div className="flex justify-center gap-2 flex-wrap">
               {!hasConnectors && (
                 <Button variant="outline" size="sm" onClick={() => setLinking(true)}>
                   <Plug className="h-4 w-4 mr-1.5" /> Link Connector
+                </Button>
+              )}
+              {hasConnectors && (
+                <Button variant="outline" size="sm" onClick={() => setLinking(true)}>
+                  <Plug className="h-4 w-4 mr-1.5" /> Link another connector
                 </Button>
               )}
               <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>

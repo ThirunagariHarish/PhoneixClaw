@@ -28,13 +28,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, select, text
-from sqlalchemy.exc import IntegrityError
 
 from apps.api.src.deps import DbSession
+from apps.api.src.services.feed_connector_resolution import resolve_agent_connector_ids_for_feed
 from shared.db.models.agent import Agent
 from shared.db.models.channel_message import ChannelMessage
-from shared.db.models.connector import ConnectorAgent
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/agents", tags=["agents_sprint"])
@@ -51,58 +49,20 @@ async def get_channel_messages(
     since: datetime | None = None,
     session: DbSession = None,
 ):
-    """Return raw Discord/Reddit/Twitter messages from every connector this agent
-    is subscribed to via connector_agents."""
-    sub_q = select(ConnectorAgent.connector_id).where(
-        ConnectorAgent.agent_id == agent_id,
-        ConnectorAgent.is_active.is_(True),
-    )
-    sub_rows = (await session.execute(sub_q)).all()
-    connector_ids = [r[0] for r in sub_rows]
-    
-    # Self-heal: agent was created with connector_ids in config but ConnectorAgent
-    # rows were never persisted (e.g. older agent or transient failure at creation).
+    """Return raw Discord/Reddit/Twitter messages for this agent's connectors.
+
+    Uses the same ``connector_id`` values as ingestion (``channel_messages`` +
+    Redis ``stream:channel:{id}``): active ``connector_agents`` union
+    ``agent.config[\"connector_ids\"]``, with optional repair of missing link rows.
+    """
+    connector_ids = await resolve_agent_connector_ids_for_feed(session, agent_id)
     if not connector_ids:
-        agent_row = (await session.execute(
-            select(Agent).where(Agent.id == agent_id)
-        )).scalar_one_or_none()
-        if agent_row:
-            cfg_cids = [c for c in (agent_row.config or {}).get("connector_ids", []) if c]
-            for cid_str in cfg_cids:
-                try:
-                    cid = uuid.UUID(str(cid_str))
-                    existing = (await session.execute(
-                        select(ConnectorAgent).where(
-                            ConnectorAgent.connector_id == cid,
-                            ConnectorAgent.agent_id == agent_id,
-                        )
-                    )).scalar_one_or_none()
-                    if not existing:
-                        session.add(ConnectorAgent(
-                            id=uuid.uuid4(),
-                            connector_id=cid,
-                            agent_id=agent_id,
-                            channel="*",
-                            is_active=True,
-                        ))
-                    connector_ids.append(cid)
-                except Exception:
-                    logger.warning("Self-heal: invalid connector_id %s for agent %s", cid_str, agent_id)
-            if connector_ids:
-                try:
-                    await session.commit()
-                except IntegrityError:
-                    # Race condition: another request already created the rows — treat as success
-                    await session.rollback()
-                    re_rows = (await session.execute(sub_q)).all()
-                    connector_ids = [r[0] for r in re_rows]
-                except Exception:
-                    await session.rollback()
-                    connector_ids.clear()  # rows not persisted; don't query against phantom IDs
-                    logger.warning("Self-heal commit failed for agent %s", agent_id)
-    
-    if not connector_ids:
-        return {"messages": [], "count": 0, "has_connectors": False}
+        return {
+            "messages": [],
+            "count": 0,
+            "connector_ids": [],
+            "has_connectors": False,
+        }
 
     q = (
         select(ChannelMessage)
@@ -126,7 +86,12 @@ async def get_channel_messages(
         }
         for m in rows
     ]
-    return {"messages": messages, "count": len(messages), "has_connectors": True}
+    return {
+        "messages": messages,
+        "count": len(messages),
+        "connector_ids": [str(x) for x in connector_ids],
+        "has_connectors": True,
+    }
 
 
 @router.post("/{agent_id}/channel-messages/backfill")
@@ -140,12 +105,7 @@ async def backfill_channel_messages(
     from shared.crypto.credentials import decrypt_credentials
     from shared.db.models.connector import Connector
 
-    sub_q = select(ConnectorAgent).where(
-        ConnectorAgent.agent_id == agent_id,
-        ConnectorAgent.is_active.is_(True),
-    )
-    sub_rows = (await session.execute(sub_q)).all()
-    connector_ids = [r[0].connector_id if hasattr(r[0], "connector_id") else r[0] for r in sub_rows]
+    connector_ids = await resolve_agent_connector_ids_for_feed(session, agent_id)
     if not connector_ids:
         return {"backfilled": 0, "error": "No active connectors linked to this agent"}
 
