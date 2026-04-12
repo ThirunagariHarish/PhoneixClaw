@@ -47,28 +47,10 @@ ALGORITHM_REGISTRY: dict[str, dict[str, Any]] = {
     "meta_learner": {"script": "train_meta_learner.py", "enabled": True, "order": 10},
 }
 
-# Feature pipeline: plug-and-play enrichment steps
-FEATURE_PIPELINE: list[str] = [
-    "transform.py",
-    "enrich.py",
-    "compute_text_embeddings.py",
-    "compute_labels.py",
-    "preprocess.py",
-]
-
-# Post-training pipeline
-POST_TRAINING_PIPELINE: list[str] = [
-    "evaluate_models.py",
-    "model_selector.py",
-    "build_explainability.py",
-    "discover_patterns.py",
-    "compute_trading_metrics.py",
-    "compute_kelly_sizing.py",
-    "compute_price_buffer.py",
-    "compute_regime_calibration.py",
-    "validate_model.py",
-    "create_live_agent.py",
-]
+# FEATURE_PIPELINE and POST_TRAINING_PIPELINE were removed — _build_pipeline()
+# now carries per-step CLI args inline.
+# NOTE: compute_trading_metrics.py is a shared library (no __main__), not a
+# standalone pipeline step — it is intentionally absent from the pipeline.
 
 
 class BacktestOrchestrator:
@@ -89,6 +71,11 @@ class BacktestOrchestrator:
         self.enabled_algorithms = enabled_algorithms
         self._checkpoint_dir = work_dir / ".checkpoints"
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # R05: include a hash of enabled_algorithms in checkpoint names so that
+        # changing the algorithm set invalidates stale checkpoints automatically.
+        _algo_key = ",".join(sorted(enabled_algorithms)) if enabled_algorithms else "all"
+        import hashlib
+        self._config_hash = hashlib.md5(_algo_key.encode()).hexdigest()[:8]
 
     async def run(self) -> dict:
         """Execute the full backtest pipeline with checkpoint recovery."""
@@ -105,7 +92,7 @@ class BacktestOrchestrator:
 
         await self._update_status("running")
 
-        for i, (script, description, step_type) in enumerate(all_steps):
+        for i, (script, description, step_type, step_args) in enumerate(all_steps):
             step_num = i + 1
             logger.info("Step %d/%d: %s (%s)", step_num, total_steps, description, script)
 
@@ -122,9 +109,9 @@ class BacktestOrchestrator:
             await self._report_progress(step_num, total_steps, description)
 
             if step_type == "llm":
-                result = await self._run_llm_step(script, description)
+                result = await self._run_llm_step(script, description, step_args)
             else:
-                result = await self._run_python_step(script)
+                result = await self._run_python_step(script, step_args)
 
             result["step"] = step_num
             result["description"] = description
@@ -133,9 +120,11 @@ class BacktestOrchestrator:
             if result.get("success"):
                 self._write_checkpoint(step_num, script)
             else:
-                # Retry once
-                logger.warning("Step %d failed, retrying once...", step_num)
-                retry = await self._run_python_step(script) if step_type != "llm" else await self._run_llm_step(script, description)
+                # Retry once — log stdout/stderr as separate calls for structured log backends
+                logger.warning("Step %d (%s) failed, retrying once.", step_num, script)
+                logger.warning("Step %d stdout: %s", step_num, result.get("output", "")[:500])
+                logger.warning("Step %d stderr: %s", step_num, result.get("error", "")[:500])
+                retry = await self._run_python_step(script, step_args) if step_type != "llm" else await self._run_llm_step(script, description, step_args)
                 if retry.get("success"):
                     self._write_checkpoint(step_num, script)
                     retry["step"] = step_num
@@ -143,7 +132,9 @@ class BacktestOrchestrator:
                     results.append(retry)
                 else:
                     failed_step = step_num
-                    logger.error("Step %d failed after retry: %s", step_num, retry.get("error", ""))
+                    logger.error("Step %d (%s) failed after retry.", step_num, script)
+                    logger.error("Step %d stdout: %s", step_num, retry.get("output", "")[:1000])
+                    logger.error("Step %d stderr: %s", step_num, retry.get("error", "")[:1000])
                     break
 
         elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -177,15 +168,33 @@ class BacktestOrchestrator:
         )
         return summary
 
-    def _build_pipeline(self) -> list[tuple[str, str, str]]:
-        """Build the ordered pipeline of (script, description, type) tuples."""
-        steps: list[tuple[str, str, str]] = []
+    def _build_pipeline(self) -> list[tuple[str, str, str, list[str]]]:
+        """Build the ordered pipeline of (script, description, type, args) tuples."""
+        steps: list[tuple[str, str, str, list[str]]] = []
 
-        # Feature engineering pipeline
-        for script in FEATURE_PIPELINE:
-            steps.append((script, f"Feature: {script.replace('.py', '')}", "python"))
+        # ── Feature engineering pipeline ────────────────────────────────────
+        steps.append((
+            "transform.py", "Feature: transform", "python",
+            ["--config", "config.json", "--output", "transformed.parquet"],
+        ))
+        steps.append((
+            "enrich.py", "Feature: enrich", "python",
+            ["--input", "transformed.parquet", "--output", "enriched.parquet"],
+        ))
+        steps.append((
+            "compute_text_embeddings.py", "Feature: compute_text_embeddings", "python",
+            ["--input", "enriched.parquet", "--output", "embeddings"],
+        ))
+        steps.append((
+            "compute_labels.py", "Feature: compute_labels", "python",
+            ["--input", "enriched.parquet", "--output", "labeled.parquet"],
+        ))
+        steps.append((
+            "preprocess.py", "Feature: preprocess", "python",
+            ["--input", "labeled.parquet", "--output", "preprocessed"],
+        ))
 
-        # Training algorithms (sorted by order, filtered by enabled)
+        # ── Training algorithms (sorted by order, filtered by enabled) ───────
         algos = sorted(
             ALGORITHM_REGISTRY.items(),
             key=lambda x: x[1].get("order", 99),
@@ -195,30 +204,86 @@ class BacktestOrchestrator:
                 continue
             if self.enabled_algorithms and name not in self.enabled_algorithms:
                 continue
-            steps.append((info["script"], f"Train: {name}", "python"))
+            model_out = f"models/{name}"
+            if name == "meta_learner":
+                steps.append((
+                    info["script"], f"Train: {name}", "python",
+                    ["--data", "preprocessed", "--models-dir", "models", "--output", model_out],
+                ))
+            else:
+                steps.append((
+                    info["script"], f"Train: {name}", "python",
+                    ["--data", "preprocessed", "--output", model_out],
+                ))
 
-        # LLM pattern discovery (the one Tier 2 step)
-        steps.append(("llm_pattern_discovery.py", "LLM Pattern Discovery", "llm"))
-        steps.append(("analyze_patterns_llm.py", "LLM Pattern Analysis", "llm"))
+        # ── LLM pattern discovery — run as python subprocesses (scripts handle
+        #    their own LLM calls internally; no ModelRouter fallback needed here)
+        steps.append((
+            "llm_pattern_discovery.py", "LLM Pattern Discovery", "python",
+            ["--data", ".", "--output", "llm_discovered_patterns.json"],
+        ))
+        steps.append((
+            "analyze_patterns_llm.py", "LLM Pattern Analysis", "python",
+            ["--data", ".", "--output", "llm_patterns.json", "--config", "config.json"],
+        ))
 
-        # Post-training pipeline
-        for script in POST_TRAINING_PIPELINE:
-            steps.append((script, f"Post: {script.replace('.py', '')}", "python"))
+        # ── Post-training pipeline ───────────────────────────────────────────
+        steps.append((
+            "evaluate_models.py", "Post: evaluate_models", "python",
+            ["--models-dir", "models", "--output", "evaluation"],
+        ))
+        steps.append((
+            "model_selector.py", "Post: model_selector", "python",
+            ["--data", ".", "--output", "model_selection.json"],
+        ))
+        steps.append((
+            "build_explainability.py", "Post: build_explainability", "python",
+            ["--model", "models", "--data", "preprocessed", "--output", "explainability"],
+        ))
+        steps.append((
+            "discover_patterns.py", "Post: discover_patterns", "python",
+            ["--data", ".", "--output", "patterns.json"],
+        ))
+        steps.append((
+            "compute_kelly_sizing.py", "Post: compute_kelly_sizing", "python",
+            ["--data", "enriched.parquet", "--output", "kelly_sizing.json"],
+        ))
+        steps.append((
+            "compute_price_buffer.py", "Post: compute_price_buffer", "python",
+            ["--data", "enriched.parquet", "--output", "price_buffers.json"],
+        ))
+        steps.append((
+            "compute_regime_calibration.py", "Post: compute_regime_calibration", "python",
+            ["--enriched", "enriched.parquet", "--predictions", "model_selection.json",
+             "--output", "regime_calibration.json"],
+        ))
+        steps.append((
+            "validate_model.py", "Post: validate_model", "python",
+            ["--data", "preprocessed", "--models", "models", "--output", "validation_report.json"],
+        ))
+        steps.append((
+            "create_live_agent.py", "Post: create_live_agent", "python",
+            ["--config", "config.json", "--models", "models", "--output", "."],
+        ))
 
-        # Report to Phoenix
-        steps.append(("report_to_phoenix.py", "Report to Phoenix", "python"))
+        # ── Report to Phoenix ────────────────────────────────────────────────
+        steps.append((
+            "report_to_phoenix.py", "Report to Phoenix", "python",
+            ["--event", "complete", "--step", "report_to_phoenix", "--progress", "100"],
+        ))
 
         return steps
 
-    async def _run_python_step(self, script: str) -> dict:
-        """Run a Python script as a subprocess."""
+    async def _run_python_step(self, script: str, args: list[str] | None = None) -> dict:
+        """Run a Python script as a subprocess with optional CLI arguments."""
         script_path = BACKTESTING_TOOLS / script
         if not script_path.exists():
             return {"success": False, "script": script, "error": f"Script not found: {script_path}"}
 
         try:
+            cmd = [sys.executable, str(script_path)] + (args or [])
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(script_path),
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.work_dir),
@@ -239,10 +304,15 @@ class BacktestOrchestrator:
         except Exception as e:
             return {"success": False, "script": script, "error": str(e)[:500]}
 
-    async def _run_llm_step(self, script: str, description: str) -> dict:
-        """Run an LLM-dependent step (Tier 2 via ModelRouter)."""
+    async def _run_llm_step(self, script: str, description: str, args: list[str] | None = None) -> dict:
+        """ModelRouter fallback for any step registered as type 'llm'.
+
+        Attempts to run the script as a normal Python subprocess first (passing
+        args so required CLI params are satisfied), then falls back to the
+        ModelRouter if the script itself fails.
+        """
         # First try running the script itself (it may handle its own LLM calls)
-        result = await self._run_python_step(script)
+        result = await self._run_python_step(script, args)
         if result.get("success"):
             return result
 
@@ -305,7 +375,9 @@ Return a JSON object with your findings.""",
             return {"success": False, "script": script, "error": f"LLM fallback failed: {e}"}
 
     def _checkpoint_path(self, step: int, script: str) -> Path:
-        return self._checkpoint_dir / f"step_{step:03d}_{script.replace('.py', '')}.json"
+        # R05: embed config hash so that changing enabled_algorithms invalidates
+        # stale checkpoints from a previous run with a different algorithm set.
+        return self._checkpoint_dir / f"step_{step:03d}_{script.replace('.py', '')}_{self._config_hash}.json"
 
     def _is_step_complete(self, step: int, script: str) -> bool:
         """Check if a step has a valid checkpoint."""
