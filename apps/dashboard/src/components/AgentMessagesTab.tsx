@@ -36,6 +36,7 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
   const [linkSuccess, setLinkSuccess] = useState(false)
   // R-004: track the success-banner timer so it can be cleared on unmount
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const backfillAttemptedRef = useRef<boolean>(false)
   useEffect(() => () => { if (successTimerRef.current) clearTimeout(successTimerRef.current) }, [])
 
   const { data, isLoading, refetch, isFetching } = useQuery<{ messages: Msg[]; count: number; has_connectors: boolean }>({
@@ -72,8 +73,25 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
     },
   })
 
+  const backfillMut = useMutation({
+    mutationFn: async () => {
+      await api.post(`/api/v2/agents/${agentId}/channel-messages/backfill?limit=100`)
+    },
+    onSuccess: () => {
+      refetch()
+    },
+  })
+
   const messages = data?.messages ?? []
   const hasConnectors = data?.has_connectors ?? false
+
+  // Auto-trigger backfill once when connectors exist but no messages are present
+  useEffect(() => {
+    if (!isLoading && hasConnectors && messages.length === 0 && !backfillAttemptedRef.current) {
+      backfillAttemptedRef.current = true
+      backfillMut.mutate()
+    }
+  }, [isLoading, hasConnectors, messages.length, backfillMut.mutate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading…</div>
 
@@ -82,7 +100,9 @@ export function AgentMessagesTab({ agentId }: { agentId: string }) {
       <Card>
         <CardContent className="p-8 text-center space-y-4">
           <div className="text-muted-foreground text-sm">
-            {hasConnectors
+            {backfillMut.isPending && hasConnectors
+              ? 'Fetching latest messages from Discord…'
+              : hasConnectors
               ? 'No messages yet — waiting for new activity in the connected channel.'
               : 'No channel messages yet. Link a Discord/Reddit connector to start seeing the feed.'}
           </div>

@@ -28,6 +28,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, select, text
+from sqlalchemy.exc import IntegrityError
 
 from apps.api.src.deps import DbSession
 from shared.db.models.agent import Agent
@@ -58,6 +59,48 @@ async def get_channel_messages(
     )
     sub_rows = (await session.execute(sub_q)).all()
     connector_ids = [r[0] for r in sub_rows]
+    
+    # Self-heal: agent was created with connector_ids in config but ConnectorAgent
+    # rows were never persisted (e.g. older agent or transient failure at creation).
+    if not connector_ids:
+        agent_row = (await session.execute(
+            select(Agent).where(Agent.id == agent_id)
+        )).scalar_one_or_none()
+        if agent_row:
+            cfg_cids = [c for c in (agent_row.config or {}).get("connector_ids", []) if c]
+            for cid_str in cfg_cids:
+                try:
+                    cid = uuid.UUID(str(cid_str))
+                    existing = (await session.execute(
+                        select(ConnectorAgent).where(
+                            ConnectorAgent.connector_id == cid,
+                            ConnectorAgent.agent_id == agent_id,
+                        )
+                    )).scalar_one_or_none()
+                    if not existing:
+                        session.add(ConnectorAgent(
+                            id=uuid.uuid4(),
+                            connector_id=cid,
+                            agent_id=agent_id,
+                            channel="*",
+                            is_active=True,
+                        ))
+                    connector_ids.append(cid)
+                except Exception:
+                    logger.warning("Self-heal: invalid connector_id %s for agent %s", cid_str, agent_id)
+            if connector_ids:
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    # Race condition: another request already created the rows — treat as success
+                    await session.rollback()
+                    re_rows = (await session.execute(sub_q)).all()
+                    connector_ids = [r[0] for r in re_rows]
+                except Exception:
+                    await session.rollback()
+                    connector_ids.clear()  # rows not persisted; don't query against phantom IDs
+                    logger.warning("Self-heal commit failed for agent %s", agent_id)
+    
     if not connector_ids:
         return {"messages": [], "count": 0, "has_connectors": False}
 
