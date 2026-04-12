@@ -43,6 +43,8 @@ COLUMN_ENSURE = [
     ("trade_signals", "entry_price", "DOUBLE PRECISION"),
     ("trade_signals", "stop_loss", "DOUBLE PRECISION"),
     ("trade_signals", "pattern_name", "VARCHAR(100)"),
+    # connector_agents.is_active: NULL rows break is_active.is_(True) filter
+    ("connector_agents", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
 ]
 
 

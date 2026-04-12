@@ -78,7 +78,17 @@ def check(config_path: str) -> dict:
     since = _load_last_check()
     params: dict = {"limit": 50}
     if since:
-        params["since"] = since
+        # Subtract a 120-second lookback buffer so messages that were
+        # POSTED slightly before this cursor but INGESTED after it are
+        # not permanently missed.  The processed_ids dedup layer prevents
+        # the agent from re-acting on messages it already handled.
+        try:
+            from datetime import timedelta
+            since_dt = datetime.fromisoformat(since)
+            buffered_since = (since_dt - timedelta(seconds=120)).isoformat()
+            params["since"] = buffered_since
+        except Exception:
+            params["since"] = since
 
     url = f"{api_url}/api/v2/agents/{agent_id}/channel-messages"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}

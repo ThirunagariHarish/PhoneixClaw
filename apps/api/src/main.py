@@ -368,6 +368,17 @@ async def _ensure_prod_schema() -> None:
          "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS stop_loss DOUBLE PRECISION"),
         ("trade_signals.pattern_name",
          "ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS pattern_name VARCHAR(100)"),
+        # ------------------------------------------------------------------
+        # connector_agents.is_active: column added to model but not in any
+        # migration.  Existing rows have NULL; resolve_agent_connector_ids_for_feed
+        # and start_ingestion() both filter is_active.is_(True) → NULL IS TRUE
+        # is FALSE, so all connector links are invisible after a deploy that
+        # adds this column.  Backfill to TRUE for pre-existing rows.
+        # ------------------------------------------------------------------
+        ("connector_agents.is_active",
+         "ALTER TABLE connector_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"),
+        ("connector_agents.is_active_backfill",
+         "UPDATE connector_agents SET is_active = TRUE WHERE is_active IS NULL"),
     ]
 
     engine = get_engine()
