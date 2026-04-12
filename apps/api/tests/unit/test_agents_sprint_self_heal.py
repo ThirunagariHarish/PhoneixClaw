@@ -104,9 +104,7 @@ async def test_no_self_heal_when_agent_has_no_connector_ids():
     )
 
     # Should NOT have called session.add or commit
-    assert not hasattr(
-        mock_session, "add"
-    ), "session.add should not be called when no connector_ids"
+    assert not mock_session.add.called, "session.add should not be called when no connector_ids"
     # Should return has_connectors: False
     assert result["has_connectors"] is False
     assert result["messages"] == []
@@ -237,7 +235,7 @@ async def test_self_heal_rollback_on_commit_failure():
         # Should have logged warning
         assert mock_logger.warning.called, "Expected warning on commit failure"
 
-    # Should still return has_connectors: True (connector was found in config)
-    assert result["has_connectors"] is True
+    # Commit failed and rows were not persisted — must return has_connectors: False
+    assert result["has_connectors"] is False
     assert result["messages"] == []
     assert result["count"] == 0
