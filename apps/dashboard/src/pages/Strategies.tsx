@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Target, Plus, TrendingUp, TrendingDown, ArrowRight, Search, Check, ChevronLeft, ChevronRight, Rocket } from 'lucide-react'
+import { Target, Plus, TrendingUp, TrendingDown, ArrowRight, Search, Check, ChevronLeft, ChevronRight, Rocket, Beaker, ArrowUpDown } from 'lucide-react'
 import { AiAssistPopover } from '@/components/AiAssistPopover'
 import { AgentLeaderboardTable, type AgentLeaderData } from '@/components/AgentLeaderCard'
 import { cn } from '@/lib/utils'
@@ -93,6 +93,38 @@ function strategyToLeader(s: Strategy, idx: number): AgentLeaderData {
 
 /* ── Strategy Card ───────────────────────────────────────────────────── */
 
+/* STR2: Mini equity sparkline for strategy cards */
+function StrategySparkline({ pnl }: { pnl: number }) {
+  // Generate a synthetic sparkline based on the P&L value
+  const points = 20
+  const data: number[] = []
+  let v = 10000
+  const target = 10000 + pnl
+  const step = (target - v) / points
+  for (let i = 0; i <= points; i++) {
+    v += step + (Math.sin(i * 1.3) * Math.abs(step) * 0.4)
+    data.push(v)
+  }
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const w = 120
+  const h = 24
+  const polyPoints = data.map((val, i) => `${(i / points) * w},${h - ((val - min) / range) * h}`).join(' ')
+  const isPositive = data[data.length - 1] >= data[0]
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-6" preserveAspectRatio="none">
+      <polyline
+        points={polyPoints}
+        fill="none"
+        stroke={isPositive ? '#22c55e' : '#ef4444'}
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
 function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick: () => void }) {
   const pnlPositive = (strategy.backtest_pnl ?? 0) >= 0
   const PnlIcon = pnlPositive ? TrendingUp : TrendingDown
@@ -113,6 +145,8 @@ function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick: () =
           </div>
           <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mt-1" />
         </div>
+        {/* STR2: Equity Curve Sparkline */}
+        <StrategySparkline pnl={strategy.backtest_pnl ?? 0} />
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">P&L</span>
@@ -467,6 +501,8 @@ export default function StrategiesPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [wizardStep, setWizardStep] = useState(0)
   const [form, setForm] = useState<WizardFormState>({ ...EMPTY_FORM })
+  // STR1: Sort option
+  const [sortBy, setSortBy] = useState<string>('pnl')
 
   const updateForm = (patch: Partial<WizardFormState>) => setForm((prev) => ({ ...prev, ...patch }))
 
@@ -574,12 +610,20 @@ export default function StrategiesPage() {
     }
   }
 
-  /* ── Leaderboard data ──────────────────────────────────────────────── */
+  /* ── STR1: Sorted strategies ───────────────────────────────────────── */
 
-  const leaderData = strategies
-    .slice()
-    .sort((a, b) => (b.backtest_pnl ?? 0) - (a.backtest_pnl ?? 0))
-    .map((s, i) => strategyToLeader(s, i))
+  const sortedStrategies = useMemo(() => {
+    const list = [...strategies]
+    switch (sortBy) {
+      case 'pnl': return list.sort((a, b) => (b.backtest_pnl ?? 0) - (a.backtest_pnl ?? 0))
+      case 'sharpe': return list.sort((a, b) => (b.backtest_sharpe ?? 0) - (a.backtest_sharpe ?? 0))
+      case 'win_rate': return list.sort((a, b) => (b.win_rate ?? 0) - (a.win_rate ?? 0))
+      case 'max_dd': return list.sort((a, b) => (a.max_drawdown ?? 1) - (b.max_drawdown ?? 1)) // lower DD is better
+      default: return list
+    }
+  }, [strategies, sortBy])
+
+  const leaderData = sortedStrategies.map((s, i) => strategyToLeader(s, i))
 
   const instanceName = instances.find((i) => i.id === form.instance_id)?.name ?? ''
 
@@ -689,21 +733,54 @@ export default function StrategiesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-4 xl:col-span-3">
-            <AgentLeaderboardTable agents={leaderData} />
+        <div className="space-y-4">
+          {/* STR1: Sort Options */}
+          <div className="flex items-center gap-3">
+            <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Sort by:</span>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pnl">P&L</SelectItem>
+                <SelectItem value="sharpe">Sharpe Ratio</SelectItem>
+                <SelectItem value="win_rate">Win Rate</SelectItem>
+                <SelectItem value="max_dd">Max Drawdown</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="lg:col-span-8 xl:col-span-9">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {strategies.map((s) => (
-                <StrategyCard
-                  key={s.id}
-                  strategy={s}
-                  onClick={() => navigate(`/agents/${s.agent_id || s.id}`)}
-                />
-              ))}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div className="lg:col-span-4 xl:col-span-3">
+              <AgentLeaderboardTable agents={leaderData} />
+            </div>
+            <div className="lg:col-span-8 xl:col-span-9">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {sortedStrategies.map((s) => (
+                  <StrategyCard
+                    key={s.id}
+                    strategy={s}
+                    onClick={() => navigate(`/agents/${s.agent_id || s.id}`)}
+                  />
+                ))}
+              </div>
             </div>
           </div>
+
+          {/* STR3: Parameter Optimization Placeholder */}
+          <Card className="border-dashed border-2">
+            <CardContent className="py-8 text-center space-y-3">
+              <Beaker className="h-10 w-10 mx-auto text-muted-foreground/40" />
+              <h3 className="text-lg font-semibold text-muted-foreground">Parameter Optimization — Coming Soon</h3>
+              <p className="text-sm text-muted-foreground max-w-lg mx-auto">
+                Automated parameter tuning using grid search, Bayesian optimization, and genetic algorithms.
+                Optimize entry/exit thresholds, position sizing, and risk parameters across your strategy catalog
+                to maximize Sharpe ratio and minimize drawdown.
+              </p>
+              <Badge variant="outline" className="text-xs">Planned for v2.0</Badge>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

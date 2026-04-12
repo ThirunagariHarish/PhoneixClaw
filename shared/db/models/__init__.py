@@ -47,6 +47,7 @@ from shared.db.models.trade_signal import TradeSignal
 from shared.db.models.trading_account import TradingAccount
 from shared.db.models.user import User
 from shared.db.models.watchlist import Watchlist
+from shared.db.models.watchlist_item import WatchlistItem
 from shared.db.models.wiki import AgentWikiEntry, AgentWikiEntryVersion, WikiCategory
 
 __all__ = [
@@ -102,4 +103,5 @@ __all__ = [
     "ContextSession",
     "AnalystProfile",
     "Invitation",
+    "WatchlistItem",
 ]

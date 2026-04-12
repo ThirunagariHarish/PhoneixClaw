@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '@/context/AuthContext'
 import { ThemeProvider } from '@/context/ThemeContext'
 import { NotificationProvider } from '@/context/NotificationContext'
+import { SymbolLinkProvider } from '@/context/SymbolLinkContext'
 import { ProtectedRoute, AdminRoute } from '@/components/ProtectedRoute'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import AppShell from '@/components/layout/AppShell'
@@ -149,15 +150,17 @@ export default function App() {
       <AuthProvider>
         <QueryClientProvider client={queryClient}>
           <NotificationProvider>
-            <TooltipProvider delayDuration={300}>
-              <ErrorBoundary>
-                <GlobalErrorHandlers />
-                <BrowserRouter>
-                  <AppRoutes />
-                </BrowserRouter>
-                <Toaster position="top-right" richColors />
-              </ErrorBoundary>
-            </TooltipProvider>
+            <SymbolLinkProvider>
+              <TooltipProvider delayDuration={300}>
+                <ErrorBoundary>
+                  <GlobalErrorHandlers />
+                  <BrowserRouter>
+                    <AppRoutes />
+                  </BrowserRouter>
+                  <Toaster position="top-right" richColors />
+                </ErrorBoundary>
+              </TooltipProvider>
+            </SymbolLinkProvider>
           </NotificationProvider>
         </QueryClientProvider>
       </AuthProvider>

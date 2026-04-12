@@ -1,9 +1,12 @@
 /**
  * Watchlist page -- persistent ticker watchlist with live-ish quotes.
- * Stores tickers in localStorage; fetches quotes from API with 60s auto-refresh.
+ *
+ * Features: server-side persistence (falls back to localStorage),
+ * multiple named watchlists, fundamentals columns (P/E, EPS, div yield, earnings),
+ * one-click trade button (disabled), bulk add tickers.
  */
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { MetricCard } from '@/components/ui/MetricCard'
@@ -12,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import {
   Table,
   TableBody,
@@ -20,10 +24,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Eye, Plus, Trash2, Bell, ArrowUpDown, ExternalLink } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Eye, Plus, Trash2, Bell, ArrowUpDown, ExternalLink, ShoppingCart, Edit2, X, FolderPlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const WATCHLIST_KEY = 'phoenix-watchlist-tickers'
+const ACTIVE_LIST_KEY = 'phoenix-watchlist-active'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -39,13 +51,17 @@ interface QuoteData {
   high_52w: number | null
   low_52w: number | null
   sparkline?: number[]
+  pe_ratio?: number | null
+  eps?: number | null
+  dividend_yield?: number | null
+  next_earnings?: string | null
 }
 
-type SortField = 'symbol' | 'last_price' | 'change' | 'change_pct' | 'volume' | 'market_cap'
+type SortField = 'symbol' | 'last_price' | 'change' | 'change_pct' | 'volume' | 'market_cap' | 'pe_ratio' | 'eps'
 type SortDir = 'asc' | 'desc'
 
 /* ------------------------------------------------------------------ */
-/*  LocalStorage helpers                                               */
+/*  LocalStorage helpers (fallback)                                    */
 /* ------------------------------------------------------------------ */
 
 function loadTickers(): string[] {
@@ -158,8 +174,105 @@ export default function WatchlistPage() {
   const [inputValue, setInputValue] = useState('')
   const [sortField, setSortField] = useState<SortField>('symbol')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [serverAvailable, setServerAvailable] = useState(true)
 
-  // Persist tickers whenever they change
+  // Multiple watchlists
+  const [watchlists, setWatchlists] = useState<Record<string, string[]>>({})
+  const [activeList, setActiveList] = useState<string>(() => {
+    try { return localStorage.getItem(ACTIVE_LIST_KEY) ?? 'Default' } catch { return 'Default' }
+  })
+  const [showNewList, setShowNewList] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [renamingList, setRenamingList] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [deletingList, setDeletingList] = useState<string | null>(null)
+
+  // Persist active list name
+  useEffect(() => {
+    try { localStorage.setItem(ACTIVE_LIST_KEY, activeList) } catch { /* noop */ }
+  }, [activeList])
+
+  // Fetch server-side watchlists
+  const { data: serverLists } = useQuery<{ watchlists: Record<string, string[]> }>({
+    queryKey: ['watchlist-lists'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/watchlist/lists')
+        setServerAvailable(true)
+        return res.data
+      } catch {
+        setServerAvailable(false)
+        return { watchlists: {} }
+      }
+    },
+    refetchInterval: 30000,
+  })
+
+  // Sync server lists to local state
+  useEffect(() => {
+    if (serverLists?.watchlists && Object.keys(serverLists.watchlists).length > 0) {
+      setWatchlists(serverLists.watchlists)
+      const activeTickers = serverLists.watchlists[activeList] ?? []
+      setTickers(activeTickers)
+      saveTickers(activeTickers)
+    }
+  }, [serverLists]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If no server lists, use localStorage tickers for "Default"
+  useEffect(() => {
+    if (!serverAvailable && Object.keys(watchlists).length === 0) {
+      const localTickers = loadTickers()
+      if (localTickers.length > 0) {
+        setWatchlists({ Default: localTickers })
+        setTickers(localTickers)
+      }
+    }
+  }, [serverAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const watchlistNames = useMemo(() => {
+    const names = Object.keys(watchlists)
+    if (names.length === 0) return ['Default']
+    return names
+  }, [watchlists])
+
+  // Server mutations
+  const addMutation = useMutation({
+    mutationFn: async ({ symbols, listName }: { symbols: string[]; listName: string }) => {
+      if (serverAvailable) {
+        await api.post('/api/v2/watchlist/lists', { symbols, watchlist_name: listName })
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist-lists'] }),
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: async ({ symbol, listName }: { symbol: string; listName: string }) => {
+      if (serverAvailable) {
+        await api.delete(`/api/v2/watchlist/lists/${encodeURIComponent(listName)}/symbols/${symbol}`)
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist-lists'] }),
+  })
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ oldName, newName }: { oldName: string; newName: string }) => {
+      if (serverAvailable) {
+        await api.post('/api/v2/watchlist/lists/rename', { old_name: oldName, new_name: newName })
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist-lists'] }),
+  })
+
+  const deleteListMutation = useMutation({
+    mutationFn: async (listName: string) => {
+      if (serverAvailable) {
+        await api.delete(`/api/v2/watchlist/lists/${encodeURIComponent(listName)}`)
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist-lists'] }),
+  })
+
+  // Persist tickers to localStorage as fallback
   useEffect(() => { saveTickers(tickers) }, [tickers])
 
   // Fetch quotes for all tickers
@@ -171,9 +284,23 @@ export default function WatchlistPage() {
         const res = await api.get('/api/v2/watchlist/quotes', {
           params: { symbols: tickers.join(',') },
         })
-        return res.data ?? []
+        // Map API response fields to component fields
+        return (res.data ?? []).map((q: Record<string, unknown>) => ({
+          symbol: q.symbol as string,
+          last_price: (q.last_price ?? q.price ?? null) as number | null,
+          change: (q.change ?? null) as number | null,
+          change_pct: (q.change_pct ?? null) as number | null,
+          volume: (q.volume ?? null) as number | null,
+          market_cap: (q.market_cap ?? null) as number | null,
+          high_52w: (q.high_52w ?? q.fifty_two_week_high ?? null) as number | null,
+          low_52w: (q.low_52w ?? q.fifty_two_week_low ?? null) as number | null,
+          sparkline: q.sparkline as number[] | undefined,
+          pe_ratio: (q.pe_ratio ?? null) as number | null,
+          eps: (q.eps ?? null) as number | null,
+          dividend_yield: (q.dividend_yield ?? null) as number | null,
+          next_earnings: (q.next_earnings ?? null) as string | null,
+        }))
       } catch {
-        // If the endpoint does not exist, return placeholder data
         return tickers.map((symbol) => ({
           symbol,
           last_price: null,
@@ -184,6 +311,10 @@ export default function WatchlistPage() {
           high_52w: null,
           low_52w: null,
           sparkline: undefined,
+          pe_ratio: null,
+          eps: null,
+          dividend_yield: null,
+          next_earnings: null,
         }))
       }
     },
@@ -212,6 +343,10 @@ export default function WatchlistPage() {
         high_52w: q?.high_52w ?? null,
         low_52w: q?.low_52w ?? null,
         sparkline: q?.sparkline,
+        pe_ratio: q?.pe_ratio ?? null,
+        eps: q?.eps ?? null,
+        dividend_yield: q?.dividend_yield ?? null,
+        next_earnings: q?.next_earnings ?? null,
       }
     })
 
@@ -230,22 +365,41 @@ export default function WatchlistPage() {
     return merged
   }, [tickers, quoteMap, sortField, sortDir])
 
-  // Add ticker
-  const addTicker = useCallback(() => {
-    const sym = inputValue.trim().toUpperCase()
-    if (!sym || tickers.map((t) => t.toUpperCase()).includes(sym)) {
+  // Add ticker(s)
+  const addTickers = useCallback((input: string) => {
+    // Support comma-separated bulk add
+    const symbols = input.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    const existingSet = new Set(tickers.map((t) => t.toUpperCase()))
+    const newSymbols = symbols.filter((s) => !existingSet.has(s))
+
+    if (newSymbols.length === 0) {
       setInputValue('')
       return
     }
-    setTickers((prev) => [...prev, sym])
+
+    setTickers((prev) => [...prev, ...newSymbols])
     setInputValue('')
+
+    // Update local watchlists state
+    setWatchlists((prev) => ({
+      ...prev,
+      [activeList]: [...(prev[activeList] ?? []), ...newSymbols],
+    }))
+
+    // Sync to server
+    addMutation.mutate({ symbols: newSymbols, listName: activeList })
     qc.invalidateQueries({ queryKey: ['watchlist-quotes'] })
-  }, [inputValue, tickers, qc])
+  }, [inputValue, tickers, activeList, addMutation, qc])
 
   // Remove ticker
   const removeTicker = useCallback((sym: string) => {
     setTickers((prev) => prev.filter((t) => t.toUpperCase() !== sym.toUpperCase()))
-  }, [])
+    setWatchlists((prev) => ({
+      ...prev,
+      [activeList]: (prev[activeList] ?? []).filter((t) => t.toUpperCase() !== sym.toUpperCase()),
+    }))
+    removeMutation.mutate({ symbol: sym.toUpperCase(), listName: activeList })
+  }, [activeList, removeMutation])
 
   // Toggle sort
   const toggleSort = useCallback((field: SortField) => {
@@ -256,6 +410,43 @@ export default function WatchlistPage() {
       setSortDir('asc')
     }
   }, [sortField])
+
+  // Switch active list
+  const switchList = useCallback((name: string) => {
+    setActiveList(name)
+    const listTickers = watchlists[name] ?? []
+    setTickers(listTickers)
+    saveTickers(listTickers)
+  }, [watchlists])
+
+  // Create new watchlist
+  const createList = useCallback(() => {
+    const name = newListName.trim()
+    if (!name || watchlistNames.includes(name)) return
+    setWatchlists((prev) => ({ ...prev, [name]: [] }))
+    setActiveList(name)
+    setTickers([])
+    saveTickers([])
+    setShowNewList(false)
+    setNewListName('')
+    // Server will create on first add
+  }, [newListName, watchlistNames])
+
+  // Rename watchlist
+  const doRename = useCallback(() => {
+    const newName = renameValue.trim()
+    if (!newName || !renamingList || newName === renamingList) return
+    setWatchlists((prev) => {
+      const updated = { ...prev }
+      updated[newName] = updated[renamingList] ?? []
+      delete updated[renamingList]
+      return updated
+    })
+    if (activeList === renamingList) setActiveList(newName)
+    renameMutation.mutate({ oldName: renamingList, newName })
+    setRenamingList(null)
+    setRenameValue('')
+  }, [renameValue, renamingList, activeList, renameMutation])
 
   const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
     <TableHead
@@ -280,13 +471,13 @@ export default function WatchlistPage() {
       <PageHeader icon={Eye} title="Watchlist" description="Track tickers with live quotes">
         <form
           className="flex gap-2"
-          onSubmit={(e) => { e.preventDefault(); addTicker() }}
+          onSubmit={(e) => { e.preventDefault(); addTickers(inputValue) }}
         >
           <Input
-            placeholder="Add ticker (e.g. AAPL)"
+            placeholder="AAPL, TSLA, NVDA..."
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value.toUpperCase())}
-            className="w-36 sm:w-44 font-mono uppercase"
+            className="w-44 sm:w-56 font-mono uppercase"
           />
           <Button type="submit" size="sm" disabled={!inputValue.trim()}>
             <Plus className="h-4 w-4 mr-1" /> Add
@@ -302,13 +493,53 @@ export default function WatchlistPage() {
         <MetricCard title="Refresh" value="60s" subtitle="Auto-refresh interval" />
       </div>
 
+      {/* Watchlist Tabs */}
+      <div className="flex items-center gap-2 flex-wrap border-b pb-2">
+        {watchlistNames.map((name) => (
+          <div key={name} className="flex items-center gap-0.5">
+            <Button
+              variant={activeList === name ? 'default' : 'ghost'}
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => switchList(name)}
+            >
+              {name}
+              {activeList === name && ` (${tickers.length})`}
+            </Button>
+            {activeList === name && watchlistNames.length > 1 && (
+              <div className="flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => { setRenamingList(name); setRenameValue(name) }}
+                >
+                  <Edit2 className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-destructive"
+                  onClick={() => setDeletingList(name)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+          </div>
+        ))}
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setShowNewList(true)}>
+          <FolderPlus className="h-3 w-3" /> New List
+        </Button>
+      </div>
+
       {/* Watchlist table */}
       {tickers.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Eye className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-muted-foreground">Your watchlist is empty.</p>
-            <p className="text-sm text-muted-foreground mt-1">Add a ticker above to start tracking.</p>
+            <p className="text-sm text-muted-foreground mt-1">Add tickers above (comma-separated for bulk add).</p>
           </CardContent>
         </Card>
       ) : (
@@ -323,6 +554,10 @@ export default function WatchlistPage() {
                 <SortHeader field="change_pct" label="Change %" />
                 <SortHeader field="volume" label="Volume" />
                 <SortHeader field="market_cap" label="Mkt Cap" />
+                <SortHeader field="pe_ratio" label="P/E" />
+                <SortHeader field="eps" label="EPS" />
+                <TableHead>Div Yield</TableHead>
+                <TableHead>Earnings</TableHead>
                 <TableHead>52W Range</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -331,7 +566,7 @@ export default function WatchlistPage() {
               {isLoading ? (
                 Array.from({ length: Math.min(tickers.length, 5) }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 9 }).map((__, j) => (
+                    {Array.from({ length: 13 }).map((__, j) => (
                       <TableCell key={j}><Skeleton className="h-6 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -382,6 +617,26 @@ export default function WatchlistPage() {
                       {fmtLarge(row.market_cap)}
                     </TableCell>
 
+                    {/* P/E Ratio */}
+                    <TableCell className="tabular-nums text-xs">
+                      {row.pe_ratio != null ? fmt(row.pe_ratio, 1) : '--'}
+                    </TableCell>
+
+                    {/* EPS */}
+                    <TableCell className="tabular-nums text-xs">
+                      {row.eps != null ? `$${fmt(row.eps)}` : '--'}
+                    </TableCell>
+
+                    {/* Dividend Yield */}
+                    <TableCell className="tabular-nums text-xs">
+                      {row.dividend_yield != null ? `${(row.dividend_yield * 100).toFixed(2)}%` : '--'}
+                    </TableCell>
+
+                    {/* Next Earnings */}
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {row.next_earnings ?? '--'}
+                    </TableCell>
+
                     {/* 52W Range */}
                     <TableCell>
                       <RangeBar current={row.last_price} low={row.low_52w} high={row.high_52w} />
@@ -390,6 +645,14 @@ export default function WatchlistPage() {
                     {/* Actions */}
                     <TableCell className="text-right">
                       <div className="inline-flex items-center gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled>
+                              <ShoppingCart className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Coming soon: One-click trade</TooltipContent>
+                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-7 w-7" disabled>
@@ -425,6 +688,66 @@ export default function WatchlistPage() {
           )}
         </div>
       )}
+
+      {/* New Watchlist Dialog */}
+      <Dialog open={showNewList} onOpenChange={setShowNewList}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Watchlist</DialogTitle>
+          </DialogHeader>
+          <Input
+            placeholder="Watchlist name..."
+            value={newListName}
+            onChange={(e) => setNewListName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') createList() }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewList(false)}>Cancel</Button>
+            <Button onClick={createList} disabled={!newListName.trim()}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Watchlist Dialog */}
+      <Dialog open={!!renamingList} onOpenChange={() => setRenamingList(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Watchlist</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') doRename() }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenamingList(null)}>Cancel</Button>
+            <Button onClick={doRename} disabled={!renameValue.trim()}>Rename</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Watchlist Confirm */}
+      <ConfirmDialog
+        open={!!deletingList}
+        onOpenChange={() => setDeletingList(null)}
+        title="Delete Watchlist"
+        description={`Delete "${deletingList}" and all its tickers?`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!deletingList) return
+          deleteListMutation.mutate(deletingList)
+          setWatchlists((prev) => {
+            const updated = { ...prev }
+            delete updated[deletingList]
+            return updated
+          })
+          const remaining = watchlistNames.filter((n) => n !== deletingList)
+          const next = remaining[0] ?? 'Default'
+          switchList(next)
+          setDeletingList(null)
+        }}
+      />
     </div>
   )
 }

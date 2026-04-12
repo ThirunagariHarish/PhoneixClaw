@@ -1,76 +1,104 @@
 /**
  * Market Command Center — draggable/resizable widget grid with tabs.
- * Ported from archive MarketCommandCenter; uses PageHeader and theme primary.
+ * MCP-3: Symbol Link Groups, MCP-4: Watchlist, MCP-5: Layout Presets, MCP-9: Lazy Loading.
  */
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useRef, useEffect, Suspense } from 'react'
 import { ResponsiveGridLayout, useContainerWidth, type LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
-import { Plus, X, Pencil, Check, Copy, LineChart } from 'lucide-react'
+import { Plus, X, Pencil, Check, Copy, LineChart, LayoutGrid } from 'lucide-react'
 
 import { PageHeader } from '@/components/ui/PageHeader'
 import WidgetCatalog, { WIDGET_DEFINITIONS, type WidgetDef } from '@/components/market-widgets/WidgetCatalog'
 import WidgetWrapper from '@/components/market-widgets/WidgetWrapper'
 import WidgetSettingsDialog from '@/components/market-widgets/WidgetSettingsDialog'
-import FearGreedWidget from '@/components/market-widgets/FearGreedWidget'
-import VixWidget from '@/components/market-widgets/VixWidget'
-import Mag7Widget from '@/components/market-widgets/Mag7Widget'
-import MarketHeatmapWidget from '@/components/market-widgets/MarketHeatmapWidget'
-import TrendingVideosWidget from '@/components/market-widgets/TrendingVideosWidget'
-import BreakingNewsWidget from '@/components/market-widgets/BreakingNewsWidget'
-import SocialFeedWidget from '@/components/market-widgets/SocialFeedWidget'
-import GlobalIndicesWidget from '@/components/market-widgets/GlobalIndicesWidget'
-import CryptoWidget from '@/components/market-widgets/CryptoWidget'
-import SectorPerformanceWidget from '@/components/market-widgets/SectorPerformanceWidget'
-import EconomicCalendarWidget from '@/components/market-widgets/EconomicCalendarWidget'
-import EarningsCalendarWidget from '@/components/market-widgets/EarningsCalendarWidget'
-import MarketBreadthWidget from '@/components/market-widgets/MarketBreadthWidget'
-import FuturesWidget from '@/components/market-widgets/FuturesWidget'
-import CommoditiesWidget from '@/components/market-widgets/CommoditiesWidget'
-import ForexWidget from '@/components/market-widgets/ForexWidget'
-import BondYieldsWidget from '@/components/market-widgets/BondYieldsWidget'
-import TopMoversWidget from '@/components/market-widgets/TopMoversWidget'
-import PlatformSentimentWidget from '@/components/market-widgets/PlatformSentimentWidget'
-import TradingViewChartWidget from '@/components/market-widgets/TradingViewChartWidget'
-import RSSFeedWidget from '@/components/market-widgets/RSSFeedWidget'
-import MarketClockWidget from '@/components/market-widgets/MarketClockWidget'
-import StockScreenerWidget from '@/components/market-widgets/StockScreenerWidget'
-import ForexCrossRatesWidget from '@/components/market-widgets/ForexCrossRatesWidget'
-import CryptoScreenerWidget from '@/components/market-widgets/CryptoScreenerWidget'
-import TechnicalAnalysisWidget from '@/components/market-widgets/TechnicalAnalysisWidget'
-import SymbolInfoWidget from '@/components/market-widgets/SymbolInfoWidget'
-import MiniChartWidget from '@/components/market-widgets/MiniChartWidget'
-import HotlistsWidget from '@/components/market-widgets/HotlistsWidget'
-import PutCallRatioWidget from '@/components/market-widgets/PutCallRatioWidget'
-import IPOCalendarWidget from '@/components/market-widgets/IPOCalendarWidget'
-import RelativeVolumeWidget from '@/components/market-widgets/RelativeVolumeWidget'
-import FiftyTwoWeekWidget from '@/components/market-widgets/FiftyTwoWeekWidget'
-import SectorRotationWidget from '@/components/market-widgets/SectorRotationWidget'
-import OptionsExpiryWidget from '@/components/market-widgets/OptionsExpiryWidget'
-import TradingChecklistWidget from '@/components/market-widgets/TradingChecklistWidget'
-import QuickNotesWidget from '@/components/market-widgets/QuickNotesWidget'
-import TickerTapeWidget from '@/components/market-widgets/TickerTapeWidget'
-import TopStoriesWidget from '@/components/market-widgets/TopStoriesWidget'
-import FundamentalDataWidget from '@/components/market-widgets/FundamentalDataWidget'
-import CompanyProfileWidget from '@/components/market-widgets/CompanyProfileWidget'
-import CryptoHeatmapWidget from '@/components/market-widgets/CryptoHeatmapWidget'
-import ETFHeatmapWidget from '@/components/market-widgets/ETFHeatmapWidget'
-import GammaExposureWidget from '@/components/market-widgets/GammaExposureWidget'
-import MarketInternalsWidget from '@/components/market-widgets/MarketInternalsWidget'
-import VixTermStructureWidget from '@/components/market-widgets/VixTermStructureWidget'
-import PremarketGapWidget from '@/components/market-widgets/PremarketGapWidget'
-import SpxKeyLevelsWidget from '@/components/market-widgets/SpxKeyLevelsWidget'
-import OptionsFlowWidget from '@/components/market-widgets/OptionsFlowWidget'
-import CorrelationMatrixWidget from '@/components/market-widgets/CorrelationMatrixWidget'
-import VolatilityDashboardWidget from '@/components/market-widgets/VolatilityDashboardWidget'
-import PremarketMoversWidget from '@/components/market-widgets/PremarketMoversWidget'
-import DayTradePnlWidget from '@/components/market-widgets/DayTradePnlWidget'
-import PositionSizeCalcWidget from '@/components/market-widgets/PositionSizeCalcWidget'
-import RiskRewardWidget from '@/components/market-widgets/RiskRewardWidget'
-import TradingSessionWidget from '@/components/market-widgets/TradingSessionWidget'
-import KeyboardShortcutsWidget from '@/components/market-widgets/KeyboardShortcutsWidget'
+import { useSymbolLink, type LinkGroup, LINK_GROUP_COLORS } from '@/context/SymbolLinkContext'
 
-const STATIC_WIDGETS: Record<string, React.ComponentType> = {
+/* -------------------------------------------------------------------------- */
+/*  MCP-9: Lazy-loaded widget imports with React.lazy()                       */
+/* -------------------------------------------------------------------------- */
+
+const FearGreedWidget = React.lazy(() => import('@/components/market-widgets/FearGreedWidget'))
+const VixWidget = React.lazy(() => import('@/components/market-widgets/VixWidget'))
+const Mag7Widget = React.lazy(() => import('@/components/market-widgets/Mag7Widget'))
+const MarketHeatmapWidget = React.lazy(() => import('@/components/market-widgets/MarketHeatmapWidget'))
+const TrendingVideosWidget = React.lazy(() => import('@/components/market-widgets/TrendingVideosWidget'))
+const BreakingNewsWidget = React.lazy(() => import('@/components/market-widgets/BreakingNewsWidget'))
+const SocialFeedWidget = React.lazy(() => import('@/components/market-widgets/SocialFeedWidget'))
+const GlobalIndicesWidget = React.lazy(() => import('@/components/market-widgets/GlobalIndicesWidget'))
+const CryptoWidget = React.lazy(() => import('@/components/market-widgets/CryptoWidget'))
+const SectorPerformanceWidget = React.lazy(() => import('@/components/market-widgets/SectorPerformanceWidget'))
+const EconomicCalendarWidget = React.lazy(() => import('@/components/market-widgets/EconomicCalendarWidget'))
+const EarningsCalendarWidget = React.lazy(() => import('@/components/market-widgets/EarningsCalendarWidget'))
+const MarketBreadthWidget = React.lazy(() => import('@/components/market-widgets/MarketBreadthWidget'))
+const FuturesWidget = React.lazy(() => import('@/components/market-widgets/FuturesWidget'))
+const CommoditiesWidget = React.lazy(() => import('@/components/market-widgets/CommoditiesWidget'))
+const ForexWidget = React.lazy(() => import('@/components/market-widgets/ForexWidget'))
+const BondYieldsWidget = React.lazy(() => import('@/components/market-widgets/BondYieldsWidget'))
+const TopMoversWidget = React.lazy(() => import('@/components/market-widgets/TopMoversWidget'))
+const PlatformSentimentWidget = React.lazy(() => import('@/components/market-widgets/PlatformSentimentWidget'))
+const TradingViewChartWidget = React.lazy(() => import('@/components/market-widgets/TradingViewChartWidget'))
+const RSSFeedWidget = React.lazy(() => import('@/components/market-widgets/RSSFeedWidget'))
+const MarketClockWidget = React.lazy(() => import('@/components/market-widgets/MarketClockWidget'))
+const StockScreenerWidget = React.lazy(() => import('@/components/market-widgets/StockScreenerWidget'))
+const ForexCrossRatesWidget = React.lazy(() => import('@/components/market-widgets/ForexCrossRatesWidget'))
+const CryptoScreenerWidget = React.lazy(() => import('@/components/market-widgets/CryptoScreenerWidget'))
+const TechnicalAnalysisWidget = React.lazy(() => import('@/components/market-widgets/TechnicalAnalysisWidget'))
+const SymbolInfoWidget = React.lazy(() => import('@/components/market-widgets/SymbolInfoWidget'))
+const MiniChartWidget = React.lazy(() => import('@/components/market-widgets/MiniChartWidget'))
+const HotlistsWidget = React.lazy(() => import('@/components/market-widgets/HotlistsWidget'))
+const PutCallRatioWidget = React.lazy(() => import('@/components/market-widgets/PutCallRatioWidget'))
+const IPOCalendarWidget = React.lazy(() => import('@/components/market-widgets/IPOCalendarWidget'))
+const RelativeVolumeWidget = React.lazy(() => import('@/components/market-widgets/RelativeVolumeWidget'))
+const FiftyTwoWeekWidget = React.lazy(() => import('@/components/market-widgets/FiftyTwoWeekWidget'))
+const SectorRotationWidget = React.lazy(() => import('@/components/market-widgets/SectorRotationWidget'))
+const OptionsExpiryWidget = React.lazy(() => import('@/components/market-widgets/OptionsExpiryWidget'))
+const TradingChecklistWidget = React.lazy(() => import('@/components/market-widgets/TradingChecklistWidget'))
+const QuickNotesWidget = React.lazy(() => import('@/components/market-widgets/QuickNotesWidget'))
+const TickerTapeWidget = React.lazy(() => import('@/components/market-widgets/TickerTapeWidget'))
+const TopStoriesWidget = React.lazy(() => import('@/components/market-widgets/TopStoriesWidget'))
+const FundamentalDataWidget = React.lazy(() => import('@/components/market-widgets/FundamentalDataWidget'))
+const CompanyProfileWidget = React.lazy(() => import('@/components/market-widgets/CompanyProfileWidget'))
+const CryptoHeatmapWidget = React.lazy(() => import('@/components/market-widgets/CryptoHeatmapWidget'))
+const ETFHeatmapWidget = React.lazy(() => import('@/components/market-widgets/ETFHeatmapWidget'))
+const GammaExposureWidget = React.lazy(() => import('@/components/market-widgets/GammaExposureWidget'))
+const MarketInternalsWidget = React.lazy(() => import('@/components/market-widgets/MarketInternalsWidget'))
+const VixTermStructureWidget = React.lazy(() => import('@/components/market-widgets/VixTermStructureWidget'))
+const PremarketGapWidget = React.lazy(() => import('@/components/market-widgets/PremarketGapWidget'))
+const SpxKeyLevelsWidget = React.lazy(() => import('@/components/market-widgets/SpxKeyLevelsWidget'))
+const OptionsFlowWidget = React.lazy(() => import('@/components/market-widgets/OptionsFlowWidget'))
+const CorrelationMatrixWidget = React.lazy(() => import('@/components/market-widgets/CorrelationMatrixWidget'))
+const VolatilityDashboardWidget = React.lazy(() => import('@/components/market-widgets/VolatilityDashboardWidget'))
+const PremarketMoversWidget = React.lazy(() => import('@/components/market-widgets/PremarketMoversWidget'))
+const DayTradePnlWidget = React.lazy(() => import('@/components/market-widgets/DayTradePnlWidget'))
+const PositionSizeCalcWidget = React.lazy(() => import('@/components/market-widgets/PositionSizeCalcWidget'))
+const RiskRewardWidget = React.lazy(() => import('@/components/market-widgets/RiskRewardWidget'))
+const TradingSessionWidget = React.lazy(() => import('@/components/market-widgets/TradingSessionWidget'))
+const KeyboardShortcutsWidget = React.lazy(() => import('@/components/market-widgets/KeyboardShortcutsWidget'))
+const WatchlistWidget = React.lazy(() => import('@/components/market-widgets/WatchlistWidget'))
+
+/* -------------------------------------------------------------------------- */
+/*  Widget skeleton fallback                                                  */
+/* -------------------------------------------------------------------------- */
+
+function WidgetSkeleton() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <div className="animate-pulse space-y-2 w-3/4">
+        <div className="h-3 bg-muted rounded" />
+        <div className="h-3 bg-muted rounded w-2/3" />
+        <div className="h-8 bg-muted rounded mt-3" />
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Widget maps                                                               */
+/* -------------------------------------------------------------------------- */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const STATIC_WIDGETS: Record<string, React.LazyExoticComponent<React.ComponentType<any>>> = {
   'fear-greed': FearGreedWidget,
   'mag7': Mag7Widget,
   'trending-videos': TrendingVideosWidget,
@@ -116,9 +144,10 @@ const STATIC_WIDGETS: Record<string, React.ComponentType> = {
   'keyboard-shortcuts': KeyboardShortcutsWidget,
   'correlations': CorrelationMatrixWidget,
   'heatmap': MarketHeatmapWidget,
+  'watchlist': WatchlistWidget,
 }
 
-const CONFIGURABLE_WIDGETS: Record<string, React.ComponentType<{ symbol: string }>> = {
+const CONFIGURABLE_WIDGETS: Record<string, React.LazyExoticComponent<React.ComponentType<any>>> = {
   'tv-chart': TradingViewChartWidget,
   'vix': VixWidget,
   'technical-analysis': TechnicalAnalysisWidget,
@@ -152,6 +181,56 @@ function isConfigurable(widgetId: string): boolean {
   return widgetId in CONFIGURABLE_WIDGETS
 }
 
+/* -------------------------------------------------------------------------- */
+/*  MCP-5: Layout Presets                                                     */
+/* -------------------------------------------------------------------------- */
+
+interface PresetDef {
+  name: string
+  widgets: string[]
+  layouts: LayoutItem[]
+}
+
+const LAYOUT_PRESETS: PresetDef[] = [
+  {
+    name: 'Day Trading',
+    widgets: ['tv-chart', 'top-movers', 'rvol', 'options-flow', 'fear-greed'],
+    layouts: [
+      { i: 'tv-chart', x: 0, y: 0, w: 8, h: 8, minW: 4, minH: 4 },
+      { i: 'top-movers', x: 8, y: 0, w: 4, h: 4, minW: 3, minH: 3 },
+      { i: 'rvol', x: 8, y: 4, w: 4, h: 4, minW: 3, minH: 4 },
+      { i: 'options-flow', x: 0, y: 8, w: 6, h: 6, minW: 3, minH: 5 },
+      { i: 'fear-greed', x: 6, y: 8, w: 3, h: 4, minW: 2, minH: 3 },
+    ],
+  },
+  {
+    name: 'Macro',
+    widgets: ['global-indices', 'bond-yields', 'commodities', 'forex', 'econ-cal'],
+    layouts: [
+      { i: 'global-indices', x: 0, y: 0, w: 5, h: 4, minW: 4, minH: 3 },
+      { i: 'bond-yields', x: 5, y: 0, w: 4, h: 4, minW: 3, minH: 3 },
+      { i: 'commodities', x: 9, y: 0, w: 3, h: 4, minW: 3, minH: 3 },
+      { i: 'forex', x: 0, y: 4, w: 4, h: 4, minW: 3, minH: 3 },
+      { i: 'econ-cal', x: 4, y: 4, w: 5, h: 5, minW: 4, minH: 4 },
+    ],
+  },
+  {
+    name: 'Swing Trading',
+    widgets: ['tv-chart', 'sector-perf', '52week', 'rvol', 'market-breadth'],
+    layouts: [
+      { i: 'tv-chart', x: 0, y: 0, w: 6, h: 6, minW: 4, minH: 4 },
+      { i: 'sector-perf', x: 6, y: 0, w: 4, h: 5, minW: 3, minH: 4 },
+      { i: '52week', x: 10, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
+      { i: 'rvol', x: 0, y: 6, w: 4, h: 5, minW: 3, minH: 4 },
+      { i: 'market-breadth', x: 4, y: 6, w: 4, h: 4, minW: 3, minH: 3 },
+    ],
+  },
+]
+
+/* -------------------------------------------------------------------------- */
+/*  Tab types + persistence                                                   */
+/* -------------------------------------------------------------------------- */
+
 interface TabData {
   id: string
   name: string
@@ -184,7 +263,7 @@ function loadTabs(): TabData[] {
       const tabs = JSON.parse(saved) as TabData[]
       if (Array.isArray(tabs) && tabs.length > 0) return tabs
     }
-  } catch {}
+  } catch { /* ignore */ }
   return [DEFAULT_TAB]
 }
 
@@ -199,6 +278,10 @@ function getWidgetDef(id: string): WidgetDef | undefined {
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9)
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Tab Bar                                                                   */
+/* -------------------------------------------------------------------------- */
 
 function TabBar({
   tabs,
@@ -318,11 +401,58 @@ function TabBar({
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Presets Dropdown                                                          */
+/* -------------------------------------------------------------------------- */
+
+function PresetsDropdown({ onSelect }: { onSelect: (preset: PresetDef) => void }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-muted/50 transition-colors"
+      >
+        <LayoutGrid className="h-4 w-4" />
+        Presets
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border bg-popover p-1 shadow-md">
+            {LAYOUT_PRESETS.map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                onClick={() => {
+                  onSelect(preset)
+                  setOpen(false)
+                }}
+                className="w-full text-left px-3 py-2 text-sm rounded hover:bg-accent transition-colors"
+              >
+                <div className="font-medium">{preset.name}</div>
+                <div className="text-xs text-muted-foreground">{preset.widgets.length} widgets</div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Main Component                                                            */
+/* -------------------------------------------------------------------------- */
+
 export default function MarketPage() {
   const [tabs, setTabs] = useState<TabData[]>(loadTabs)
   const [activeTabId, setActiveTabId] = useState(() => tabs[0]?.id ?? 'default')
   const [settingsWidgetId, setSettingsWidgetId] = useState<string | null>(null)
   const { width, containerRef, mounted } = useContainerWidth()
+  const { setGroupSymbol } = useSymbolLink()
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeTabId) ?? tabs[0], [tabs, activeTabId])
 
@@ -385,16 +515,73 @@ export default function MarketPage() {
 
   const handleWidgetConfigChange = useCallback(
     (widgetId: string, key: string, value: string) => {
-      updateTab(activeTabId, (tab) => ({
-        ...tab,
-        widgetConfigs: {
+      updateTab(activeTabId, (tab) => {
+        const newConfigs = {
           ...tab.widgetConfigs,
           [widgetId]: { ...(tab.widgetConfigs[widgetId] ?? {}), [key]: value },
-        },
-      }))
+        }
+
+        // MCP-3: If widget has a linkGroup, broadcast the symbol to the group
+        const linkGroup = newConfigs[widgetId]?.linkGroup as LinkGroup | undefined
+        if (key === 'symbol' && linkGroup) {
+          setGroupSymbol(linkGroup, value)
+        }
+
+        return { ...tab, widgetConfigs: newConfigs }
+      })
       setSettingsWidgetId(null)
     },
+    [activeTabId, updateTab, setGroupSymbol],
+  )
+
+  // MCP-3: Handle link group assignment from settings dialog
+  const handleLinkGroupChange = useCallback(
+    (widgetId: string, group: LinkGroup | null) => {
+      updateTab(activeTabId, (tab) => {
+        const existing = tab.widgetConfigs[widgetId] ?? {}
+        const updated = { ...existing }
+        if (group) {
+          updated.linkGroup = group
+        } else {
+          delete updated.linkGroup
+        }
+        return {
+          ...tab,
+          widgetConfigs: { ...tab.widgetConfigs, [widgetId]: updated },
+        }
+      })
+    },
     [activeTabId, updateTab],
+  )
+
+  // MCP-5: Apply a preset to the current tab
+  const handleApplyPreset = useCallback(
+    (preset: PresetDef) => {
+      updateTab(activeTabId, (tab) => {
+        const newConfigs: Record<string, Record<string, string>> = {}
+        for (const wid of preset.widgets) {
+          if (isConfigurable(wid)) {
+            newConfigs[wid] = { symbol: CONFIGURABLE_DEFAULTS[wid] ?? 'SPY' }
+          }
+        }
+        return {
+          ...tab,
+          widgets: [...preset.widgets],
+          layouts: [...preset.layouts],
+          widgetConfigs: newConfigs,
+        }
+      })
+    },
+    [activeTabId, updateTab],
+  )
+
+  // MCP-4: Handle watchlist ticker click to update linked widgets
+  const handleWatchlistTickerClick = useCallback(
+    (ticker: string) => {
+      // Update all link groups to the new ticker
+      (['A', 'B', 'C'] as LinkGroup[]).forEach((g) => setGroupSymbol(g, ticker))
+    },
+    [setGroupSymbol],
   )
 
   const handleAddTab = useCallback(() => {
@@ -458,14 +645,32 @@ export default function MarketPage() {
       const config = getWidgetConfig(widgetId)
       const symbol = config.symbol ?? CONFIGURABLE_DEFAULTS[widgetId] ?? 'SPY'
 
+      // MCP-4: Special handling for watchlist widget
+      if (widgetId === 'watchlist') {
+        const WLComp = STATIC_WIDGETS['watchlist']
+        return (
+          <Suspense fallback={<WidgetSkeleton />}>
+            <WLComp onTickerClick={handleWatchlistTickerClick} />
+          </Suspense>
+        )
+      }
+
       const ConfigurableComponent = CONFIGURABLE_WIDGETS[widgetId]
       if (ConfigurableComponent) {
-        return <ConfigurableComponent symbol={symbol} />
+        return (
+          <Suspense fallback={<WidgetSkeleton />}>
+            <ConfigurableComponent symbol={symbol} />
+          </Suspense>
+        )
       }
 
       const StaticComponent = STATIC_WIDGETS[widgetId]
       if (StaticComponent) {
-        return <StaticComponent />
+        return (
+          <Suspense fallback={<WidgetSkeleton />}>
+            <StaticComponent />
+          </Suspense>
+        )
       }
 
       return (
@@ -474,7 +679,7 @@ export default function MarketPage() {
         </div>
       )
     },
-    [getWidgetConfig],
+    [getWidgetConfig, handleWatchlistTickerClick],
   )
 
   return (
@@ -484,7 +689,10 @@ export default function MarketPage() {
         title="Market Command Center"
         description={`${activeTab.widgets.length} widgets on "${activeTab.name}" — drag to rearrange, add or remove widgets`}
       >
-        <WidgetCatalog activeWidgetIds={activeTab.widgets} onAddWidget={handleAddWidget} />
+        <div className="flex items-center gap-2">
+          <PresetsDropdown onSelect={handleApplyPreset} />
+          <WidgetCatalog activeWidgetIds={activeTab.widgets} onAddWidget={handleAddWidget} />
+        </div>
       </PageHeader>
 
       <div className="border-b bg-card/50 rounded-t-lg sticky top-0 z-10">
@@ -506,7 +714,7 @@ export default function MarketPage() {
         {activeTab.widgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <p className="text-sm mb-2">No widgets on this tab yet</p>
-            <p className="text-xs mb-4">Click &quot;Add Widget&quot; to build your &quot;{activeTab.name}&quot; dashboard</p>
+            <p className="text-xs mb-4">Click &quot;Add Widget&quot; or choose a Preset to build your &quot;{activeTab.name}&quot; dashboard</p>
           </div>
         ) : mounted ? (
           (() => {
@@ -529,6 +737,7 @@ export default function MarketPage() {
               if (!def) return null
               const configurable = isConfigurable(widgetId)
               const config = getWidgetConfig(widgetId)
+              const linkGroup = config.linkGroup as LinkGroup | undefined
 
               return (
                 <div key={widgetId}>
@@ -540,6 +749,7 @@ export default function MarketPage() {
                     onRemove={() => handleRemoveWidget(widgetId)}
                     hasSettings={configurable}
                     onSettings={() => setSettingsWidgetId(widgetId)}
+                    linkGroupColor={linkGroup ? LINK_GROUP_COLORS[linkGroup] : undefined}
                   >
                     {renderWidget(widgetId)}
                   </WidgetWrapper>
@@ -561,7 +771,9 @@ export default function MarketPage() {
             CONFIGURABLE_DEFAULTS[settingsWidgetId] ??
             'SPY'
           }
+          currentLinkGroup={(getWidgetConfig(settingsWidgetId).linkGroup as LinkGroup) ?? null}
           onSave={(symbol) => handleWidgetConfigChange(settingsWidgetId, 'symbol', symbol)}
+          onLinkGroupChange={(group) => handleLinkGroupChange(settingsWidgetId, group)}
           onClose={() => setSettingsWidgetId(null)}
         />
       )}

@@ -1,6 +1,6 @@
 /**
  * Macro-Pulse — Macro economic intelligence from the Macro-Pulse agent.
- * Phoenix v2.
+ * Phoenix v3.
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -21,21 +21,29 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   LineChart as RechartsLineChart,
   Line as RechartsLine,
+  AreaChart as RechartsAreaChart,
+  Area as RechartsArea,
   XAxis as RechartsXAxis,
   YAxis as RechartsYAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
   ResponsiveContainer as RechartsResponsiveContainer,
+  BarChart as RechartsBarChart,
+  Bar as RechartsBar,
 } from 'recharts'
 import type { ComponentType } from 'react'
 import { Bot, Calendar, AlertTriangle, Lightbulb } from 'lucide-react'
 
 const ResponsiveContainer = RechartsResponsiveContainer as unknown as ComponentType<any>
 const LineChart = RechartsLineChart as unknown as ComponentType<any>
+const AreaChart = RechartsAreaChart as unknown as ComponentType<any>
+const Area = RechartsArea as unknown as ComponentType<any>
 const XAxis = RechartsXAxis as unknown as ComponentType<any>
 const YAxis = RechartsYAxis as unknown as ComponentType<any>
 const Tooltip = RechartsTooltip as unknown as ComponentType<any>
 const Line = RechartsLine as unknown as ComponentType<any>
+const BarChart = RechartsBarChart as unknown as ComponentType<any>
+const Bar = RechartsBar as unknown as ComponentType<any>
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
@@ -54,8 +62,8 @@ const regimeColors: Record<string, string> = {
 }
 
 function trendArrow(trend?: 'up' | 'down' | 'neutral') {
-  if (trend === 'up') return '↑ '
-  if (trend === 'down') return '↓ '
+  if (trend === 'up') return '^ '
+  if (trend === 'down') return 'v '
   return ''
 }
 
@@ -139,6 +147,45 @@ export default function MacroPulsePage() {
         return res.data
       } catch {
         return []
+      }
+    },
+  })
+
+  // M2: Sparkline data for VIX, 10Y, DXY
+  const { data: sparklines = {} } = useQuery({
+    queryKey: ['macro-pulse-sparklines'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/macro-pulse/sparklines')
+        return res.data ?? {}
+      } catch {
+        return {}
+      }
+    },
+  })
+
+  // M6: Yield curve data
+  const { data: yieldCurve = { curve: [], spread_history: [] } } = useQuery({
+    queryKey: ['macro-pulse-yield-curve'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/macro-pulse/yield-curve')
+        return res.data ?? { curve: [], spread_history: [] }
+      } catch {
+        return { curve: [], spread_history: [] }
+      }
+    },
+  })
+
+  // M5: FRED data
+  const { data: fredData = { gdp: [], unemployment: [], cpi: [] } } = useQuery({
+    queryKey: ['macro-pulse-fred'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/macro-pulse/fred-indicators')
+        return res.data ?? { gdp: [], unemployment: [], cpi: [] }
+      } catch {
+        return { gdp: [], unemployment: [], cpi: [] }
       }
     },
   })
@@ -256,6 +303,8 @@ export default function MacroPulsePage() {
           <TabsTrigger value="regime">Regime Overview</TabsTrigger>
           <TabsTrigger value="calendar">Fed Calendar</TabsTrigger>
           <TabsTrigger value="indicators">Economic Indicators</TabsTrigger>
+          <TabsTrigger value="yieldcurve">Yield Curve</TabsTrigger>
+          <TabsTrigger value="fred">FRED Data</TabsTrigger>
           <TabsTrigger value="geopolitical">Geopolitical Risks</TabsTrigger>
           <TabsTrigger value="implications">Trade Implications</TabsTrigger>
         </TabsList>
@@ -302,9 +351,9 @@ export default function MacroPulsePage() {
                 {regime.vix ?? 'N/A'}
               </p>
               <p className="text-sm text-muted-foreground">
-                {(regime.vix ?? 0) < 15 ? 'Low volatility — complacency' :
+                {(regime.vix ?? 0) < 15 ? 'Low volatility -- complacency' :
                  (regime.vix ?? 0) < 20 ? 'Normal volatility' :
-                 (regime.vix ?? 0) < 30 ? 'Elevated volatility — caution' :
+                 (regime.vix ?? 0) < 30 ? 'Elevated volatility -- caution' :
                  'Fear / crisis levels'}
               </p>
             </FlexCard>
@@ -339,12 +388,37 @@ export default function MacroPulsePage() {
               </FlexCard>
             )}
           </div>
+
+          {/* M2: VIX, 10Y, DXY sparklines */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+            {(['VIX', '10Y', 'DXY'] as const).map((key) => {
+              const points = (sparklines as any)[key] ?? []
+              return (
+                <FlexCard key={key} title={`${key} (30d)`}>
+                  {points.length > 0 ? (
+                    <div className="h-[120px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={points}>
+                          <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d: string) => d.slice(5)} />
+                          <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Loading...</p>
+                  )}
+                </FlexCard>
+              )
+            })}
+          </div>
         </TabsContent>
 
         <TabsContent value="calendar" className="space-y-4">
           <FlexCard title="Fed Calendar" action={<Calendar className="h-4 w-4 text-muted-foreground" />}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-              {mockCalendar.map((ev: { id: string; date: string; event: string; impact: string }) => (
+              {mockCalendar.map((ev: { id: string; date: string; event: string; impact: string; forecast?: string | null; actual?: string | null; surprise?: string | null; prior?: string | null }) => (
                 <div
                   key={ev.id}
                   className="p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
@@ -357,6 +431,33 @@ export default function MacroPulsePage() {
                   >
                     {ev.impact}
                   </Badge>
+                  {/* M7: Consensus vs actual */}
+                  <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
+                    {ev.forecast != null && (
+                      <>
+                        <span className="text-muted-foreground">Forecast:</span>
+                        <span>{ev.forecast}</span>
+                      </>
+                    )}
+                    {ev.actual != null && (
+                      <>
+                        <span className="text-muted-foreground">Actual:</span>
+                        <span className="font-semibold">{ev.actual}</span>
+                      </>
+                    )}
+                    {ev.surprise != null && (
+                      <>
+                        <span className="text-muted-foreground">Surprise:</span>
+                        <span className={Number(ev.surprise) > 0 ? 'text-emerald-600' : 'text-red-600'}>{ev.surprise}</span>
+                      </>
+                    )}
+                    {ev.prior != null && (
+                      <>
+                        <span className="text-muted-foreground">Prior:</span>
+                        <span>{ev.prior}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -387,6 +488,106 @@ export default function MacroPulsePage() {
               </ResponsiveContainer>
             </div>
           </FlexCard>
+        </TabsContent>
+
+        {/* M6: Yield Curve tab */}
+        <TabsContent value="yieldcurve" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <FlexCard title="Yield Curve (Current)">
+              {(yieldCurve.curve ?? []).length > 0 ? (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={yieldCurve.curve}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="maturity" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip formatter={(v: number) => `${v.toFixed(3)}%`} />
+                      <Bar dataKey="yield_pct" name="Yield %" fill="hsl(var(--primary))" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No yield curve data available</p>
+              )}
+            </FlexCard>
+
+            <FlexCard title="Spread History (10Y - 3M)">
+              {(yieldCurve.spread_history ?? []).length > 0 ? (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={yieldCurve.spread_history}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(d: string) => d.slice(5)} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Area type="monotone" dataKey="spread" name="Spread" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No spread data available</p>
+              )}
+            </FlexCard>
+          </div>
+        </TabsContent>
+
+        {/* M5: FRED Data tab */}
+        <TabsContent value="fred" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+            <FlexCard title="GDP Growth (FRED)">
+              {(fredData.gdp ?? []).length > 0 ? (
+                <div className="h-[200px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={fredData.gdp}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d: string) => d.slice(0, 7)} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">FRED API key required for GDP data</p>
+              )}
+            </FlexCard>
+
+            <FlexCard title="Unemployment Rate (FRED)">
+              {(fredData.unemployment ?? []).length > 0 ? (
+                <div className="h-[200px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={fredData.unemployment}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d: string) => d.slice(0, 7)} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">FRED API key required for unemployment data</p>
+              )}
+            </FlexCard>
+
+            <FlexCard title="CPI YoY % (FRED)">
+              {(fredData.cpi ?? []).length > 0 ? (
+                <div className="h-[200px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={fredData.cpi}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d: string) => d.slice(0, 7)} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="value" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">FRED API key required for CPI data</p>
+              )}
+            </FlexCard>
+          </div>
         </TabsContent>
 
         <TabsContent value="geopolitical" className="space-y-4">
@@ -431,7 +632,7 @@ export default function MacroPulsePage() {
             <ul className="space-y-3">
               {mockImplications.map((imp: string, i: number) => (
                 <li key={i} className="flex items-start gap-2">
-                  <span className="text-primary mt-0.5">•</span>
+                  <span className="text-primary mt-0.5">*</span>
                   <span>{imp}</span>
                 </li>
               ))}

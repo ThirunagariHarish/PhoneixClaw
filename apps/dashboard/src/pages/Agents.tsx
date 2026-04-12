@@ -26,7 +26,7 @@ import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
   Plug, MessageSquare, Globe, Radio, Activity, Newspaper, Webhook, TrendingUp, Landmark, BarChart3,
   CheckSquare, Square as SquareIcon, Hash, Loader2, Eye, ArrowUpRight, ArrowDownRight, Minus,
-  FlaskConical, Zap, Shield, AlertCircle,
+  FlaskConical, Zap, Shield, AlertCircle, Search, StopCircle,
 } from 'lucide-react'
 
 export interface AgentData {
@@ -387,7 +387,7 @@ function MetricPill({ label, value, trend }: { label: string; value: string; tre
   )
 }
 
-export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote, onRetryBacktest, isRetryPending }: {
+export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onReview, onPromote, onRetryBacktest, isRetryPending, bulkMode, isChecked, onToggleCheck }: {
   agent: AgentData
   onSelect: () => void
   onPause: () => void
@@ -397,6 +397,9 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
   onPromote: () => void
   onRetryBacktest?: () => void
   isRetryPending?: boolean
+  bulkMode?: boolean
+  isChecked?: boolean
+  onToggleCheck?: () => void
 }) {
   const config = agent.config as Record<string, unknown>
   const sc = getStatusConfig(agent.status)
@@ -443,6 +446,19 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
+            {bulkMode && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggleCheck?.() }}
+                className="shrink-0"
+              >
+                {isChecked ? (
+                  <CheckSquare className="h-4 w-4 text-primary" />
+                ) : (
+                  <SquareIcon className="h-4 w-4 text-muted-foreground/40" />
+                )}
+              </button>
+            )}
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${sc.bgColor}`}>
               {agent.status === 'BACKTESTING' ? (
                 <FlaskConical className={`h-4 w-4 ${sc.color}`} />
@@ -1326,6 +1342,23 @@ export default function AgentsPage() {
   const [form, setForm] = useState<WizardFormData>({ ...DEFAULT_FORM })
   const [reviewAgent, setReviewAgent] = useState<AgentData | null>(null)
 
+  // AGT1: Search & Filter
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+
+  // AGT2: Bulk Actions
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+  const bulkMode = checkedIds.size > 0
+
+  const toggleCheck = useCallback((id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   const updateForm = useCallback((partial: Partial<WizardFormData>) => {
     setForm((prev) => ({ ...prev, ...partial }))
   }, [])
@@ -1425,6 +1458,39 @@ export default function AgentsPage() {
     onError: () => toast.error('Failed to reset agent'),
   })
 
+  // AGT2: Bulk action mutations
+  const bulkPauseMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.allSettled(ids.map((id) => api.post(`/api/v2/agents/${id}/pause`)))
+    },
+    onSuccess: () => { invalidateAgents(); setCheckedIds(new Set()); toast.success('Paused selected agents') },
+    onError: () => toast.error('Some agents failed to pause'),
+  })
+  const bulkResumeMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.allSettled(ids.map((id) => api.post(`/api/v2/agents/${id}/resume`)))
+    },
+    onSuccess: () => { invalidateAgents(); setCheckedIds(new Set()); toast.success('Resumed selected agents') },
+    onError: () => toast.error('Some agents failed to resume'),
+  })
+  const bulkStopMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.allSettled(ids.map((id) => api.delete(`/api/v2/agents/${id}`)))
+    },
+    onSuccess: () => { invalidateAgents(); setCheckedIds(new Set()); toast.success('Stopped selected agents') },
+    onError: () => toast.error('Some agents failed to stop'),
+  })
+
+  // AGT1: Filtered agents
+  const filteredAgents = agents.filter((a) => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      if (!a.name.toLowerCase().includes(q) && !a.type.toLowerCase().includes(q)) return false
+    }
+    if (statusFilter !== 'all' && a.status.toLowerCase() !== statusFilter.toLowerCase()) return false
+    return true
+  })
+
   const canAdvance = (step: number): boolean =>
     computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel, form.persona_id)
 
@@ -1519,6 +1585,54 @@ export default function AgentsPage() {
       </ErrorBoundary>
 
 
+      {/* AGT1: Search & Filter Bar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search agents by name..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-40">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="running">Running</SelectItem>
+            <SelectItem value="paused">Paused</SelectItem>
+            <SelectItem value="error">Error</SelectItem>
+            <SelectItem value="backtesting">Backtesting</SelectItem>
+            <SelectItem value="backtest_complete">Review Ready</SelectItem>
+            <SelectItem value="created">Created</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* AGT2: Bulk Actions Toolbar */}
+      {bulkMode && (
+        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5">
+          <span className="text-sm font-medium">{checkedIds.size} agent{checkedIds.size !== 1 ? 's' : ''} selected</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button size="sm" variant="outline" onClick={() => bulkResumeMutation.mutate([...checkedIds])} disabled={bulkResumeMutation.isPending}>
+              <Play className="h-3.5 w-3.5 mr-1.5" /> Start All
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => bulkPauseMutation.mutate([...checkedIds])} disabled={bulkPauseMutation.isPending}>
+              <Pause className="h-3.5 w-3.5 mr-1.5" /> Pause All
+            </Button>
+            <Button size="sm" variant="destructive" onClick={() => bulkStopMutation.mutate([...checkedIds])} disabled={bulkStopMutation.isPending}>
+              <StopCircle className="h-3.5 w-3.5 mr-1.5" /> Stop All
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setCheckedIds(new Set())}>
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Leaderboard */}
       {agents.filter((a) => ['RUNNING', 'PAPER', 'BACKTEST_COMPLETE'].includes(a.status)).length > 0 && (
         <AgentLeaderboard agents={agents} />
@@ -1530,17 +1644,17 @@ export default function AgentsPage() {
             <div key={i} className="h-40 rounded-lg border animate-pulse bg-muted" />
           ))}
         </div>
-      ) : agents.length === 0 ? (
+      ) : filteredAgents.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p className="text-lg">No agents yet</p>
-          <p className="text-sm">Create your first agent to get started</p>
+          <p className="text-lg">{agents.length === 0 ? 'No agents yet' : 'No matching agents'}</p>
+          <p className="text-sm">{agents.length === 0 ? 'Create your first agent to get started' : 'Try adjusting your search or filter'}</p>
         </div>
       ) : (
         <div className="space-y-8">
           {/* Trading Agents Section */}
           {(() => {
-            const tradingAgents = agents.filter((a) => a.type === 'trading')
+            const tradingAgents = filteredAgents.filter((a) => a.type === 'trading')
             if (tradingAgents.length === 0) return null
             return (
               <div>
@@ -1562,6 +1676,9 @@ export default function AgentsPage() {
                       onDelete={() => deleteMutation.mutate(agent.id)}
                       onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
                       isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
+                      bulkMode={bulkMode || undefined}
+                      isChecked={checkedIds.has(agent.id)}
+                      onToggleCheck={() => toggleCheck(agent.id)}
                     />
                   ))}
                 </div>
@@ -1571,7 +1688,7 @@ export default function AgentsPage() {
 
           {/* Trend Agents Section */}
           {(() => {
-            const trendAgents = agents.filter((a) => a.type === 'trend' || a.type === 'sentiment')
+            const trendAgents = filteredAgents.filter((a) => a.type === 'trend' || a.type === 'sentiment')
             if (trendAgents.length === 0) return null
             return (
               <div>
@@ -1593,6 +1710,9 @@ export default function AgentsPage() {
                       onDelete={() => deleteMutation.mutate(agent.id)}
                       onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
                       isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
+                      bulkMode={bulkMode || undefined}
+                      isChecked={checkedIds.has(agent.id)}
+                      onToggleCheck={() => toggleCheck(agent.id)}
                     />
                   ))}
                 </div>
@@ -1603,7 +1723,7 @@ export default function AgentsPage() {
           {/* Data / Other Agents Section — catches unusual_whales, social_sentiment, strategy, etc. */}
           {(() => {
             const knownTypes = new Set(['trading', 'trend', 'sentiment'])
-            const otherAgents = agents.filter((a) => !knownTypes.has(a.type))
+            const otherAgents = filteredAgents.filter((a) => !knownTypes.has(a.type))
             if (otherAgents.length === 0) return null
             return (
               <div>
@@ -1625,6 +1745,9 @@ export default function AgentsPage() {
                       onDelete={() => deleteMutation.mutate(agent.id)}
                       onRetryBacktest={() => retryBacktestMutation.mutate(agent.id)}
                       isRetryPending={retryBacktestMutation.isPending && retryBacktestMutation.variables === agent.id}
+                      bulkMode={bulkMode || undefined}
+                      isChecked={checkedIds.has(agent.id)}
+                      onToggleCheck={() => toggleCheck(agent.id)}
                     />
                   ))}
                 </div>

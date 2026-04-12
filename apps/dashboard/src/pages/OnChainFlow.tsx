@@ -1,6 +1,6 @@
 /**
  * On-Chain/Flow page — whale movements, unusual options flow, institutional positioning.
- * Phoenix v2.
+ * Phoenix v3.
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -35,6 +35,29 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import {
+  BarChart as RechartsBarChart,
+  Bar as RechartsBar,
+  AreaChart as RechartsAreaChart,
+  Area as RechartsArea,
+  XAxis as RechartsXAxis,
+  YAxis as RechartsYAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer as RechartsResponsiveContainer,
+  Legend as RechartsLegend,
+} from 'recharts'
+import type { ComponentType } from 'react'
+
+const ResponsiveContainer = RechartsResponsiveContainer as unknown as ComponentType<any>
+const BarChart = RechartsBarChart as unknown as ComponentType<any>
+const Bar = RechartsBar as unknown as ComponentType<any>
+const AreaChart = RechartsAreaChart as unknown as ComponentType<any>
+const Area = RechartsArea as unknown as ComponentType<any>
+const XAxis = RechartsXAxis as unknown as ComponentType<any>
+const YAxis = RechartsYAxis as unknown as ComponentType<any>
+const Tooltip = RechartsTooltip as unknown as ComponentType<any>
+const Legend = RechartsLegend as unknown as ComponentType<any>
 
 type FlowDirection = 'ACCUMULATING' | 'DISTRIBUTING' | 'NEUTRAL'
 type Sentiment = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
@@ -107,6 +130,10 @@ export default function OnChainFlowPage() {
   const [minPremium, setMinPremium] = useState('500000')
   const [minSize, setMinSize] = useState('100')
   const [watchedTickers, setWatchedTickers] = useState('SPY,QQQ,NVDA,AAPL,TSLA')
+  const [gexTicker, setGexTicker] = useState('SPY')
+  const [premiumTicker, setPremiumTicker] = useState('SPY')
+  const [dpTickers, setDpTickers] = useState('SPY,QQQ,AAPL,NVDA,TSLA')
+  const [oiTicker, setOiTicker] = useState('SPY')
   const queryClient = useQueryClient()
 
   const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
@@ -193,6 +220,58 @@ export default function OnChainFlowPage() {
     },
   })
 
+  // GEX by strike data
+  const { data: gexData } = useQuery({
+    queryKey: ['onchain-gex-by-strike', gexTicker],
+    queryFn: async () => {
+      try {
+        const res = await api.get(`/api/v2/onchain-flow/gex-by-strike?ticker=${gexTicker}`)
+        return res.data
+      } catch {
+        return { ticker: gexTicker, strikes: [] }
+      }
+    },
+  })
+
+  // Net premium flow timeline
+  const { data: premiumFlow } = useQuery({
+    queryKey: ['onchain-premium-flow', premiumTicker],
+    queryFn: async () => {
+      try {
+        const res = await api.get(`/api/v2/onchain-flow/net-premium-flow?ticker=${premiumTicker}`)
+        return res.data
+      } catch {
+        return { ticker: premiumTicker, timeline: [] }
+      }
+    },
+  })
+
+  // Dark pool multi-ticker
+  const { data: darkPoolData } = useQuery({
+    queryKey: ['onchain-dark-pool', dpTickers],
+    queryFn: async () => {
+      try {
+        const res = await api.get(`/api/v2/onchain-flow/dark-pool-multi?tickers=${dpTickers}`)
+        return res.data
+      } catch {
+        return { tickers: [] }
+      }
+    },
+  })
+
+  // Open interest changes
+  const { data: oiData } = useQuery({
+    queryKey: ['onchain-oi-changes', oiTicker],
+    queryFn: async () => {
+      try {
+        const res = await api.get(`/api/v2/onchain-flow/open-interest-changes?ticker=${oiTicker}`)
+        return res.data
+      } catch {
+        return { ticker: oiTicker, strikes: [] }
+      }
+    },
+  })
+
   const deployMutation = useMutation({
     mutationFn: async () => {
       await api.post('/api/v2/onchain-flow/agent/create', {
@@ -214,6 +293,11 @@ export default function OnChainFlowPage() {
     if (n == null || isNaN(n)) return '$0'
     return n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`
   }
+
+  const gexStrikes = gexData?.strikes ?? []
+  const premiumTimeline = premiumFlow?.timeline ?? []
+  const dpTickers_list = darkPoolData?.tickers ?? []
+  const oiStrikes = oiData?.strikes ?? []
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -245,6 +329,10 @@ export default function OnChainFlowPage() {
               <TabsTrigger value="sectors">Sector Flow</TabsTrigger>
               <TabsTrigger value="indices">Indices</TabsTrigger>
               <TabsTrigger value="whale">Whale Alerts</TabsTrigger>
+              <TabsTrigger value="gex">GEX Chart</TabsTrigger>
+              <TabsTrigger value="premium">Net Premium</TabsTrigger>
+              <TabsTrigger value="darkpool">Dark Pool</TabsTrigger>
+              <TabsTrigger value="oi">Open Interest</TabsTrigger>
             </TabsList>
 
             <TabsContent value="mag7" className="mt-4">
@@ -371,6 +459,148 @@ export default function OnChainFlowPage() {
                     </TableBody>
                   </Table>
                 </div>
+              </FlexCard>
+            </TabsContent>
+
+            {/* F4: GEX visualization chart */}
+            <TabsContent value="gex" className="mt-4">
+              <FlexCard title={`GEX by Strike - ${gexTicker}`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <Label className="text-xs">Ticker:</Label>
+                  <Input
+                    className="w-24"
+                    value={gexTicker}
+                    onChange={(e) => setGexTicker(e.target.value.toUpperCase())}
+                    placeholder="SPY"
+                  />
+                </div>
+                {gexStrikes.length > 0 ? (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={gexStrikes}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="strike" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip formatter={(v: number) => `$${(v / 1e6).toFixed(2)}M`} />
+                        <Bar dataKey="gex" fill="hsl(var(--primary))" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No GEX data available for {gexTicker}</p>
+                )}
+                {gexData?.zero_gamma != null && (
+                  <p className="text-sm text-muted-foreground mt-2">Zero Gamma Level: ${gexData.zero_gamma}</p>
+                )}
+              </FlexCard>
+            </TabsContent>
+
+            {/* F5: Net premium flow timeline */}
+            <TabsContent value="premium" className="mt-4">
+              <FlexCard title={`Net Premium Flow - ${premiumTicker}`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <Label className="text-xs">Ticker:</Label>
+                  <Input
+                    className="w-24"
+                    value={premiumTicker}
+                    onChange={(e) => setPremiumTicker(e.target.value.toUpperCase())}
+                    placeholder="SPY"
+                  />
+                </div>
+                {premiumTimeline.length > 0 ? (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={premiumTimeline}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="time" tick={{ fontSize: 11 }} />
+                        <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `$${(v / 1e6).toFixed(1)}M`} />
+                        <Tooltip formatter={(v: number) => formatPremium(v)} />
+                        <Legend />
+                        <Area type="monotone" dataKey="cumCallPremium" name="Call Premium" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
+                        <Area type="monotone" dataKey="cumPutPremium" name="Put Premium" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No premium flow data available for {premiumTicker}</p>
+                )}
+              </FlexCard>
+            </TabsContent>
+
+            {/* F6: Dark Pool sub-tab */}
+            <TabsContent value="darkpool" className="mt-4">
+              <FlexCard title="Dark Pool Activity">
+                <div className="flex items-center gap-2 mb-4">
+                  <Label className="text-xs">Tickers:</Label>
+                  <Input
+                    className="w-64"
+                    value={dpTickers}
+                    onChange={(e) => setDpTickers(e.target.value.toUpperCase())}
+                    placeholder="SPY,QQQ,AAPL,NVDA"
+                  />
+                </div>
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticker</TableHead>
+                        <TableHead>Dark Pool %</TableHead>
+                        <TableHead>Total Volume</TableHead>
+                        <TableHead>Block Trades</TableHead>
+                        <TableHead>Avg Trade Size</TableHead>
+                        <TableHead>Sentiment</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dpTickers_list.map((dp: any, i: number) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-mono font-semibold">{dp.ticker}</TableCell>
+                          <TableCell>{dp.dp_percentage != null ? `${dp.dp_percentage.toFixed(1)}%` : 'N/A'}</TableCell>
+                          <TableCell>{(dp.total_volume ?? 0).toLocaleString()}</TableCell>
+                          <TableCell>{dp.block_trades ?? 0}</TableCell>
+                          <TableCell>{dp.avg_trade_size != null ? Math.round(dp.avg_trade_size).toLocaleString() : 'N/A'}</TableCell>
+                          <TableCell>
+                            {dp.sentiment ? (
+                              <Badge className={flowColor(dp.sentiment.toUpperCase() as Sentiment)}>{dp.sentiment}</Badge>
+                            ) : 'N/A'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </FlexCard>
+            </TabsContent>
+
+            {/* F7: Open Interest changes */}
+            <TabsContent value="oi" className="mt-4">
+              <FlexCard title={`Open Interest by Strike - ${oiTicker}`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <Label className="text-xs">Ticker:</Label>
+                  <Input
+                    className="w-24"
+                    value={oiTicker}
+                    onChange={(e) => setOiTicker(e.target.value.toUpperCase())}
+                    placeholder="SPY"
+                  />
+                </div>
+                {oiStrikes.length > 0 ? (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={oiStrikes}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="strike" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="callOI" name="Call OI" fill="#10b981" />
+                        <Bar dataKey="putOI" name="Put OI" fill="#ef4444" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No open interest data available for {oiTicker}</p>
+                )}
               </FlexCard>
             </TabsContent>
           </Tabs>

@@ -9,6 +9,19 @@ import { useQuery } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { agentsApi } from '@/lib/api/agents'
 import { useNavigate } from 'react-router-dom'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Sun, Play, CheckCircle2, Clock, AlertCircle } from 'lucide-react'
 
 interface SchedulerStatus {
   running: boolean
@@ -45,8 +58,7 @@ export default function MorningBriefingPage() {
     agentsApi.schedulerStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
 
-  // Poll the briefing_history table for the latest morning briefing — this is
-  // the single source of truth for what the agent produced (manual or cron).
+  // Poll the briefing_history table for the latest morning briefing
   const { data: historyData } = useQuery<{ briefings: BriefingHistoryRow[] }>({
     queryKey: ['briefing-history', 'morning'],
     queryFn: async () =>
@@ -72,128 +84,147 @@ export default function MorningBriefingPage() {
     }
   }
 
-  const morningJob = status?.jobs?.find((j) => j.id === 'morning_briefing')
-
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Morning Briefing</h1>
-          <p className="text-sm text-gray-400">
-            Pre-market routine — wakes all agents, triggers research, sends WhatsApp briefing.
-          </p>
-        </div>
-        <button
-          onClick={runManually}
-          disabled={loading}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-white font-medium"
-        >
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <PageHeader icon={Sun} title="Morning Briefing" description="Pre-market routine -- wakes all agents, triggers research, sends WhatsApp briefing." />
+        <Button onClick={runManually} disabled={loading}>
+          <Play className="h-4 w-4 mr-2" />
           {loading ? 'Running...' : 'Run Now'}
-        </button>
+        </Button>
       </div>
 
-      {/* Scheduler status */}
-      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-        <h2 className="text-lg font-semibold mb-2">Scheduler</h2>
-        {status?.running ? (
-          <div className="text-sm space-y-1">
-            <div className="text-green-400">● Running</div>
-            {morningJob && (
-              <div className="text-gray-300">
-                Next morning briefing:{' '}
-                <span className="font-mono">
-                  {morningJob.next_run_time
-                    ? new Date(morningJob.next_run_time).toLocaleString()
-                    : 'unknown'}
-                </span>
+      {/* Scheduler status — proper table */}
+      <Card>
+        <CardHeader className="pb-2">
+          <h2 className="text-base font-semibold">Scheduled Jobs</h2>
+        </CardHeader>
+        <CardContent>
+          {status?.running ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                  <CheckCircle2 className="h-3 w-3 mr-1" /> Running
+                </Badge>
               </div>
-            )}
-            {status.jobs && (
-              <div className="mt-2 text-xs text-gray-400">
-                All scheduled jobs:
-                <ul className="ml-4 mt-1">
-                  {status.jobs.map((j) => (
-                    <li key={j.id}>
-                      {j.name} →{' '}
-                      {j.next_run_time
-                        ? new Date(j.next_run_time).toLocaleString()
-                        : 'no next run'}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-red-400 text-sm">
-            ● Not running {status?.reason ? `(${status.reason})` : ''}
-          </div>
-        )}
-      </div>
+              {status.jobs && status.jobs.length > 0 && (
+                <div className="rounded-lg border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Job Name</TableHead>
+                        <TableHead>Schedule</TableHead>
+                        <TableHead>Next Run</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {status.jobs.map((j) => (
+                        <TableRow key={j.id}>
+                          <TableCell className="font-medium text-sm">{j.name}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground font-mono">{j.id}</TableCell>
+                          <TableCell className="text-xs font-mono">
+                            {j.next_run_time
+                              ? new Date(j.next_run_time).toLocaleString()
+                              : 'No next run'}
+                          </TableCell>
+                          <TableCell>
+                            {j.next_run_time ? (
+                              <Badge variant="outline" className="text-[10px]">
+                                <Clock className="h-3 w-3 mr-1" /> Scheduled
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-[10px]">Idle</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Badge variant="destructive">
+                <AlertCircle className="h-3 w-3 mr-1" /> Not Running
+              </Badge>
+              {status?.reason && (
+                <span className="text-xs text-muted-foreground">({status.reason})</span>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {error && (
-        <div className="bg-red-900/30 border border-red-700 rounded p-3 text-red-200 text-sm">
-          {error}
-        </div>
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardContent className="py-3">
+            <p className="text-sm text-destructive">{error}</p>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Latest briefing from history (always shown, auto-refreshes) */}
+      {/* Latest briefing from history */}
       {latestHistory && (
-        <div
-          className="bg-gray-800 rounded-lg p-4 border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+        <Card
+          className="cursor-pointer hover:border-primary/50 transition-colors"
           onClick={() => navigate('/briefings')}
         >
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-lg font-semibold">Latest Morning Briefing</h2>
-            <span className="text-xs text-gray-400">
-              {latestHistory.created_at
-                ? new Date(latestHistory.created_at).toLocaleString()
-                : ''}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-3 text-sm">
-            <div>
-              <div className="text-gray-400">Agents woken</div>
-              <div className="text-xl font-bold">{latestHistory.agents_woken ?? 0}</div>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">Latest Morning Briefing</h2>
+              <span className="text-xs text-muted-foreground">
+                {latestHistory.created_at
+                  ? new Date(latestHistory.created_at).toLocaleString()
+                  : ''}
+              </span>
             </div>
-            <div>
-              <div className="text-gray-400">Dispatched</div>
-              <div className="flex gap-1 flex-wrap mt-1">
-                {(latestHistory.dispatched_to ?? []).map((ch) => (
-                  <span key={ch} className="text-xs px-2 py-0.5 rounded bg-gray-700">
-                    {ch}
-                  </span>
-                ))}
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-muted-foreground">Agents woken</div>
+                <div className="text-xl font-bold">{latestHistory.agents_woken ?? 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Dispatched</div>
+                <div className="flex gap-1 flex-wrap mt-1">
+                  {(latestHistory.dispatched_to ?? []).map((ch) => (
+                    <Badge key={ch} variant="secondary" className="text-xs">{ch}</Badge>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Title</div>
+                <div className="text-sm font-medium">{latestHistory.title}</div>
               </div>
             </div>
-            <div>
-              <div className="text-gray-400">Title</div>
-              <div className="text-sm">{latestHistory.title}</div>
-            </div>
-          </div>
-          <pre className="text-xs bg-gray-900 rounded p-3 whitespace-pre-wrap max-h-48 overflow-y-auto">
-            {latestHistory.body}
-          </pre>
-          <div className="text-xs text-gray-500 mt-2">
-            Click to view full briefing history →
-          </div>
-        </div>
+            <pre className="text-xs bg-muted rounded-lg p-3 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">
+              {latestHistory.body}
+            </pre>
+            <p className="text-xs text-muted-foreground">
+              Click to view full briefing history
+            </p>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Spawn confirmation card (brief toast-like info while agent runs) */}
+      {/* Spawn confirmation card */}
       {spawn && spawn.status === 'spawned' && (
-        <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-4 text-sm">
-          <div className="font-semibold text-blue-300 mb-1">
-            ✓ Morning briefing agent spawned
-          </div>
-          <div className="text-blue-200/80">{spawn.detail || 'Running…'}</div>
-          <div className="text-xs text-gray-400 mt-2 font-mono">
-            task_key: {spawn.task_key}
-          </div>
-          <div className="text-xs text-gray-400 mt-1">
-            The briefing body will appear above once the agent completes (auto-refresh every 5s).
-          </div>
-        </div>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="py-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-primary" />
+              <span className="font-semibold text-sm text-primary">Morning briefing agent spawned</span>
+            </div>
+            <p className="text-sm text-muted-foreground">{spawn.detail || 'Running...'}</p>
+            <p className="text-xs text-muted-foreground font-mono">task_key: {spawn.task_key}</p>
+            <p className="text-xs text-muted-foreground">
+              The briefing body will appear above once the agent completes (auto-refresh every 5s).
+            </p>
+          </CardContent>
+        </Card>
       )}
     </div>
   )

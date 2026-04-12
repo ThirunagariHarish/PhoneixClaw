@@ -1,3 +1,7 @@
+/**
+ * Widget Catalog dialog with search (MCP-6) and watchlist widget (MCP-4).
+ */
+import { useState, useMemo } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +14,7 @@ import {
   RefreshCw, StickyNote, CheckSquare, CalendarClock, Info,
   Zap, ScrollText, BookOpen, Building2, Layers, Grid3X3,
   Calculator, Scale, Timer, Keyboard, Sigma, Radar, AreaChart,
-  Sunrise, MapPin, GitBranch, Thermometer, Wallet,
+  Sunrise, MapPin, GitBranch, Thermometer, Wallet, List,
 } from 'lucide-react'
 
 export interface WidgetDef {
@@ -48,6 +52,7 @@ export const WIDGET_DEFINITIONS: WidgetDef[] = [
   { id: 'heatmap', label: 'Market Heatmap', description: 'S&P 500 stock heatmap', icon: BarChart3, category: 'Charts', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
   { id: 'tv-chart', label: 'TradingView Chart', description: 'Advanced interactive chart', icon: LineChart, category: 'Charts', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
   { id: 'platform-sentiment', label: 'Platform Sentiment', description: 'Your Discord sentiment data', icon: HeartPulse, category: 'Platform', defaultW: 4, defaultH: 4, minW: 3, minH: 3 },
+  { id: 'watchlist', label: 'Watchlist', description: 'Tracked tickers with live prices. Click to link.', icon: List, category: 'Platform', defaultW: 3, defaultH: 5, minW: 2, minH: 4 },
   // TradingView embed widgets
   { id: 'stock-screener', label: 'Stock Screener', description: 'Filter stocks by technicals & fundamentals', icon: Search, category: 'Screeners', defaultW: 6, defaultH: 6, minW: 4, minH: 4 },
   { id: 'forex-cross-rates', label: 'Forex Cross Rates', description: 'Major currency pair rates matrix', icon: DollarSign, category: 'Screeners', defaultW: 5, defaultH: 5, minW: 4, minH: 4 },
@@ -99,6 +104,19 @@ interface Props {
 }
 
 export default function WidgetCatalog({ activeWidgetIds, onAddWidget }: Props) {
+  const [search, setSearch] = useState('')
+
+  const filteredByCategory = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return null // null = show normal grouped view
+    return WIDGET_DEFINITIONS.filter(
+      (w) =>
+        w.label.toLowerCase().includes(q) ||
+        w.description.toLowerCase().includes(q) ||
+        w.category.toLowerCase().includes(q),
+    )
+  }, [search])
+
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -110,13 +128,28 @@ export default function WidgetCatalog({ activeWidgetIds, onAddWidget }: Props) {
         <DialogHeader>
           <DialogTitle>Add Widget</DialogTitle>
         </DialogHeader>
+
+        {/* MCP-6: Search input */}
+        <div className="relative mb-2">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search widgets by name or description..."
+            className="w-full pl-9 pr-3 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+        </div>
+
         <ScrollArea className="h-[60vh] pr-4">
-          <div className="space-y-6">
-            {CATEGORIES.map(cat => (
-              <div key={cat}>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{cat}</h3>
+          {filteredByCategory ? (
+            /* Flat search results */
+            <div className="space-y-2">
+              {filteredByCategory.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No widgets match &quot;{search}&quot;</p>
+              ) : (
                 <div className="grid grid-cols-2 gap-2">
-                  {WIDGET_DEFINITIONS.filter(w => w.category === cat).map(w => {
+                  {filteredByCategory.map((w) => {
                     const isActive = activeWidgetIds.includes(w.id)
                     const Icon = w.icon
                     return (
@@ -137,14 +170,51 @@ export default function WidgetCatalog({ activeWidgetIds, onAddWidget }: Props) {
                             {isActive && <Badge variant="outline" className="text-[8px]">Active</Badge>}
                           </div>
                           <p className="text-[10px] text-muted-foreground">{w.description}</p>
+                          <p className="text-[9px] text-primary/60 mt-0.5">{w.category}</p>
                         </div>
                       </button>
                     )
                   })}
                 </div>
-              </div>
-            ))}
-          </div>
+              )}
+            </div>
+          ) : (
+            /* Normal grouped view */
+            <div className="space-y-6">
+              {CATEGORIES.map(cat => (
+                <div key={cat}>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{cat}</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {WIDGET_DEFINITIONS.filter(w => w.category === cat).map(w => {
+                      const isActive = activeWidgetIds.includes(w.id)
+                      const Icon = w.icon
+                      return (
+                        <button
+                          key={w.id}
+                          disabled={isActive}
+                          onClick={() => onAddWidget(w.id)}
+                          className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-all ${
+                            isActive
+                              ? 'opacity-50 cursor-not-allowed bg-muted/30'
+                              : 'hover:border-purple-500/40 hover:bg-purple-500/5 cursor-pointer'
+                          }`}
+                        >
+                          <Icon className="h-5 w-5 text-purple-500 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium truncate">{w.label}</p>
+                              {isActive && <Badge variant="outline" className="text-[8px]">Active</Badge>}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">{w.description}</p>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </ScrollArea>
       </DialogContent>
     </Dialog>

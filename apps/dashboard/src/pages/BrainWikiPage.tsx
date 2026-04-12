@@ -8,11 +8,12 @@ import { useQuery } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Brain, BookOpen, Search, TrendingUp, Tag, Share2 } from 'lucide-react'
+import { Brain, BookOpen, Search, TrendingUp, Tag, Share2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /* ─────────────────────────────────────────────
@@ -186,14 +187,18 @@ function SkeletonGrid() {
    Main page
 ───────────────────────────────────────────── */
 
+const ENTRIES_PER_PAGE = 10
+
 export default function BrainWikiPage() {
   const [category, setCategory] = useState('ALL')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [minConfidence, setMinConfidence] = useState(0)
+  const [page, setPage] = useState(1)
 
   const handleSearchChange = (value: string) => {
     setSearch(value)
+    setPage(1) // Reset to first page on search change
     setTimeout(() => setDebouncedSearch(value), 300)
   }
 
@@ -216,6 +221,10 @@ export default function BrainWikiPage() {
   })
 
   const entries = data?.entries ?? []
+
+  // Client-side pagination
+  const totalPages = Math.max(1, Math.ceil(entries.length / ENTRIES_PER_PAGE))
+  const paginatedEntries = entries.slice((page - 1) * ENTRIES_PER_PAGE, page * ENTRIES_PER_PAGE)
 
   return (
     <div className="space-y-6">
@@ -243,7 +252,7 @@ export default function BrainWikiPage() {
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Category</Label>
-          <Select value={category} onValueChange={setCategory}>
+          <Select value={category} onValueChange={(v) => { setCategory(v); setPage(1) }}>
             <SelectTrigger className="w-48">
               <SelectValue />
             </SelectTrigger>
@@ -258,15 +267,26 @@ export default function BrainWikiPage() {
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Min Confidence: {Math.round(minConfidence * 100)}%</Label>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={minConfidence}
-            onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
-            className="w-32 h-8"
-          />
+          <div className="relative w-36">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={minConfidence}
+              onChange={(e) => { setMinConfidence(parseFloat(e.target.value)); setPage(1) }}
+              className="w-full h-2 rounded-full appearance-none cursor-pointer bg-muted accent-primary
+                [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4
+                [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-md
+                [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background
+                [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full
+                [&::-moz-range-thumb]:bg-primary [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-background"
+            />
+            <div
+              className="absolute top-0 left-0 h-2 rounded-full bg-primary/30 pointer-events-none"
+              style={{ width: `${minConfidence * 100}%` }}
+            />
+          </div>
         </div>
       </div>
 
@@ -282,11 +302,38 @@ export default function BrainWikiPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {entries.map((entry) => (
-            <BrainEntryCard key={entry.id} entry={entry} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paginatedEntries.map((entry) => (
+              <BrainEntryCard key={entry.id} entry={entry} />
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 pt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" /> Prev
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Next <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

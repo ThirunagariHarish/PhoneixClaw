@@ -5,7 +5,7 @@
  * Top-right kill switch with confirm dialog. Jurisdiction attestation banner
  * shown when missing/expired. Backed by /api/polymarket/* (Phase 10 routes).
  */
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
@@ -30,6 +30,15 @@ import {
   Play,
   ArrowUpCircle,
   RefreshCw,
+  CheckCircle2,
+  XCircle,
+  ChevronDown,
+  ChevronRight,
+  TrendingUp,
+  AlertTriangle,
+  DollarSign,
+  BarChart3,
+  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { VenueSelectorPills, type VenueId } from './VenueSelectorPills'
@@ -445,6 +454,157 @@ function KillSwitchButton() {
 }
 
 // ---------------------------------------------------------------------------
+// P2: Market detail row — expandable market row
+// ---------------------------------------------------------------------------
+
+function MarketTable({ markets, isLoading }: { markets: PMMarket[]; isLoading: boolean }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <table className="w-full text-sm">
+        <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 w-6" />
+            <th className="px-3 py-2">Question</th>
+            <th className="px-3 py-2">Category</th>
+            <th className="px-3 py-2 text-right">Volume</th>
+            <th className="px-3 py-2 text-right">Liquidity</th>
+            <th className="px-3 py-2">Expiry</th>
+            <th className="px-3 py-2">F9</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/60">
+          {isLoading && (
+            <tr>
+              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                Loading...
+              </td>
+            </tr>
+          )}
+          {!isLoading && markets.length === 0 && (
+            <tr>
+              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                No markets match the current filters.
+              </td>
+            </tr>
+          )}
+          {markets.map((m) => {
+            const isExpanded = expandedId === m.id
+            const outcomes = Array.isArray(m.outcomes) ? m.outcomes : []
+            return (
+              <React.Fragment key={m.id}>
+                <tr
+                  className="hover:bg-muted/30 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : m.id)}
+                >
+                  <td className="px-3 py-2">
+                    {isExpanded
+                      ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    }
+                  </td>
+                  <td className="max-w-[420px] px-3 py-2">
+                    <div className="truncate font-medium" title={m.question}>
+                      {m.question}
+                    </div>
+                    <div className="truncate text-[11px] text-muted-foreground">{m.slug ?? m.venue_market_id}</div>
+                  </td>
+                  <td className="px-3 py-2 text-xs">{m.category ?? '--'}</td>
+                  <td className="px-3 py-2 text-right">{fmtUsd(m.total_volume)}</td>
+                  <td className="px-3 py-2 text-right">{fmtUsd(m.liquidity_usd)}</td>
+                  <td className="px-3 py-2 text-xs">{fmtTime(m.expiry)}</td>
+                  <td className="px-3 py-2">
+                    <F9Badge marketId={m.id} />
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr>
+                    <td colSpan={7} className="bg-muted/20 px-6 py-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Market details */}
+                        <div className="space-y-3">
+                          <div>
+                            <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">Market Details</h4>
+                            <div className="space-y-1 text-xs">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Venue</span>
+                                <span className="font-medium">{m.venue}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Market ID</span>
+                                <span className="font-mono text-[11px]">{m.venue_market_id}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Oracle</span>
+                                <span className="font-medium">{m.oracle_type ?? '--'}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Active</span>
+                                <Pill tone={m.is_active ? 'good' : 'bad'}>
+                                  {m.is_active ? 'Yes' : 'No'}
+                                </Pill>
+                              </div>
+                              {m.last_scanned_at && (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Last Scanned</span>
+                                  <span>{fmtTime(m.last_scanned_at)}</span>
+                                </div>
+                              )}
+                              {m.expiry && (
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Expiry</span>
+                                  <span>{fmtTime(m.expiry)}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Outcomes */}
+                        <div>
+                          <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">
+                            Outcomes ({outcomes.length})
+                          </h4>
+                          {outcomes.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">No outcome data available.</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {outcomes.map((outcome, idx) => {
+                                const o = outcome as Record<string, unknown>
+                                const name = String(o.name ?? o.title ?? o.outcome ?? `Outcome ${idx + 1}`)
+                                const price = o.price !== undefined ? Number(o.price) : null
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="flex items-center justify-between rounded-md border border-border/60 bg-card p-2 text-xs"
+                                  >
+                                    <span className="font-medium">{name}</span>
+                                    {price !== null && (
+                                      <span className="font-mono font-bold">
+                                        {(price * 100).toFixed(1)}%
+                                      </span>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Markets tab
 // ---------------------------------------------------------------------------
 
@@ -527,53 +687,7 @@ function MarketsTab() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2">Question</th>
-              <th className="px-3 py-2">Category</th>
-              <th className="px-3 py-2 text-right">Volume</th>
-              <th className="px-3 py-2 text-right">Liquidity</th>
-              <th className="px-3 py-2">Expiry</th>
-              <th className="px-3 py-2">F9</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/60">
-            {isLoading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {!isLoading && (data?.markets.length ?? 0) === 0 && (
-              <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                  No markets match the current filters.
-                </td>
-              </tr>
-            )}
-            {data?.markets.map((m) => (
-              <tr key={m.id} className="hover:bg-muted/30">
-                <td className="max-w-[420px] px-3 py-2">
-                  <div className="truncate font-medium" title={m.question}>
-                    {m.question}
-                  </div>
-                  <div className="truncate text-[11px] text-muted-foreground">{m.slug ?? m.venue_market_id}</div>
-                </td>
-                <td className="px-3 py-2 text-xs">{m.category ?? '—'}</td>
-                <td className="px-3 py-2 text-right">{fmtUsd(m.total_volume)}</td>
-                <td className="px-3 py-2 text-right">{fmtUsd(m.liquidity_usd)}</td>
-                <td className="px-3 py-2 text-xs">{fmtTime(m.expiry)}</td>
-                <td className="px-3 py-2">
-                  <F9Badge marketId={m.id} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <MarketTable markets={data?.markets ?? []} isLoading={isLoading} />
       {data && (
         <div className="text-right text-[11px] text-muted-foreground">
           Showing {data.markets.length} of {data.total} markets
@@ -758,60 +872,118 @@ function StrategiesTab() {
 // ---------------------------------------------------------------------------
 
 function OrdersTab() {
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['pm-orders'],
     queryFn: async () => (await api.get<PMOrder[]>('/api/polymarket/orders', { params: { limit: 200 } })).data,
     refetchInterval: 15_000,
   })
+
+  // P5: Cancel order state
+  const [cancelTarget, setCancelTarget] = useState<PMOrder | null>(null)
+  const cancelMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      await api.post(`/api/polymarket/orders/${orderId}/cancel`)
+    },
+    onSuccess: () => {
+      toast.success('Order cancelled')
+      setCancelTarget(null)
+      qc.invalidateQueries({ queryKey: ['pm-orders'] })
+    },
+    onError: () => toast.error('Failed to cancel order'),
+  })
+
+  const isCancellable = (status: string) => ['pending', 'open', 'submitted', 'new'].includes(status.toLowerCase())
+
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <table className="w-full text-sm">
-        <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Submitted</th>
-            <th className="px-3 py-2">Mode</th>
-            <th className="px-3 py-2">Side</th>
-            <th className="px-3 py-2 text-right">Qty</th>
-            <th className="px-3 py-2 text-right">Limit</th>
-            <th className="px-3 py-2">Status</th>
-            <th className="px-3 py-2 text-right">Fees</th>
-            <th className="px-3 py-2 text-right">Slip bps</th>
-            <th className="px-3 py-2 text-right">F9</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/60">
-          {isLoading && (
+    <>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
             <tr>
-              <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
-                Loading…
-              </td>
+              <th className="px-3 py-2">Submitted</th>
+              <th className="px-3 py-2">Mode</th>
+              <th className="px-3 py-2">Side</th>
+              <th className="px-3 py-2 text-right">Qty</th>
+              <th className="px-3 py-2 text-right">Limit</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2 text-right">Fees</th>
+              <th className="px-3 py-2 text-right">Slip bps</th>
+              <th className="px-3 py-2 text-right">F9</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
-          )}
-          {!isLoading && (data?.length ?? 0) === 0 && (
-            <tr>
-              <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
-                No orders.
-              </td>
-            </tr>
-          )}
-          {data?.map((o) => (
-            <tr key={o.id} className="hover:bg-muted/30">
-              <td className="px-3 py-2 text-xs">{fmtTime(o.submitted_at)}</td>
-              <td className="px-3 py-2">
-                <Pill tone={o.mode === 'LIVE' ? 'good' : 'info'}>{o.mode}</Pill>
-              </td>
-              <td className="px-3 py-2 text-xs">{o.side}</td>
-              <td className="px-3 py-2 text-right">{fmtNum(o.qty_shares, 0)}</td>
-              <td className="px-3 py-2 text-right">{fmtNum(o.limit_price, 4)}</td>
-              <td className="px-3 py-2 text-xs">{o.status}</td>
-              <td className="px-3 py-2 text-right">{fmtUsd(o.fees_paid_usd)}</td>
-              <td className="px-3 py-2 text-right">{fmtNum(o.slippage_bps, 1)}</td>
-              <td className="px-3 py-2 text-right">{fmtNum(o.f9_score)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {isLoading && (
+              <tr>
+                <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                  Loading...
+                </td>
+              </tr>
+            )}
+            {!isLoading && (data?.length ?? 0) === 0 && (
+              <tr>
+                <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                  No orders.
+                </td>
+              </tr>
+            )}
+            {data?.map((o) => (
+              <tr key={o.id} className="hover:bg-muted/30">
+                <td className="px-3 py-2 text-xs">{fmtTime(o.submitted_at)}</td>
+                <td className="px-3 py-2">
+                  <Pill tone={o.mode === 'LIVE' ? 'good' : 'info'}>{o.mode}</Pill>
+                </td>
+                <td className="px-3 py-2 text-xs">{o.side}</td>
+                <td className="px-3 py-2 text-right">{fmtNum(o.qty_shares, 0)}</td>
+                <td className="px-3 py-2 text-right">{fmtNum(o.limit_price, 4)}</td>
+                <td className="px-3 py-2 text-xs">{o.status}</td>
+                <td className="px-3 py-2 text-right">{fmtUsd(o.fees_paid_usd)}</td>
+                <td className="px-3 py-2 text-right">{fmtNum(o.slippage_bps, 1)}</td>
+                <td className="px-3 py-2 text-right">{fmtNum(o.f9_score)}</td>
+                <td className="px-3 py-2">
+                  {isCancellable(o.status) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-400 hover:text-red-300 h-7 px-2 text-xs"
+                      onClick={() => setCancelTarget(o)}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* P5: Cancel order confirmation dialog */}
+      <Dialog open={!!cancelTarget} onOpenChange={(open) => { if (!open) setCancelTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel Order</DialogTitle>
+            <DialogDescription>
+              Cancel this {cancelTarget?.side} order for {fmtNum(cancelTarget?.qty_shares, 0)} shares at {fmtNum(cancelTarget?.limit_price, 4)}?
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCancelTarget(null)}>
+              Keep Order
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)}
+              disabled={cancelMutation.isPending}
+            >
+              {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Order'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -820,56 +992,115 @@ function OrdersTab() {
 // ---------------------------------------------------------------------------
 
 function PositionsTab() {
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['pm-positions'],
     queryFn: async () => (await api.get<PMPosition[]>('/api/polymarket/positions')).data,
     refetchInterval: 15_000,
   })
+
+  // P6: Close position state
+  const [closeTarget, setCloseTarget] = useState<PMPosition | null>(null)
+  const closeMutation = useMutation({
+    mutationFn: async (positionId: string) => {
+      await api.post(`/api/polymarket/positions/${positionId}/close`)
+    },
+    onSuccess: () => {
+      toast.success('Position closed')
+      setCloseTarget(null)
+      qc.invalidateQueries({ queryKey: ['pm-positions'] })
+    },
+    onError: () => toast.error('Failed to close position'),
+  })
+
+  const isOpen = (p: PMPosition) => !p.closed_at
+
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <table className="w-full text-sm">
-        <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Opened</th>
-            <th className="px-3 py-2">Mode</th>
-            <th className="px-3 py-2 text-right">Qty</th>
-            <th className="px-3 py-2 text-right">Avg entry</th>
-            <th className="px-3 py-2 text-right">Unrealized</th>
-            <th className="px-3 py-2 text-right">Realized</th>
-            <th className="px-3 py-2">Closed</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/60">
-          {isLoading && (
+    <>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
             <tr>
-              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                Loading…
-              </td>
+              <th className="px-3 py-2">Opened</th>
+              <th className="px-3 py-2">Mode</th>
+              <th className="px-3 py-2 text-right">Qty</th>
+              <th className="px-3 py-2 text-right">Avg entry</th>
+              <th className="px-3 py-2 text-right">Unrealized</th>
+              <th className="px-3 py-2 text-right">Realized</th>
+              <th className="px-3 py-2">Closed</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
-          )}
-          {!isLoading && (data?.length ?? 0) === 0 && (
-            <tr>
-              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                No positions.
-              </td>
-            </tr>
-          )}
-          {data?.map((p) => (
-            <tr key={p.id} className="hover:bg-muted/30">
-              <td className="px-3 py-2 text-xs">{fmtTime(p.opened_at)}</td>
-              <td className="px-3 py-2">
-                <Pill tone={p.mode === 'LIVE' ? 'good' : 'info'}>{p.mode}</Pill>
-              </td>
-              <td className="px-3 py-2 text-right">{fmtNum(p.qty_shares, 0)}</td>
-              <td className="px-3 py-2 text-right">{fmtNum(p.avg_entry_price, 4)}</td>
-              <td className="px-3 py-2 text-right">{fmtUsd(p.unrealized_pnl_usd)}</td>
-              <td className="px-3 py-2 text-right">{fmtUsd(p.realized_pnl_usd)}</td>
-              <td className="px-3 py-2 text-xs">{fmtTime(p.closed_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {isLoading && (
+              <tr>
+                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+                  Loading...
+                </td>
+              </tr>
+            )}
+            {!isLoading && (data?.length ?? 0) === 0 && (
+              <tr>
+                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+                  No positions.
+                </td>
+              </tr>
+            )}
+            {data?.map((p) => (
+              <tr key={p.id} className="hover:bg-muted/30">
+                <td className="px-3 py-2 text-xs">{fmtTime(p.opened_at)}</td>
+                <td className="px-3 py-2">
+                  <Pill tone={p.mode === 'LIVE' ? 'good' : 'info'}>{p.mode}</Pill>
+                </td>
+                <td className="px-3 py-2 text-right">{fmtNum(p.qty_shares, 0)}</td>
+                <td className="px-3 py-2 text-right">{fmtNum(p.avg_entry_price, 4)}</td>
+                <td className="px-3 py-2 text-right">{fmtUsd(p.unrealized_pnl_usd)}</td>
+                <td className="px-3 py-2 text-right">{fmtUsd(p.realized_pnl_usd)}</td>
+                <td className="px-3 py-2 text-xs">{fmtTime(p.closed_at)}</td>
+                <td className="px-3 py-2">
+                  {isOpen(p) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-400 hover:text-red-300 h-7 px-2 text-xs"
+                      onClick={() => setCloseTarget(p)}
+                    >
+                      Close
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* P6: Close position confirmation dialog */}
+      <Dialog open={!!closeTarget} onOpenChange={(open) => { if (!open) setCloseTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Close Position</DialogTitle>
+            <DialogDescription>
+              Close this position of {fmtNum(closeTarget?.qty_shares, 0)} shares (avg entry {fmtNum(closeTarget?.avg_entry_price, 4)})?
+              Unrealized P&L: {fmtUsd(closeTarget?.unrealized_pnl_usd)}.
+              This will submit a market sell order.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCloseTarget(null)}>
+              Keep Open
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => closeTarget && closeMutation.mutate(closeTarget.id)}
+              disabled={closeMutation.isPending}
+            >
+              {closeMutation.isPending ? 'Closing...' : 'Close Position'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -922,9 +1153,48 @@ function PromotionTab() {
         <div className="rounded-xl border border-border bg-card p-4">
           <h3 className="text-sm font-semibold">Last gate evaluation</h3>
           {lastGate ? (
-            <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-muted/40 p-3 text-[11px] leading-relaxed">
-              {JSON.stringify(lastGate, null, 2)}
-            </pre>
+            <div className="mt-2 space-y-2">
+              {Object.entries(lastGate).map(([gateName, gateValue]) => {
+                const passed = typeof gateValue === 'boolean'
+                  ? gateValue
+                  : typeof gateValue === 'object' && gateValue !== null
+                    ? (gateValue as Record<string, unknown>).passed === true || (gateValue as Record<string, unknown>).result === true || (gateValue as Record<string, unknown>).ok === true
+                    : !!gateValue
+                const detail = typeof gateValue === 'object' && gateValue !== null
+                  ? (gateValue as Record<string, unknown>).reason ?? (gateValue as Record<string, unknown>).detail ?? (gateValue as Record<string, unknown>).message ?? null
+                  : null
+                return (
+                  <div
+                    key={gateName}
+                    className={cn(
+                      'flex items-start gap-3 rounded-lg border p-3',
+                      passed
+                        ? 'border-emerald-500/30 bg-emerald-500/5'
+                        : 'border-red-500/30 bg-red-500/5'
+                    )}
+                  >
+                    {passed ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+                    ) : (
+                      <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium capitalize">
+                          {gateName.replace(/_/g, ' ')}
+                        </span>
+                        <Pill tone={passed ? 'good' : 'bad'}>
+                          {passed ? 'PASS' : 'FAIL'}
+                        </Pill>
+                      </div>
+                      {detail && (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">{String(detail)}</p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           ) : (
             <p className="mt-2 text-xs text-muted-foreground">No promotion attempts yet.</p>
           )}
@@ -964,38 +1234,167 @@ function BriefingTab() {
     queryFn: async () => (await api.get<PMBriefingSection>('/api/polymarket/briefing/section')).data,
     refetchInterval: 60_000,
   })
-  if (isLoading) return <div className="text-sm text-muted-foreground">Loading…</div>
+  if (isLoading) return <div className="text-sm text-muted-foreground">Loading...</div>
   if (!data) return <div className="text-sm text-muted-foreground">No briefing data.</div>
+
+  const totalPnl = (data.paper_pnl ?? 0) + (data.live_pnl ?? 0)
+  const pnlTone = totalPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
 
   return (
     <div className="space-y-4">
+      {/* P1: P&L Summary Cards */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[11px] uppercase text-muted-foreground">Paper P&amp;L</div>
-          <div className="mt-1 text-2xl font-bold">{fmtUsd(data.paper_pnl)}</div>
+          <div className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
+            <DollarSign className="h-3.5 w-3.5" />
+            Paper P&L
+          </div>
+          <div className={cn('mt-1 text-2xl font-bold', data.paper_pnl >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+            {fmtUsd(data.paper_pnl)}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[11px] uppercase text-muted-foreground">Live P&amp;L</div>
-          <div className="mt-1 text-2xl font-bold">{fmtUsd(data.live_pnl)}</div>
+          <div className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
+            <DollarSign className="h-3.5 w-3.5" />
+            Live P&L
+          </div>
+          <div className={cn('mt-1 text-2xl font-bold', data.live_pnl >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+            {fmtUsd(data.live_pnl)}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[11px] uppercase text-muted-foreground">Movers</div>
-          <div className="mt-1 text-2xl font-bold">{data.movers.length}</div>
+          <div className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
+            <BarChart3 className="h-3.5 w-3.5" />
+            Total P&L
+          </div>
+          <div className={cn('mt-1 text-2xl font-bold', pnlTone)}>
+            {fmtUsd(totalPnl)}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[11px] uppercase text-muted-foreground">F9 risks</div>
-          <div className="mt-1 text-2xl font-bold">{data.f9_risks.length}</div>
+          <div className="flex items-center gap-2 text-[11px] uppercase text-muted-foreground">
+            <Zap className="h-3.5 w-3.5" />
+            Key Metrics
+          </div>
+          <div className="mt-1 space-y-0.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Movers</span>
+              <span className="font-medium">{data.movers.length}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">F9 Risks</span>
+              <span className="font-medium">{data.f9_risks.length}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Resolutions 24h</span>
+              <span className="font-medium">{data.resolutions_24h.length}</span>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Kill switch</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {data.kill_switch.active ? `ACTIVE — ${data.kill_switch.reason ?? 'no reason'}` : 'idle'}
-        </p>
+
+      {/* Kill switch status */}
+      <div className={cn(
+        'rounded-xl border p-4',
+        data.kill_switch.active
+          ? 'border-red-500/40 bg-red-500/10'
+          : 'border-border bg-card'
+      )}>
+        <div className="flex items-center gap-2">
+          <ShieldAlert className={cn('h-4 w-4', data.kill_switch.active ? 'text-red-400' : 'text-muted-foreground')} />
+          <h3 className="text-sm font-semibold">Kill Switch</h3>
+          <Pill tone={data.kill_switch.active ? 'bad' : 'good'}>
+            {data.kill_switch.active ? 'ACTIVE' : 'idle'}
+          </Pill>
+        </div>
+        {data.kill_switch.active && data.kill_switch.reason && (
+          <p className="mt-1 ml-6 text-xs text-red-300">{data.kill_switch.reason}</p>
+        )}
       </div>
-      <pre className="overflow-auto rounded-xl border border-border bg-card p-4 text-[11px]">
-        {JSON.stringify(data, null, 2)}
-      </pre>
+
+      {/* P1: Top Bets as structured cards */}
+      {data.movers.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+            <TrendingUp className="h-4 w-4 text-purple-400" />
+            Top Movers
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {data.movers.slice(0, 6).map((mover, i) => {
+              const m = mover as Record<string, unknown>
+              return (
+                <div key={i} className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
+                  <div className="font-medium text-sm truncate">{String(m.question ?? m.market ?? m.slug ?? `Mover ${i + 1}`)}</div>
+                  {m.change !== undefined && (
+                    <div className={cn('mt-1 font-bold', Number(m.change) >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+                      {Number(m.change) >= 0 ? '+' : ''}{fmtNum(Number(m.change), 1)}%
+                    </div>
+                  )}
+                  {m.volume !== undefined && (
+                    <div className="text-muted-foreground mt-0.5">Vol: {fmtUsd(Number(m.volume))}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* F9 Risks */}
+      {data.f9_risks.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+            <AlertTriangle className="h-4 w-4 text-red-400" />
+            F9 Resolution Risks
+          </h3>
+          <div className="space-y-2">
+            {data.f9_risks.slice(0, 5).map((risk, i) => {
+              const r = risk as Record<string, unknown>
+              return (
+                <div key={i} className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs">
+                  <div className="font-medium">{String(r.question ?? r.market ?? `Risk ${i + 1}`)}</div>
+                  {r.score !== undefined && (
+                    <div className="text-red-400 mt-0.5">Score: {fmtNum(Number(r.score))}</div>
+                  )}
+                  {r.rationale != null && (
+                    <div className="text-muted-foreground mt-0.5">{String(r.rationale)}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* New high volume */}
+      {data.new_high_volume.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+            <BarChart3 className="h-4 w-4 text-blue-400" />
+            New High Volume Markets
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {data.new_high_volume.slice(0, 4).map((item, i) => {
+              const m = item as Record<string, unknown>
+              return (
+                <div key={i} className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
+                  <div className="font-medium truncate">{String(m.question ?? m.market ?? `Market ${i + 1}`)}</div>
+                  {m.volume !== undefined && (
+                    <div className="text-muted-foreground mt-0.5">Volume: {fmtUsd(Number(m.volume))}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Date info */}
+      {data.date && (
+        <div className="text-xs text-muted-foreground text-right">
+          Briefing date: {data.date}
+        </div>
+      )}
     </div>
   )
 }

@@ -22,6 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { HeartPulse, Play, Pause, RotateCcw, ExternalLink, ChevronDown, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -44,6 +46,7 @@ interface AgentData {
   today_trades?: number
   error_count_24h?: number
   error_message?: string | null
+  config?: Record<string, unknown>
 }
 
 interface SystemLog {
@@ -120,6 +123,56 @@ function pnlColor(v: number | null | undefined): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  HLT1: Uptime Timeline — 24h sparkline                             */
+/* ------------------------------------------------------------------ */
+
+function UptimeTimeline({ agent }: { agent: AgentData }) {
+  // Generate 24 segments for the last 24 hours based on agent state
+  const segments = 24
+  const now = Date.now()
+  const startedAt = agent.started_at ? new Date(agent.started_at).getTime() : null
+  const health = computeHealth(agent)
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground">24h Uptime</span>
+        <span className="text-[10px] text-muted-foreground">Now</span>
+      </div>
+      <div className="flex gap-0.5 h-3">
+        {Array.from({ length: segments }).map((_, i) => {
+          const segStart = now - (segments - i) * 3600000
+          const segEnd = segStart + 3600000
+          // Determine if the agent was running during this segment
+          let segColor = 'bg-muted'
+          if (startedAt && segEnd > startedAt) {
+            if (health === 'error') {
+              // Show red for the last segment if currently errored
+              segColor = i === segments - 1 ? 'bg-red-500' : 'bg-emerald-500'
+            } else if (health === 'warning' && i === segments - 1) {
+              segColor = 'bg-amber-500'
+            } else {
+              segColor = 'bg-emerald-500'
+            }
+          }
+          // If agent wasn't started yet, show gray
+          if (startedAt && segStart < startedAt) {
+            segColor = 'bg-muted'
+          }
+          return (
+            <div
+              key={i}
+              className={cn('flex-1 rounded-sm', segColor)}
+              title={`${new Date(segStart).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} - ${new Date(segEnd).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Agent Health Card                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -127,10 +180,12 @@ function AgentHealthCard({
   agent,
   onRestart,
   onPause,
+  onToggleAutoRestart,
 }: {
   agent: AgentData
   onRestart: (id: string) => void
   onPause: (id: string) => void
+  onToggleAutoRestart: (id: string, enabled: boolean, maxRetries: number) => void
 }) {
   const navigate = useNavigate()
   const health = computeHealth(agent)
@@ -183,6 +238,44 @@ function AgentHealthCard({
             )}
           </span>
         </div>
+
+        {/* HLT1: Uptime Timeline */}
+        <UptimeTimeline agent={agent} />
+
+        {/* HLT2: Auto-Recovery Policy */}
+        {(() => {
+          const cfg = agent.config ?? {}
+          const autoRestart = Boolean(cfg.auto_restart_enabled)
+          const maxRetries = typeof cfg.auto_restart_max_retries === 'number' ? cfg.auto_restart_max_retries : 3
+          return (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor={`ar-${agent.id}`} className="text-[11px] text-muted-foreground cursor-pointer">
+                  Auto-restart on failure
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                {autoRestart && (
+                  <select
+                    value={maxRetries}
+                    onChange={(e) => onToggleAutoRestart(agent.id, true, parseInt(e.target.value))}
+                    className="h-6 text-[10px] bg-muted border border-border rounded px-1 text-foreground"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {[1, 2, 3, 5, 10].map((n) => (
+                      <option key={n} value={n}>{n} retries</option>
+                    ))}
+                  </select>
+                )}
+                <Switch
+                  id={`ar-${agent.id}`}
+                  checked={autoRestart}
+                  onCheckedChange={(checked) => onToggleAutoRestart(agent.id, checked, maxRetries)}
+                />
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Actions */}
         <div className="flex items-center gap-1.5 pt-1 border-t">
@@ -310,6 +403,21 @@ export default function AgentHealthPage() {
     onError: () => toast.error('Failed to pause agent'),
   })
 
+  // HLT2: Auto-recovery config mutation
+  const autoRestartMutation = useMutation({
+    mutationFn: async ({ agentId, enabled, maxRetries }: { agentId: string; enabled: boolean; maxRetries: number }) => {
+      await api.patch(`/api/v2/agents/${agentId}/config`, {
+        auto_restart_enabled: enabled,
+        auto_restart_max_retries: maxRetries,
+      })
+    },
+    onSuccess: () => {
+      toast.success('Auto-recovery policy updated')
+      qc.invalidateQueries({ queryKey: ['agent-health-agents'] })
+    },
+    onError: () => toast.error('Failed to update auto-recovery policy'),
+  })
+
   // Compute health metrics
   const metrics = useMemo(() => {
     let healthy = 0
@@ -388,6 +496,7 @@ export default function AgentHealthPage() {
                 agent={agent}
                 onRestart={(id) => restartMutation.mutate(id)}
                 onPause={(id) => pauseMutation.mutate(id)}
+                onToggleAutoRestart={(id, enabled, maxRetries) => autoRestartMutation.mutate({ agentId: id, enabled, maxRetries })}
               />
             ))}
           </div>

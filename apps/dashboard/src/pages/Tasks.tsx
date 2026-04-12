@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { DndContext, DragEndEvent, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -9,12 +9,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { AiAssistPopover } from '@/components/AiAssistPopover'
 import { Badge } from '@/components/ui/badge'
 import {
   Plus, User, GripVertical, ListTodo, ChevronDown, ChevronUp,
-  Inbox, Clock, Eye, CheckCircle2, Flag, Trash2,
+  Inbox, Clock, Eye, CheckCircle2, Flag, Trash2, Search, Filter,
+  Calendar, AlertTriangle,
 } from 'lucide-react'
 
 const COLUMNS = ['BACKLOG', 'IN_PROGRESS', 'UNDER_REVIEW', 'COMPLETED'] as const
@@ -83,23 +84,65 @@ interface Task {
   agent_role: string
   priority: Priority
   skills?: string[]
+  due_date?: string | null
   created_at: string
 }
 
-interface NewTaskForm {
+interface TaskForm {
   title: string
   description: string
   agent_role: string
   priority: Priority
   skills: string[]
+  due_date: string
 }
 
-const INITIAL_FORM: NewTaskForm = {
+const INITIAL_FORM: TaskForm = {
   title: '',
   description: '',
   agent_role: 'day-trader',
   priority: 'medium',
   skills: [],
+  due_date: '',
+}
+
+// T2: Due date status helper
+function getDueDateStatus(dueDate: string | null | undefined): 'overdue' | 'today' | 'upcoming' | null {
+  if (!dueDate) return null
+  const now = new Date()
+  const due = new Date(dueDate)
+  if (isNaN(due.getTime())) return null
+
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayEnd = new Date(todayStart)
+  todayEnd.setDate(todayEnd.getDate() + 1)
+
+  if (due < todayStart) return 'overdue'
+  if (due < todayEnd) return 'today'
+  return 'upcoming'
+}
+
+function DueDateBadge({ dueDate }: { dueDate: string | null | undefined }) {
+  const status = getDueDateStatus(dueDate)
+  if (!status || !dueDate) return null
+
+  const d = new Date(dueDate)
+  const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
+  const styles = {
+    overdue: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+    today: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
+    upcoming: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${styles[status]}`}>
+      {status === 'overdue' && <AlertTriangle className="h-2.5 w-2.5" />}
+      {status === 'today' && <Clock className="h-2.5 w-2.5" />}
+      {status === 'upcoming' && <Calendar className="h-2.5 w-2.5" />}
+      {label}
+    </span>
+  )
 }
 
 function PriorityBadge({ priority }: { priority: Priority }) {
@@ -112,7 +155,15 @@ function PriorityBadge({ priority }: { priority: Priority }) {
   )
 }
 
-function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: string) => void }) {
+// T2: Card border highlight for overdue/today
+function dueDateBorderClass(dueDate: string | null | undefined): string {
+  const status = getDueDateStatus(dueDate)
+  if (status === 'overdue') return 'ring-2 ring-red-500/40'
+  if (status === 'today') return 'ring-2 ring-amber-500/40'
+  return ''
+}
+
+function SortableTaskCard({ task, onDelete, onEdit }: { task: Task; onDelete: (id: string) => void; onEdit: (task: Task) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { task },
@@ -131,7 +182,8 @@ function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: strin
     <div
       ref={setNodeRef}
       style={style}
-      className="group relative flex rounded-lg border bg-card overflow-hidden transition-all duration-200 hover:shadow-md hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5 hover:border-primary/30"
+      className={`group relative flex rounded-lg border bg-card overflow-hidden transition-all duration-200 hover:shadow-md hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5 hover:border-primary/30 cursor-pointer ${dueDateBorderClass(task.due_date)}`}
+      onClick={() => onEdit(task)}
     >
       {/* Priority color strip */}
       <div className={`w-1 shrink-0 ${priCfg.stripColor}`} />
@@ -150,12 +202,13 @@ function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: strin
           <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mb-2">{task.description}</p>
         )}
 
-        {/* Agent role pill */}
-        <div className="flex items-center gap-1.5 mb-2">
+        {/* Agent role pill + due date */}
+        <div className="flex items-center gap-1.5 mb-2 flex-wrap">
           <div className="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5">
             <User className="h-3 w-3 text-muted-foreground" />
             <span className="text-[11px] font-medium capitalize">{(task.agent_role ?? '').replace(/-/g, ' ')}</span>
           </div>
+          <DueDateBadge dueDate={task.due_date} />
         </div>
 
         {/* Skills pills */}
@@ -186,6 +239,7 @@ function SortableTaskCard({ task, onDelete }: { task: Task; onDelete: (id: strin
               {...listeners}
               className="p-0.5 cursor-grab text-muted-foreground/50 hover:text-muted-foreground sm:opacity-0 sm:group-hover:opacity-100 transition-opacity touch-none"
               aria-label="Drag to reorder"
+              onClick={(e) => e.stopPropagation()}
             >
               <GripVertical className="h-4 w-4" />
             </button>
@@ -221,10 +275,12 @@ function KanbanColumn({
   status,
   tasks,
   onDelete,
+  onEdit,
 }: {
   status: ColumnStatus
   tasks: Task[]
   onDelete: (id: string) => void
+  onEdit: (task: Task) => void
 }) {
   const cfg = COLUMN_CONFIG[status]
   const Icon = cfg.icon
@@ -255,7 +311,7 @@ function KanbanColumn({
               </div>
             )}
             {tasks.map((task) => (
-              <SortableTaskCard key={task.id} task={task} onDelete={onDelete} />
+              <SortableTaskCard key={task.id} task={task} onDelete={onDelete} onEdit={onEdit} />
             ))}
           </div>
         </SortableContext>
@@ -289,12 +345,305 @@ function PrioritySummaryBar({ tasks }: { tasks: Task[] }) {
   )
 }
 
+// T3: Search and Filter Bar
+function SearchFilterBar({
+  searchText,
+  onSearchChange,
+  priorityFilter,
+  onPriorityChange,
+  roleFilter,
+  onRoleChange,
+}: {
+  searchText: string
+  onSearchChange: (v: string) => void
+  priorityFilter: string
+  onPriorityChange: (v: string) => void
+  roleFilter: string
+  onRoleChange: (v: string) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-2.5">
+      <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+        <Input
+          value={searchText}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Search tasks..."
+          className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 px-0"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Filter className="h-4 w-4 text-muted-foreground" />
+        <Select value={priorityFilter} onValueChange={onPriorityChange}>
+          <SelectTrigger className="h-8 w-[130px] text-xs">
+            <SelectValue placeholder="All priorities" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All priorities</SelectItem>
+            {(Object.keys(PRIORITY_CONFIG) as Priority[]).map((p) => (
+              <SelectItem key={p} value={p}>
+                <span className="flex items-center gap-2">
+                  <span className={`inline-block h-2 w-2 rounded-full ${PRIORITY_CONFIG[p].dot}`} />
+                  {PRIORITY_CONFIG[p].label}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={roleFilter} onValueChange={onRoleChange}>
+          <SelectTrigger className="h-8 w-[160px] text-xs">
+            <SelectValue placeholder="All roles" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All roles</SelectItem>
+            {AGENT_ROLES.map((r) => (
+              <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
+}
+
+// T1: Task Detail/Edit Dialog
+function TaskEditDialog({
+  task,
+  open,
+  onOpenChange,
+}: {
+  task: Task | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const queryClient = useQueryClient()
+  const [form, setForm] = useState<TaskForm>(INITIAL_FORM)
+  const [skillsExpanded, setSkillsExpanded] = useState(false)
+
+  // Sync form when task changes
+  const currentTaskId = task?.id
+  useState(() => {
+    if (task) {
+      setForm({
+        title: task.title,
+        description: task.description ?? '',
+        agent_role: task.agent_role ?? 'day-trader',
+        priority: task.priority ?? 'medium',
+        skills: task.skills ?? [],
+        due_date: task.due_date ? task.due_date.split('T')[0] : '',
+      })
+    }
+  })
+
+  // Reset form when a different task is opened
+  const [prevTaskId, setPrevTaskId] = useState<string | null>(null)
+  if (currentTaskId !== prevTaskId) {
+    setPrevTaskId(currentTaskId ?? null)
+    if (task) {
+      setForm({
+        title: task.title,
+        description: task.description ?? '',
+        agent_role: task.agent_role ?? 'day-trader',
+        priority: task.priority ?? 'medium',
+        skills: task.skills ?? [],
+        due_date: task.due_date ? task.due_date.split('T')[0] : '',
+      })
+      setSkillsExpanded(false)
+    }
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      await api.patch(`/api/v2/tasks/${task!.id}`, payload)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      onOpenChange(false)
+    },
+  })
+
+  function toggleSkill(skillId: string) {
+    setForm((prev) => ({
+      ...prev,
+      skills: prev.skills.includes(skillId)
+        ? prev.skills.filter((s) => s !== skillId)
+        : [...prev.skills, skillId],
+    }))
+  }
+
+  function handleSave() {
+    if (!form.title.trim() || !task) return
+    updateMutation.mutate({
+      title: form.title.trim(),
+      description: form.description.trim(),
+      agent_role: form.agent_role,
+      priority: form.priority,
+      skills: form.skills,
+      due_date: form.due_date || null,
+    })
+  }
+
+  if (!task) return null
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg w-[calc(100vw-2rem)] sm:w-full max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Edit Task</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-1.5">
+            <Label>Title</Label>
+            <Input
+              value={form.title}
+              onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+              placeholder="Task title"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Description</Label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              placeholder="Describe what the agent should do..."
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Agent Role</Label>
+              <Select
+                value={form.agent_role}
+                onValueChange={(v) => setForm((prev) => ({ ...prev, agent_role: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AGENT_ROLES.map((r) => (
+                    <SelectItem key={r.value} value={r.value}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Priority</Label>
+              <Select
+                value={form.priority}
+                onValueChange={(v) => setForm((prev) => ({ ...prev, priority: v as Priority }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PRIORITY_CONFIG) as Priority[]).map((p) => (
+                    <SelectItem key={p} value={p}>
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-block h-2 w-2 rounded-full ${PRIORITY_CONFIG[p].dot}`} />
+                        {PRIORITY_CONFIG[p].label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* T2: Due date field */}
+          <div className="space-y-1.5">
+            <Label>Due Date</Label>
+            <Input
+              type="date"
+              value={form.due_date}
+              onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setSkillsExpanded(!skillsExpanded)}
+              className="flex items-center gap-2 text-sm font-medium w-full"
+            >
+              <Label className="cursor-pointer">Skills</Label>
+              {form.skills.length > 0 && (
+                <Badge variant="secondary" className="text-[10px]">{form.skills.length}</Badge>
+              )}
+              <div className="flex-1" />
+              {skillsExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </button>
+            {skillsExpanded && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {TASK_SKILLS.map((skill) => {
+                  const checked = form.skills.includes(skill.id)
+                  return (
+                    <label
+                      key={skill.id}
+                      className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                        checked ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSkill(skill.id)}
+                        className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+                      />
+                      <div>
+                        <p className="text-xs font-medium">{skill.label}</p>
+                        <p className="text-[10px] text-muted-foreground leading-tight">{skill.description}</p>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            {!skillsExpanded && form.skills.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {form.skills.map((s) => (
+                  <Badge key={s} variant="secondary" className="text-[10px]">
+                    {TASK_SKILLS.find((sk) => sk.id === s)?.label ?? s}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="pt-4 border-t">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            onClick={handleSave}
+            disabled={!form.title.trim() || updateMutation.isPending}
+          >
+            {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export default function TasksPage() {
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
-  const [newTask, setNewTask] = useState<NewTaskForm>(INITIAL_FORM)
+  const [newTask, setNewTask] = useState<TaskForm>(INITIAL_FORM)
   const [activeTask, setActiveTask] = useState<Task | null>(null)
   const [skillsExpanded, setSkillsExpanded] = useState(false)
+
+  // T1: Edit dialog state
+  const [editTask, setEditTask] = useState<Task | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+
+  // T3: Search and filter state
+  const [searchText, setSearchText] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [roleFilter, setRoleFilter] = useState('all')
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -307,6 +656,26 @@ export default function TasksPage() {
       return Array.isArray(res.data) ? res.data : []
     },
   })
+
+  // T3: Filter tasks
+  const filteredTasks = useMemo(() => {
+    let result = tasks
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase()
+      result = result.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          (t.description ?? '').toLowerCase().includes(q)
+      )
+    }
+    if (priorityFilter !== 'all') {
+      result = result.filter((t) => t.priority === priorityFilter)
+    }
+    if (roleFilter !== 'all') {
+      result = result.filter((t) => t.agent_role === roleFilter)
+    }
+    return result
+  }, [tasks, searchText, priorityFilter, roleFilter])
 
   const moveMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
@@ -331,7 +700,7 @@ export default function TasksPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: async (payload: { title: string; description: string; agent_role: string; status: string; priority: string; skills: string[] }) => {
+    mutationFn: async (payload: { title: string; description: string; agent_role: string; status: string; priority: string; skills: string[]; due_date?: string | null }) => {
       const res = await api.post('/api/v2/tasks', payload)
       return res.data
     },
@@ -363,7 +732,7 @@ export default function TasksPage() {
     },
   })
 
-  const tasksByColumn = (status: ColumnStatus) => tasks.filter((t) => t.status === status)
+  const tasksByColumn = (status: ColumnStatus) => filteredTasks.filter((t) => t.status === status)
 
   function findColumnForTask(taskId: string): ColumnStatus | undefined {
     const task = tasks.find((t) => t.id === taskId)
@@ -415,7 +784,13 @@ export default function TasksPage() {
       status: 'BACKLOG',
       priority: newTask.priority,
       skills: newTask.skills,
+      due_date: newTask.due_date || null,
     })
+  }
+
+  function handleEditTask(task: Task) {
+    setEditTask(task)
+    setEditOpen(true)
   }
 
   return (
@@ -500,6 +875,16 @@ export default function TasksPage() {
                 </div>
               </div>
 
+              {/* T2: Due date in create dialog */}
+              <div className="space-y-1.5">
+                <Label>Due Date</Label>
+                <Input
+                  type="date"
+                  value={newTask.due_date}
+                  onChange={(e) => setNewTask((prev) => ({ ...prev, due_date: e.target.value }))}
+                />
+              </div>
+
               <div className="space-y-2">
                 <button
                   type="button"
@@ -556,7 +941,7 @@ export default function TasksPage() {
                   onClick={handleCreate}
                   disabled={!newTask.title.trim() || createMutation.isPending}
                 >
-                  {createMutation.isPending ? 'Creating…' : 'Create Task'}
+                  {createMutation.isPending ? 'Creating...' : 'Create Task'}
                 </Button>
               </div>
             </div>
@@ -566,7 +951,16 @@ export default function TasksPage() {
 
       <PrioritySummaryBar tasks={tasks} />
 
-      {/* @ts-expect-error dnd-kit types */}
+      {/* T3: Search and filter bar */}
+      <SearchFilterBar
+        searchText={searchText}
+        onSearchChange={setSearchText}
+        priorityFilter={priorityFilter}
+        onPriorityChange={setPriorityFilter}
+        roleFilter={roleFilter}
+        onRoleChange={setRoleFilter}
+      />
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -580,14 +974,24 @@ export default function TasksPage() {
               status={col}
               tasks={tasksByColumn(col)}
               onDelete={(id) => deleteMutation.mutate(id)}
+              onEdit={handleEditTask}
             />
           ))}
         </div>
-        {/* @ts-expect-error dnd-kit types */}
         <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>
           {activeTask ? <TaskOverlayCard task={activeTask} /> : null}
         </DragOverlay>
       </DndContext>
+
+      {/* T1: Task Edit Dialog */}
+      <TaskEditDialog
+        task={editTask}
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open)
+          if (!open) setEditTask(null)
+        }}
+      />
     </div>
   )
 }

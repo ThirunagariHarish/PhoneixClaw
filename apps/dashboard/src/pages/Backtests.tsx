@@ -7,7 +7,7 @@ import api from '@/lib/api'
 import { useRealtimeQuery } from '@/hooks/use-websocket'
 import {
   FlaskConical, Play, CheckCircle2, XCircle, Clock, Loader2,
-  ArrowRight, BarChart3,
+  ArrowRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +37,7 @@ interface Backtest {
   strategy_template: string | null
   parameters: Record<string, unknown>
   metrics: Record<string, unknown>
+  equity_curve?: Array<{ day: number; date: string; equity: number }>
   total_trades: number
   win_rate: number | null
   sharpe_ratio: number | null
@@ -224,6 +225,48 @@ export default function Backtests() {
                   ))}
                 </div>
               )}
+
+              {/* BKT1: Equity Curve in Detail */}
+              {selected.status === 'COMPLETED' && selected.equity_curve && selected.equity_curve.length > 1 && (() => {
+                const curve = selected.equity_curve
+                const vals = curve.map(d => d.equity)
+                const curveMin = Math.min(...vals)
+                const curveMax = Math.max(...vals)
+                const curveRange = curveMax - curveMin || 1
+                const isPositive = vals[vals.length - 1] >= vals[0]
+                return (
+                  <div className="bg-card border border-border rounded-xl p-4">
+                    <h3 className="text-sm font-medium mb-3">Equity Curve</h3>
+                    <div className="relative h-40">
+                      <svg viewBox={`0 0 ${vals.length} 100`} className="w-full h-full" preserveAspectRatio="none">
+                        <defs>
+                          <linearGradient id="bt-eq-grad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity="0.3" />
+                            <stop offset="100%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity="0" />
+                          </linearGradient>
+                        </defs>
+                        <polygon
+                          points={`0,100 ${vals.map((v, i) => `${i},${100 - ((v - curveMin) / curveRange) * 100}`).join(' ')} ${vals.length - 1},100`}
+                          fill="url(#bt-eq-grad)"
+                        />
+                        <polyline
+                          points={vals.map((v, i) => `${i},${100 - ((v - curveMin) / curveRange) * 100}`).join(' ')}
+                          fill="none"
+                          stroke={isPositive ? '#22c55e' : '#ef4444'}
+                          strokeWidth="0.8"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </svg>
+                      <div className="absolute top-0 left-0 text-[10px] font-mono text-muted-foreground">${curveMax.toLocaleString()}</div>
+                      <div className="absolute bottom-0 left-0 text-[10px] font-mono text-muted-foreground">${curveMin.toLocaleString()}</div>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                      <span>{curve[0]?.date}</span>
+                      <span>{curve[curve.length - 1]?.date}</span>
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Live Logs */}
               <div className="bg-card border border-border rounded-xl overflow-hidden">

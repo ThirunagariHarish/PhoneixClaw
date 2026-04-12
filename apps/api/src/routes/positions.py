@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, desc
+from sqlalchemy import desc, func, select
 
 from apps.api.src.deps import DbSession
 from shared.db.models.trade import Position
@@ -129,6 +129,31 @@ async def get_position(position_id: str, session: DbSession):
     return PositionResponse.from_model(position)
 
 
+class UpdatePositionRequest(BaseModel):
+    stop_loss: float | None = None
+    take_profit: float | None = None
+
+
+@router.patch("/{position_id}", response_model=PositionResponse)
+async def update_position(position_id: str, payload: UpdatePositionRequest, session: DbSession):
+    """Update stop-loss and/or take-profit for an open position."""
+    result = await session.execute(
+        select(Position).where(Position.id == uuid.UUID(position_id))
+    )
+    position = result.scalar_one_or_none()
+    if not position:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position not found")
+    if position.status != "OPEN":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Position is not open")
+    if payload.stop_loss is not None:
+        position.stop_loss = payload.stop_loss
+    if payload.take_profit is not None:
+        position.take_profit = payload.take_profit
+    await session.commit()
+    await session.refresh(position)
+    return PositionResponse.from_model(position)
+
+
 class ClosePositionRequest(BaseModel):
     exit_price: float
     exit_reason: str = "manual_close"
@@ -137,7 +162,8 @@ class ClosePositionRequest(BaseModel):
 @router.post("/{position_id}/close", response_model=PositionResponse)
 async def close_position(position_id: str, payload: ClosePositionRequest, session: DbSession):
     """Manually close an open position."""
-    from datetime import datetime, timezone as tz
+    from datetime import datetime
+    from datetime import timezone as tz
     result = await session.execute(
         select(Position).where(Position.id == uuid.UUID(position_id))
     )

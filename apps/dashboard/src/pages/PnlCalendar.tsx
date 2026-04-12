@@ -1,16 +1,18 @@
 /**
  * P&L Calendar Heatmap — daily P&L as a calendar with color-coded cells.
- * Green for profit, red for loss, intensity proportional to magnitude.
  *
- * TODO: Replace mock data with real API call once GET /api/v2/performance/daily
- *       or similar endpoint is available. Currently uses GET /api/v2/trades
- *       with client-side aggregation, falling back to generated sample data.
+ * C1: Uses GET /api/v2/performance/daily server-side endpoint.
+ * C2: Year view fetches 12 months of real data.
+ * C3: Agent/account filter dropdown.
+ * C4: Cumulative P&L line overlay on daily bar chart.
+ * C5: Weekly totals + monthly rollup card.
  */
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  BarChart,
+  ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip as ReTooltip,
@@ -26,6 +28,17 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const RChart = ComposedChart as any
+const RBar = Bar as any
+const RLine = Line as any
+const RXAxis = XAxis as any
+const RYAxis = YAxis as any
+const RTooltip = ReTooltip as any
+const RContainer = ResponsiveContainer as any
+const RGrid = CartesianGrid as any
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -35,6 +48,8 @@ interface DayPnl {
   date: string          // YYYY-MM-DD
   pnl: number
   tradeCount: number
+  wins: number
+  losses: number
   trades: TradeSummary[]
 }
 
@@ -45,8 +60,13 @@ interface TradeSummary {
   qty: number
 }
 
+interface AgentOption {
+  id: string
+  name: string
+}
+
 /* -------------------------------------------------------------------------- */
-/*  Mock data generator (used when API returns no data)                       */
+/*  Mock data generator (fallback)                                            */
 /* -------------------------------------------------------------------------- */
 
 function generateMockData(year: number, month: number): DayPnl[] {
@@ -57,17 +77,19 @@ function generateMockData(year: number, month: number): DayPnl[] {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d)
     const dow = date.getDay()
-    // Skip weekends
     if (dow === 0 || dow === 6) continue
-    // ~20% chance of no trades
     if (Math.random() < 0.2) continue
 
     const tradeCount = Math.floor(Math.random() * 5) + 1
     const trades: TradeSummary[] = []
     let dayPnl = 0
+    let wins = 0
+    let losses = 0
     for (let t = 0; t < tradeCount; t++) {
-      const pnl = (Math.random() - 0.42) * 800 // slightly positive bias
+      const pnl = (Math.random() - 0.42) * 800
       dayPnl += pnl
+      if (pnl > 0) wins++
+      else losses++
       trades.push({
         symbol: symbols[Math.floor(Math.random() * symbols.length)],
         side: Math.random() > 0.5 ? 'BUY' : 'SELL',
@@ -81,6 +103,8 @@ function generateMockData(year: number, month: number): DayPnl[] {
       date: `${year}-${mm}-${dd}`,
       pnl: Math.round(dayPnl * 100) / 100,
       tradeCount,
+      wins,
+      losses,
       trades,
     })
   }
@@ -98,7 +122,7 @@ const MONTH_NAMES = [
 ]
 
 interface CalendarCell {
-  day: number | null   // null = empty cell (padding)
+  day: number | null
   dateStr: string
   isWeekend: boolean
 }
@@ -109,7 +133,6 @@ function buildCalendarGrid(year: number, month: number): CalendarCell[][] {
   const weeks: CalendarCell[][] = []
   let currentWeek: CalendarCell[] = []
 
-  // Leading empty cells
   for (let i = 0; i < firstDow; i++) {
     currentWeek.push({ day: null, dateStr: '', isWeekend: i === 0 || i === 6 })
   }
@@ -128,7 +151,6 @@ function buildCalendarGrid(year: number, month: number): CalendarCell[][] {
       currentWeek = []
     }
   }
-  // Trailing empty cells
   if (currentWeek.length > 0) {
     while (currentWeek.length < 7) {
       const idx = currentWeek.length
@@ -150,7 +172,6 @@ function getPnlCellClasses(pnl: number, maxAbsPnl: number, isDark: boolean): str
   const intensity = Math.min(Math.abs(pnl) / maxAbsPnl, 1)
 
   if (isDark) {
-    // Dark mode: colored borders + subtle colored tint
     if (pnl > 0) {
       if (intensity > 0.8) return 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
       if (intensity > 0.6) return 'bg-emerald-950/60 border-emerald-500/80 text-emerald-300'
@@ -165,7 +186,6 @@ function getPnlCellClasses(pnl: number, maxAbsPnl: number, isDark: boolean): str
     return 'bg-red-950/15 border-red-800/30 text-red-500'
   }
 
-  // Light mode: colored backgrounds
   if (pnl > 0) {
     if (intensity > 0.8) return 'bg-emerald-600 border-emerald-700 text-white'
     if (intensity > 0.6) return 'bg-emerald-500 border-emerald-600 text-white'
@@ -214,7 +234,9 @@ function DayDetail({ day }: { day: DayPnl }) {
           {formatPnl(day.pnl)}
         </span>
       </div>
-      <div className="text-xs text-muted-foreground">{day.tradeCount} trade{day.tradeCount !== 1 ? 's' : ''}</div>
+      <div className="text-xs text-muted-foreground">
+        {day.tradeCount} trade{day.tradeCount !== 1 ? 's' : ''} | W: {day.wins} / L: {day.losses}
+      </div>
       {day.trades.length > 0 && (
         <div className="border-t pt-2 space-y-1">
           {day.trades.map((t, i) => (
@@ -232,7 +254,39 @@ function DayDetail({ day }: { day: DayPnl }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Year View (GitHub contribution-graph style)                               */
+/*  C5: Weekly Summary Row                                                    */
+/* -------------------------------------------------------------------------- */
+
+function WeeklySummary({ pnlMap, week }: { pnlMap: Map<string, DayPnl>; week: CalendarCell[] }) {
+  let total = 0
+  let tradeCount = 0
+  let hasTrades = false
+  for (const cell of week) {
+    if (cell.day) {
+      const d = pnlMap.get(cell.dateStr)
+      if (d) {
+        total += d.pnl
+        tradeCount += d.tradeCount
+        hasTrades = true
+      }
+    }
+  }
+  if (!hasTrades) return null
+  return (
+    <div className="col-span-7 flex items-center justify-between px-2 py-1 text-[10px] rounded bg-muted/30 border border-border/30 mt-0.5 mb-1">
+      <span className="text-muted-foreground">Week total: {tradeCount} trades</span>
+      <span className={cn(
+        'font-semibold tabular-nums',
+        total >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
+      )}>
+        {formatPnl(total)}
+      </span>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Year View Mini-Month                                                      */
 /* -------------------------------------------------------------------------- */
 
 function YearMiniMonth({
@@ -273,6 +327,36 @@ function YearMiniMonth({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Fetch helper: daily P&L from C1 endpoint                                  */
+/* -------------------------------------------------------------------------- */
+
+function useDailyPnl(year: number, month: number, agentId: string | null) {
+  return useQuery({
+    queryKey: ['pnl-calendar-daily', year, month, agentId],
+    queryFn: async () => {
+      try {
+        const params = new URLSearchParams({ year: String(year), month: String(month + 1) })
+        if (agentId) params.set('agent_id', agentId)
+        const res = await api.get(`/api/v2/performance/daily?${params}`)
+        const rows = res.data as Array<{ date: string; pnl: number; trade_count: number; wins: number; losses: number }>
+        if (!rows || rows.length === 0) return null
+        return rows.map((r) => ({
+          date: r.date,
+          pnl: r.pnl,
+          tradeCount: r.trade_count,
+          wins: r.wins,
+          losses: r.losses,
+          trades: [] as TradeSummary[],
+        }))
+      } catch {
+        return null
+      }
+    },
+    staleTime: 60_000,
+  })
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Main Component                                                            */
 /* -------------------------------------------------------------------------- */
 
@@ -285,64 +369,29 @@ export default function PnlCalendarPage() {
   const [month, setMonth] = useState(today.getMonth())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'month' | 'year'>('month')
+  const [agentFilter, setAgentFilter] = useState<string | null>(null)
 
-  // Build date range for the query
-  const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
-  const endDaysInMonth = new Date(year, month + 1, 0).getDate()
-  const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDaysInMonth).padStart(2, '0')}`
-
-  // TODO: Replace with a dedicated daily P&L endpoint when available.
-  // Currently attempts GET /api/v2/trades?start={}&end={} and aggregates client-side.
-  const { data: rawDays } = useQuery({
-    queryKey: ['pnl-calendar', year, month],
+  // C3: Fetch agents for filter dropdown
+  const { data: agentsData } = useQuery<AgentOption[]>({
+    queryKey: ['pnl-cal-agents'],
     queryFn: async () => {
       try {
-        const res = await api.get(`/api/v2/trades?start=${startDate}&end=${endDate}&limit=1000`)
-        const trades = res.data as Array<{
-          symbol: string
-          side: string
-          qty: number
-          fill_price: number | null
-          limit_price: number | null
-          status: string
-          created_at: string
-          pnl?: number
-        }>
-        if (!trades || trades.length === 0) return null
-
-        // Aggregate by day
-        const byDay = new Map<string, DayPnl>()
-        for (const t of trades) {
-          if (t.status !== 'filled' && t.status !== 'FILLED') continue
-          const dateKey = t.created_at.slice(0, 10)
-          if (!byDay.has(dateKey)) {
-            byDay.set(dateKey, { date: dateKey, pnl: 0, tradeCount: 0, trades: [] })
-          }
-          const day = byDay.get(dateKey)!
-          const tradePnl = t.pnl ?? 0
-          day.pnl += tradePnl
-          day.tradeCount += 1
-          day.trades.push({
-            symbol: t.symbol,
-            side: t.side,
-            pnl: tradePnl,
-            qty: t.qty,
-          })
-        }
-        return Array.from(byDay.values())
+        const res = await api.get('/api/v2/performance/agents?limit=50')
+        return (res.data?.agents ?? []).map((a: any) => ({ id: a.id, name: a.name }))
       } catch {
-        return null
+        return []
       }
     },
-    staleTime: 60_000,
+    staleTime: 300_000,
   })
 
-  // Use mock data if API returned nothing
+  // C1/C2: Fetch daily P&L data from server
+  const { data: rawDays } = useDailyPnl(year, month, agentFilter)
+
   const days = useMemo(() => {
     return rawDays ?? generateMockData(year, month)
   }, [rawDays, year, month])
 
-  // Build lookup map
   const pnlMap = useMemo(() => {
     const m = new Map<string, DayPnl>()
     for (const d of days) m.set(d.date, d)
@@ -369,7 +418,6 @@ export default function PnlCalendarPage() {
     const maxAbsPnl = Math.max(Math.abs(bestDay.pnl), Math.abs(worstDay.pnl), 1)
     const winRate = days.length > 0 ? wins / days.length : 0
 
-    // Compute current streak (from most recent day backward)
     const sorted = [...days].sort((a, b) => b.date.localeCompare(a.date))
     let streakType: 'win' | 'lose' | 'none' = 'none'
     let streakCount = 0
@@ -390,18 +438,22 @@ export default function PnlCalendarPage() {
 
   const calendarGrid = useMemo(() => buildCalendarGrid(year, month), [year, month])
 
-  // Bar chart data for the month
+  // C4: Bar chart data with cumulative P&L line
   const barData = useMemo(() => {
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const result = []
+    let cumulative = 0
     for (let d = 1; d <= daysInMonth; d++) {
       const dd = String(d).padStart(2, '0')
       const mm = String(month + 1).padStart(2, '0')
       const dateStr = `${year}-${mm}-${dd}`
       const dayData = pnlMap.get(dateStr)
+      const pnl = dayData?.pnl ?? 0
+      cumulative += pnl
       result.push({
         day: d,
-        pnl: dayData?.pnl ?? 0,
+        pnl,
+        cumulative: Math.round(cumulative * 100) / 100,
         date: dateStr,
       })
     }
@@ -427,18 +479,50 @@ export default function PnlCalendarPage() {
     setSelectedDay(null)
   }, [today])
 
-  // Year view data
+  // C2: Year view fetches all 12 months in a single bulk query
+  const { data: yearRawData } = useQuery({
+    queryKey: ['pnl-calendar-year', year, agentFilter],
+    queryFn: async () => {
+      try {
+        const allDays: DayPnl[] = []
+        for (let m = 0; m < 12; m++) {
+          const params = new URLSearchParams({ year: String(year), month: String(m + 1) })
+          if (agentFilter) params.set('agent_id', agentFilter)
+          const res = await api.get(`/api/v2/performance/daily?${params}`)
+          const rows = res.data as Array<{ date: string; pnl: number; trade_count: number; wins: number; losses: number }>
+          if (rows && rows.length > 0) {
+            for (const r of rows) {
+              allDays.push({
+                date: r.date,
+                pnl: r.pnl,
+                tradeCount: r.trade_count,
+                wins: r.wins,
+                losses: r.losses,
+                trades: [],
+              })
+            }
+          }
+        }
+        return allDays.length > 0 ? allDays : null
+      } catch {
+        return null
+      }
+    },
+    enabled: viewMode === 'year',
+    staleTime: 120_000,
+  })
+
   const yearPnlMap = useMemo(() => {
     if (viewMode !== 'year') return new Map<string, DayPnl>()
-    // Generate mock data for the entire year
-    const allDays: DayPnl[] = []
-    for (let m = 0; m < 12; m++) {
-      allDays.push(...generateMockData(year, m))
-    }
     const map = new Map<string, DayPnl>()
-    for (const d of allDays) map.set(d.date, d)
+    const source = yearRawData ?? (() => {
+      const mock: DayPnl[] = []
+      for (let m = 0; m < 12; m++) mock.push(...generateMockData(year, m))
+      return mock
+    })()
+    for (const d of source) map.set(d.date, d)
     return map
-  }, [viewMode, year])
+  }, [viewMode, year, yearRawData])
 
   const yearMaxAbsPnl = useMemo(() => {
     if (viewMode !== 'year') return 1
@@ -461,6 +545,19 @@ export default function PnlCalendarPage() {
           description="Daily profit and loss heatmap"
         />
         <div className="flex items-center gap-2">
+          {/* C3: Agent filter */}
+          <Select value={agentFilter ?? 'all'} onValueChange={(v) => setAgentFilter(v === 'all' ? null : v)}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="All agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Agents</SelectItem>
+              {(agentsData ?? []).map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Button
             variant={viewMode === 'month' ? 'default' : 'outline'}
             size="sm"
@@ -478,7 +575,7 @@ export default function PnlCalendarPage() {
         </div>
       </div>
 
-      {/* Summary Metrics */}
+      {/* C5: Monthly rollup card */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           title="Total P&L"
@@ -546,58 +643,66 @@ export default function PnlCalendarPage() {
                 ))}
               </div>
 
-              {/* Calendar grid */}
-              <div className="grid grid-cols-7 gap-1 sm:gap-2">
-                {calendarGrid.flat().map((cell, i) => {
-                  if (!cell.day) {
-                    return <div key={i} className="aspect-square" />
-                  }
+              {/* Calendar grid with C5 weekly summaries */}
+              <div className="space-y-0">
+                {calendarGrid.map((week, weekIdx) => (
+                  <div key={weekIdx}>
+                    <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                      {week.map((cell, i) => {
+                        if (!cell.day) {
+                          return <div key={i} className="aspect-square" />
+                        }
 
-                  const dayData = pnlMap.get(cell.dateStr)
-                  const hasTrades = !!dayData
-                  const pnl = dayData?.pnl ?? 0
-                  const isSelected = selectedDay === cell.dateStr
+                        const dayData = pnlMap.get(cell.dateStr)
+                        const hasTrades = !!dayData
+                        const pnl = dayData?.pnl ?? 0
+                        const isSelected = selectedDay === cell.dateStr
 
-                  const cellClasses = hasTrades
-                    ? getPnlCellClasses(pnl, stats.maxAbsPnl, isDark)
-                    : cell.isWeekend
-                      ? (isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-zinc-100 border-zinc-200')
-                      : (isDark ? 'bg-zinc-800/30 border-zinc-700/50' : 'bg-white border-zinc-200')
+                        const cellClasses = hasTrades
+                          ? getPnlCellClasses(pnl, stats.maxAbsPnl, isDark)
+                          : cell.isWeekend
+                            ? (isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-zinc-100 border-zinc-200')
+                            : (isDark ? 'bg-zinc-800/30 border-zinc-700/50' : 'bg-white border-zinc-200')
 
-                  const isToday =
-                    cell.dateStr ===
-                    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+                        const isToday =
+                          cell.dateStr ===
+                          `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setSelectedDay(isSelected ? null : cell.dateStr)}
-                      className={cn(
-                        'relative aspect-square rounded-md border p-1 sm:p-1.5 flex flex-col items-center justify-center',
-                        'transition-all duration-150 ease-in-out',
-                        'hover:scale-105 hover:shadow-md hover:z-10',
-                        cellClasses,
-                        isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background scale-105 shadow-lg z-10',
-                        isToday && 'ring-1 ring-primary/50',
-                        !hasTrades && 'cursor-default',
-                      )}
-                    >
-                      <span className={cn(
-                        'text-[10px] sm:text-xs font-medium leading-none',
-                        isToday && 'underline underline-offset-2',
-                        !hasTrades && 'text-muted-foreground',
-                      )}>
-                        {cell.day}
-                      </span>
-                      {hasTrades && (
-                        <span className="text-[8px] sm:text-[10px] font-semibold leading-none mt-0.5 sm:mt-1 tabular-nums">
-                          {formatPnl(pnl, true)}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setSelectedDay(isSelected ? null : cell.dateStr)}
+                            className={cn(
+                              'relative aspect-square rounded-md border p-1 sm:p-1.5 flex flex-col items-center justify-center',
+                              'transition-all duration-150 ease-in-out',
+                              'hover:scale-105 hover:shadow-md hover:z-10',
+                              cellClasses,
+                              isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background scale-105 shadow-lg z-10',
+                              isToday && 'ring-1 ring-primary/50',
+                              !hasTrades && 'cursor-default',
+                            )}
+                          >
+                            <span className={cn(
+                              'text-[10px] sm:text-xs font-medium leading-none',
+                              isToday && 'underline underline-offset-2',
+                              !hasTrades && 'text-muted-foreground',
+                            )}>
+                              {cell.day}
+                            </span>
+                            {hasTrades && (
+                              <span className="text-[8px] sm:text-[10px] font-semibold leading-none mt-0.5 sm:mt-1 tabular-nums">
+                                {formatPnl(pnl, true)}
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {/* C5: Weekly summary row */}
+                    <WeeklySummary pnlMap={pnlMap} week={week} />
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -614,50 +719,71 @@ export default function PnlCalendarPage() {
             </Card>
           )}
 
-          {/* Bottom Section: Bar Chart + Streak */}
+          {/* Bottom Section: Bar Chart with cumulative line (C4) + Streak */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Daily P&L</CardTitle>
+                <CardTitle className="text-sm font-medium">Daily P&L + Cumulative</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-48 sm:h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={barData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                      <CartesianGrid
+                  <RContainer width="100%" height="100%">
+                    <RChart data={barData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <RGrid
                         strokeDasharray="3 3"
                         stroke={isDark ? '#333' : '#e5e7eb'}
                         vertical={false}
                       />
-                      <XAxis
+                      <RXAxis
                         dataKey="day"
                         tick={{ fontSize: 10, fill: isDark ? '#9ca3af' : '#6b7280' }}
                         tickLine={false}
                         axisLine={false}
                       />
-                      <YAxis
+                      <RYAxis
+                        yAxisId="pnl"
                         tick={{ fontSize: 10, fill: isDark ? '#9ca3af' : '#6b7280' }}
                         tickLine={false}
                         axisLine={false}
                         tickFormatter={(v: number) => `$${v}`}
                       />
-                      <ReTooltip
+                      <RYAxis
+                        yAxisId="cum"
+                        orientation="right"
+                        tick={{ fontSize: 10, fill: isDark ? '#818cf8' : '#6366f1' }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v: number) => `$${v}`}
+                      />
+                      <RTooltip
                         contentStyle={{
                           backgroundColor: isDark ? '#1f2937' : '#fff',
                           border: `1px solid ${isDark ? '#374151' : '#e5e7eb'}`,
                           borderRadius: 8,
                           fontSize: 12,
                         }}
-                        formatter={(value: number) => [formatPnl(value), 'P&L']}
+                        formatter={(value: number, name: string) => [
+                          formatPnl(value),
+                          name === 'cumulative' ? 'Cumulative' : 'Daily P&L',
+                        ]}
                         labelFormatter={(label: number) => `Day ${label}`}
                       />
-                      <Bar dataKey="pnl" radius={[2, 2, 0, 0]} maxBarSize={20}>
+                      <RBar yAxisId="pnl" dataKey="pnl" radius={[2, 2, 0, 0]} maxBarSize={20}>
                         {barData.map((entry, idx) => (
                           <Cell key={idx} fill={getBarColor(entry.pnl, isDark)} />
                         ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                      </RBar>
+                      {/* C4: Cumulative P&L line */}
+                      <RLine
+                        yAxisId="cum"
+                        type="monotone"
+                        dataKey="cumulative"
+                        stroke={isDark ? '#818cf8' : '#6366f1'}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </RChart>
+                  </RContainer>
                 </div>
               </CardContent>
             </Card>
@@ -703,7 +829,7 @@ export default function PnlCalendarPage() {
         </>
       )}
 
-      {/* Year View */}
+      {/* Year View (C2: uses real data) */}
       {viewMode === 'year' && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">

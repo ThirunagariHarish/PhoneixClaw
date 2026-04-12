@@ -10,12 +10,12 @@ from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import Float, case, cast, func, select, desc
+from sqlalchemy import case, desc, func, select
 
 from apps.api.src.deps import DbSession
-from shared.db.models.trade import TradeIntent
-from shared.db.models.agent_trade import AgentTrade
 from shared.db.models.agent import Agent
+from shared.db.models.agent_trade import AgentTrade
+from shared.db.models.trade import TradeIntent
 
 router = APIRouter(prefix="/api/v2/trades", tags=["trades"])
 
@@ -35,10 +35,14 @@ class TradeResponse(BaseModel):
     filled_at: str | None
     rejection_reason: str | None
     signal_source: str | None
+    pnl_dollar: float | None
+    pnl_pct: float | None
+    notes: str | None
     created_at: str
 
     @classmethod
     def from_model(cls, t: TradeIntent) -> "TradeResponse":
+        extra = t.extra_data or {}
         return cls(
             id=str(t.id),
             agent_id=str(t.agent_id),
@@ -54,6 +58,9 @@ class TradeResponse(BaseModel):
             filled_at=t.filled_at.isoformat() if t.filled_at else None,
             rejection_reason=t.rejection_reason,
             signal_source=t.signal_source,
+            pnl_dollar=extra.get("pnl_dollar"),
+            pnl_pct=extra.get("pnl_pct"),
+            notes=extra.get("notes"),
             created_at=t.created_at.isoformat() if t.created_at else "",
         )
 
@@ -64,20 +71,85 @@ async def list_trades(
     status_filter: str | None = Query(None, alias="status"),
     symbol: str | None = None,
     agent_id: str | None = None,
+    date_from: str | None = Query(None, description="ISO date string YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="ISO date string YYYY-MM-DD"),
+    sort_by: str | None = Query(None, description="Column to sort by"),
+    sort_dir: str | None = Query("desc", description="asc or desc"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     """List trade intents with optional filters."""
-    query = select(TradeIntent).order_by(desc(TradeIntent.created_at))
+    query = select(TradeIntent)
     if status_filter:
         query = query.where(TradeIntent.status == status_filter)
     if symbol:
-        query = query.where(TradeIntent.symbol == symbol.upper())
+        query = query.where(TradeIntent.symbol.ilike(f"%{symbol.upper()}%"))
     if agent_id:
         query = query.where(TradeIntent.agent_id == uuid.UUID(agent_id))
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            query = query.where(TradeIntent.created_at >= dt_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to).replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+            query = query.where(TradeIntent.created_at <= dt_to)
+        except ValueError:
+            pass
+
+    # Sorting
+    sort_column = {
+        "symbol": TradeIntent.symbol,
+        "side": TradeIntent.side,
+        "qty": TradeIntent.qty,
+        "status": TradeIntent.status,
+        "fill_price": TradeIntent.fill_price,
+        "created_at": TradeIntent.created_at,
+    }.get(sort_by or "created_at", TradeIntent.created_at)
+    if sort_dir == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
     query = query.limit(limit).offset(offset)
     result = await session.execute(query)
     return [TradeResponse.from_model(t) for t in result.scalars().all()]
+
+
+@router.get("/count")
+async def trade_count(
+    session: DbSession,
+    status_filter: str | None = Query(None, alias="status"),
+    symbol: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Return total count of trades matching filters (for pagination)."""
+    query = select(func.count(TradeIntent.id))
+    if status_filter:
+        query = query.where(TradeIntent.status == status_filter)
+    if symbol:
+        query = query.where(TradeIntent.symbol.ilike(f"%{symbol.upper()}%"))
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            query = query.where(TradeIntent.created_at >= dt_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to).replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+            query = query.where(TradeIntent.created_at <= dt_to)
+        except ValueError:
+            pass
+    result = await session.execute(query)
+    return {"count": result.scalar() or 0}
 
 
 @router.get("/stats")
@@ -138,7 +210,9 @@ async def portfolio_summary(session: DbSession):
             AgentTrade.agent_id,
             func.count(AgentTrade.id).label("total_trades"),
             func.count(case((AgentTrade.status == "open", 1))).label("open_positions"),
-            func.coalesce(func.sum(case((AgentTrade.status == "closed", AgentTrade.pnl_dollar))), 0.0).label("total_pnl"),
+            func.coalesce(
+                func.sum(case((AgentTrade.status == "closed", AgentTrade.pnl_dollar))), 0.0
+            ).label("total_pnl"),
             func.coalesce(func.sum(case(
                 (AgentTrade.exit_time >= today_start, AgentTrade.pnl_dollar)
             )), 0.0).label("today_pnl"),
@@ -219,4 +293,25 @@ async def get_trade(trade_id: str, session: DbSession):
     trade = result.scalar_one_or_none()
     if not trade:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found")
+    return TradeResponse.from_model(trade)
+
+
+class TradeNotesUpdate(BaseModel):
+    notes: str
+
+
+@router.patch("/{trade_id}/notes", response_model=TradeResponse)
+async def update_trade_notes(trade_id: str, payload: TradeNotesUpdate, session: DbSession):
+    """Update the notes/journal entry for a trade."""
+    result = await session.execute(
+        select(TradeIntent).where(TradeIntent.id == uuid.UUID(trade_id))
+    )
+    trade = result.scalar_one_or_none()
+    if not trade:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found")
+    extra = dict(trade.extra_data or {})
+    extra["notes"] = payload.notes
+    trade.extra_data = extra
+    await session.commit()
+    await session.refresh(trade)
     return TradeResponse.from_model(trade)

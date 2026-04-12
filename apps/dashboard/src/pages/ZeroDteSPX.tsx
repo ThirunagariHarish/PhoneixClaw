@@ -3,7 +3,7 @@
  * Phoenix v2.
  */
 import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { FlexCard } from '@/components/ui/FlexCard'
@@ -34,24 +34,41 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { getMetricTooltip } from '@/lib/metricTooltips'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  Cell,
+  ReferenceLine,
+} from 'recharts'
 
 const EMPTY_SPX = { price: 0, change: 0, changePct: 0 }
 const EMPTY_METRICS = {
   vix: 0,
   gexNet: 0,
-  dealerGammaZone: '—',
+  dealerGammaZone: 'Neutral',
   zeroDteVolume: 0,
   putCallRatio: 0,
   mocImbalance: 0,
 }
 const EMPTY_GAMMA_LEVELS: Array<{ strike: number; gex: number; type: string; distance: number }> = []
 const EMPTY_MOC = {
-  direction: '—',
+  direction: 'Neutral',
   amount: 0,
   historicalAvg: 0,
   predictedImpact: 0,
-  tradeSignal: '—',
+  tradeSignal: 'Neutral',
   releaseTime: '15:50',
 }
 const EMPTY_VANNA_CHARM = {
@@ -69,13 +86,13 @@ const EMPTY_VOLUME = {
   gammaSqueezeSignal: false,
 }
 const EMPTY_TRADE_PLAN = {
-  direction: '—',
-  instrument: '—',
-  strikes: '—',
-  size: '—',
-  entry: '—',
-  stop: '—',
-  target: '—',
+  direction: 'NEUTRAL',
+  instrument: 'SPX 0DTE Options',
+  strikes: 'Awaiting data',
+  size: 'N/A',
+  entry: 'Awaiting data',
+  stop: 'N/A',
+  target: 'N/A',
   signals: [] as string[],
 }
 
@@ -105,7 +122,7 @@ export default function ZeroDteSPXPage() {
   const [tradingMode, setTradingMode] = useState<'observe' | 'paper' | 'live'>('observe')
   const [maxRiskPct, setMaxRiskPct] = useState(1)
   const [autoExecute, setAutoExecute] = useState(false)
-  const queryClient = useQueryClient()
+  const [settingsSaved, setSettingsSaved] = useState(false)
   const countdownToClose = useCountdownTo(16, 0)
   const countdownToMoc = useCountdownTo(15, 50)
 
@@ -145,7 +162,20 @@ export default function ZeroDteSPXPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/gamma-levels')
-        return res.data ?? EMPTY_GAMMA_LEVELS
+        const data = res.data
+        // Z2: Ensure we always return an array
+        if (Array.isArray(data)) return data
+        // If backend returns dict format, transform it
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const gexByStrike = data.gex_by_strike || data.gexByStrike || {}
+          return Object.entries(gexByStrike).map(([strike, gex]) => ({
+            strike: parseFloat(strike),
+            gex: typeof gex === 'number' ? gex : parseFloat(String(gex)) || 0,
+            type: (typeof gex === 'number' ? gex : 0) > 0 ? 'Support' : 'Resistance',
+            distance: 0,
+          }))
+        }
+        return EMPTY_GAMMA_LEVELS
       } catch {
         return EMPTY_GAMMA_LEVELS
       }
@@ -158,7 +188,16 @@ export default function ZeroDteSPXPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/moc-imbalance')
-        return res.data ?? EMPTY_MOC
+        const d = res.data ?? {}
+        // Z3: Normalize field names from backend
+        return {
+          direction: d.direction ?? 'Neutral',
+          amount: d.amount ?? d.net_premium ?? 0,
+          historicalAvg: d.historicalAvg ?? d.historical_avg ?? 0,
+          predictedImpact: d.predictedImpact ?? d.predicted_impact ?? 0,
+          tradeSignal: d.tradeSignal ?? d.trade_signal ?? 'Neutral',
+          releaseTime: d.releaseTime ?? d.release_time ?? '15:50',
+        }
       } catch {
         return EMPTY_MOC
       }
@@ -171,7 +210,17 @@ export default function ZeroDteSPXPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/vanna-charm')
-        return res.data ?? EMPTY_VANNA_CHARM
+        const d = res.data ?? {}
+        return {
+          vannaLevel: d.vannaLevel ?? 0,
+          vannaDirection: d.vannaDirection ?? 'neutral',
+          charmBidActive: d.charmBidActive ?? false,
+          strikes: (Array.isArray(d.strikes) ? d.strikes : []).map((s: Record<string, unknown>) => ({
+            strike: s.strike ?? 0,
+            vanna: s.vanna ?? s.vanna_est ?? 0,
+            charm: s.charm ?? 0,
+          })),
+        }
       } catch {
         return EMPTY_VANNA_CHARM
       }
@@ -184,7 +233,25 @@ export default function ZeroDteSPXPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/volume')
-        return res.data ?? EMPTY_VOLUME
+        const d = res.data ?? {}
+        return {
+          callVolume: d.callVolume ?? d.call_volume ?? 0,
+          putVolume: d.putVolume ?? d.put_volume ?? 0,
+          ratio: d.ratio ?? 0,
+          // Z4: Normalize calls/puts field names
+          volumeByStrike: (Array.isArray(d.volumeByStrike) ? d.volumeByStrike : []).map((v: Record<string, unknown>) => ({
+            strike: v.strike ?? 0,
+            calls: v.calls ?? v.call_volume ?? 0,
+            puts: v.puts ?? v.put_volume ?? 0,
+          })),
+          largestTrades: (Array.isArray(d.largestTrades) ? d.largestTrades : []).map((t: Record<string, unknown>) => ({
+            strike: t.strike ?? 0,
+            type: t.type ?? t.option_type ?? '',
+            size: t.size ?? t.volume ?? 0,
+            premium: t.premium ?? 0,
+          })),
+          gammaSqueezeSignal: d.gammaSqueezeSignal ?? d.gamma_squeeze_signal ?? false,
+        }
       } catch {
         return EMPTY_VOLUME
       }
@@ -197,7 +264,27 @@ export default function ZeroDteSPXPage() {
     queryFn: async () => {
       try {
         const res = await api.get('/api/v2/zero-dte/trade-plan')
-        return res.data ?? EMPTY_TRADE_PLAN
+        const d = res.data ?? {}
+        // Z5: Normalize trade plan response
+        const rawSignals = d.signals ?? []
+        // signals could be array of strings or array of objects
+        const signals: string[] = rawSignals.map((s: unknown) =>
+          typeof s === 'string' ? s : (s && typeof s === 'object' && 'source' in (s as Record<string, unknown>))
+            ? `${(s as Record<string, unknown>).source}: ${(s as Record<string, unknown>).signal}`
+            : String(s)
+        )
+        return {
+          direction: d.direction ?? 'NEUTRAL',
+          instrument: d.instrument ?? 'SPX 0DTE Options',
+          strikes: typeof d.strikes === 'string' ? d.strikes
+            : Array.isArray(d.strikes) ? d.strikes.join(', ')
+            : 'Awaiting data',
+          size: d.size ?? 'N/A',
+          entry: d.entry ?? 'Awaiting data',
+          stop: d.stop ?? 'N/A',
+          target: d.target ?? 'N/A',
+          signals,
+        }
       } catch {
         return EMPTY_TRADE_PLAN
       }
@@ -205,18 +292,37 @@ export default function ZeroDteSPXPage() {
     refetchInterval: 60000,
   })
 
-  const deployMutation = useMutation({
-    mutationFn: async () => {
-      await api.post('/api/v2/zero-dte/agent/create', { instance_id: selectedInstance || 'inst-1' })
+  // Z8: Load saved settings on mount
+  useQuery({
+    queryKey: ['zero-dte', 'settings'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/zero-dte/settings')
+        const d = res.data ?? {}
+        if (d.trading_mode) setTradingMode(d.trading_mode as 'observe' | 'paper' | 'live')
+        if (d.max_risk_pct) setMaxRiskPct(d.max_risk_pct)
+        if (d.auto_execute !== undefined) setAutoExecute(d.auto_execute)
+        return d
+      } catch {
+        return {}
+      }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['zero-dte'] }),
+    staleTime: Infinity, // Load once
   })
 
-  const executeMutation = useMutation({
+  // Z8: Save settings mutation
+  const saveSettingsMutation = useMutation({
     mutationFn: async () => {
-      await api.post('/api/v2/zero-dte/execute', { plan: tradePlan })
+      await api.post('/api/v2/zero-dte/settings', {
+        trading_mode: tradingMode,
+        max_risk_pct: maxRiskPct,
+        auto_execute: autoExecute,
+      })
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['zero-dte'] }),
+    onSuccess: () => {
+      setSettingsSaved(true)
+      setTimeout(() => setSettingsSaved(false), 2000)
+    },
   })
 
   const formatGex = (v: number) => {
@@ -225,15 +331,25 @@ export default function ZeroDteSPXPage() {
   }
   const formatMoc = (v: number) => `${((v ?? 0) / 1e6).toFixed(0)}M`
 
+  // Z6: Prepare GEX chart data (sorted by strike)
+  const gexChartData = (Array.isArray(gammaLevels) ? gammaLevels : [])
+    .slice()
+    .sort((a, b) => a.strike - b.strike)
+    .map((row) => ({
+      strike: row.strike,
+      gex: row.gex ?? 0,
+      type: row.type,
+    }))
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader icon={Activity} title="0DTE SPX Command Center" description="Zero days to expiration SPX options flow and signals">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-muted-foreground">
           <span className="font-mono text-base sm:text-lg font-semibold text-foreground">
-            SPX {spxData.price ? spxData.price.toLocaleString() : '—'}
+            SPX {spxData.price ? spxData.price.toLocaleString() : '--'}
           </span>
-          <span className={spxData.change >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-            {spxData.change >= 0 ? '+' : ''}{spxData.change} ({spxData.changePct}%)
+          <span className={(spxData.change ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+            {(spxData.change ?? 0) >= 0 ? '+' : ''}{spxData.change ?? 0} ({spxData.changePct ?? 0}%)
           </span>
           <span className="flex items-center gap-1">
             <Timer className="h-4 w-4" />
@@ -244,26 +360,26 @@ export default function ZeroDteSPXPage() {
 
       {/* Top Metrics Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2 sm:gap-3">
-        <MetricCard title="SPX Price" value={spxData.price ? spxData.price.toLocaleString() : '—'} tooltip={getMetricTooltip('SPX Price')} />
-        <MetricCard title="VIX" value={spxMetrics.vix || '—'} tooltip={getMetricTooltip('VIX')} />
+        <MetricCard title="SPX Price" value={spxData.price ? spxData.price.toLocaleString() : '--'} tooltip={getMetricTooltip('SPX Price')} />
+        <MetricCard title="VIX" value={spxMetrics.vix || '--'} tooltip={getMetricTooltip('VIX')} />
         <MetricCard
           title="GEX Net"
-          value={spxMetrics.gexNet ? formatGex(spxMetrics.gexNet) : '—'}
-          trend={spxMetrics.gexNet >= 0 ? 'up' : 'down'}
+          value={spxMetrics.gexNet ? formatGex(spxMetrics.gexNet) : '--'}
+          trend={(spxMetrics.gexNet ?? 0) >= 0 ? 'up' : 'down'}
           tooltip={getMetricTooltip('GEX Net')}
         />
         <MetricCard
           title="Dealer Gamma Zone"
-          value={spxMetrics.dealerGammaZone}
+          value={spxMetrics.dealerGammaZone ?? '--'}
           trend={spxMetrics.dealerGammaZone === 'Positive' ? 'up' : 'down'}
           tooltip={getMetricTooltip('Dealer Gamma Zone')}
         />
-        <MetricCard title="0DTE Volume" value={spxMetrics.zeroDteVolume ? formatGex(spxMetrics.zeroDteVolume) : '—'} tooltip={getMetricTooltip('ODTE Volume')} />
-        <MetricCard title="Put/Call Ratio" value={spxMetrics.putCallRatio ? (spxMetrics.putCallRatio ?? 0).toFixed(2) : '—'} tooltip={getMetricTooltip('Put/Call Ratio')} />
+        <MetricCard title="0DTE Volume" value={spxMetrics.zeroDteVolume ? formatGex(spxMetrics.zeroDteVolume) : '--'} tooltip={getMetricTooltip('ODTE Volume')} />
+        <MetricCard title="Put/Call Ratio" value={spxMetrics.putCallRatio ? (spxMetrics.putCallRatio ?? 0).toFixed(2) : '--'} tooltip={getMetricTooltip('Put/Call Ratio')} />
         <MetricCard
           title="MOC Imbalance"
-          value={spxMetrics.mocImbalance ? `$${formatMoc(Math.abs(spxMetrics.mocImbalance))}` : '—'}
-          trend={spxMetrics.mocImbalance >= 0 ? 'up' : 'down'}
+          value={spxMetrics.mocImbalance ? `$${formatMoc(Math.abs(spxMetrics.mocImbalance))}` : '--'}
+          trend={(spxMetrics.mocImbalance ?? 0) >= 0 ? 'up' : 'down'}
           tooltip={getMetricTooltip('MOC Imbalance')}
         />
       </div>
@@ -297,12 +413,43 @@ export default function ZeroDteSPXPage() {
                   </div>
                   <p className="text-xs">Look for: <strong>Gamma Flip</strong> (yellow) = key pivot, <strong>Support</strong> = price floor, <strong>Wall/Resistance</strong> = price ceiling.</p>
                 </div>
+
+                {/* Z6: GEX Bar Chart */}
+                {gexChartData.length > 0 && (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={gexChartData} layout="horizontal" margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="strike" tick={{ fontSize: 11 }} className="fill-muted-foreground" />
+                        <YAxis tick={{ fontSize: 11 }} className="fill-muted-foreground" tickFormatter={(v) => formatGex(v)} />
+                        <RechartsTooltip
+                          contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
+                          labelStyle={{ color: 'hsl(var(--foreground))' }}
+                          formatter={(value: number) => [formatGex(value), 'GEX']}
+                        />
+                        <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                        <Bar dataKey="gex" radius={[2, 2, 0, 0]}>
+                          {gexChartData.map((entry, index) => (
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={entry.type === 'Flip' ? '#eab308' : entry.gex >= 0 ? '#22c55e' : '#ef4444'}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
                 <div className="flex gap-2 text-sm">
                   <span className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
                     Positive Gamma
                   </span>
                   <span className="px-2 py-1 rounded bg-red-500/20 text-red-600 dark:text-red-400">
                     Negative Gamma
+                  </span>
+                  <span className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-600 dark:text-yellow-400">
+                    Gamma Flip
                   </span>
                 </div>
                 <div className="rounded-md border overflow-x-auto">
@@ -322,21 +469,21 @@ export default function ZeroDteSPXPage() {
                           className={
                             row.type === 'Flip'
                               ? 'bg-yellow-500/20 font-bold'
-                              : row.gex > 0
+                              : (row.gex ?? 0) > 0
                                 ? 'bg-emerald-500/5'
                                 : 'bg-red-500/5'
                           }
                         >
                           <TableCell className="font-mono">{row.strike}</TableCell>
-                          <TableCell>{formatGex(row.gex)}</TableCell>
+                          <TableCell>{formatGex(row.gex ?? 0)}</TableCell>
                           <TableCell>
                             {row.type === 'Flip' ? (
                               <Badge className="bg-yellow-500 text-yellow-950">Gamma Flip</Badge>
                             ) : (
-                              row.type
+                              row.type ?? '--'
                             )}
                           </TableCell>
-                          <TableCell>{row.distance > 0 ? `+${row.distance}` : row.distance}</TableCell>
+                          <TableCell>{(row.distance ?? 0) > 0 ? `+${row.distance}` : row.distance ?? 0}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -366,15 +513,15 @@ export default function ZeroDteSPXPage() {
                   </p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                  <MetricCard title="Direction" value={mocData.direction} trend={mocData.direction === 'Buy' ? 'up' : 'down'} />
-                  <MetricCard title="Amount" value={`$${formatMoc(Math.abs(mocData.amount))}`} />
-                  <MetricCard title="Historical Avg" value={`$${formatMoc(Math.abs(mocData.historicalAvg))}`} />
-                  <MetricCard title="Predicted Impact" value={`${mocData.predictedImpact > 0 ? '+' : ''}${mocData.predictedImpact}%`} />
+                  <MetricCard title="Direction" value={mocData.direction ?? '--'} trend={mocData.direction === 'Buy' ? 'up' : 'down'} />
+                  <MetricCard title="Amount" value={`$${formatMoc(Math.abs(mocData.amount ?? 0))}`} />
+                  <MetricCard title="Historical Avg" value={`$${formatMoc(Math.abs(mocData.historicalAvg ?? 0))}`} />
+                  <MetricCard title="Predicted Impact" value={`${(mocData.predictedImpact ?? 0) > 0 ? '+' : ''}${mocData.predictedImpact ?? 0}%`} />
                 </div>
                 <div className="p-4 rounded-lg border">
                   <h4 className="font-medium mb-2">Trade Signal</h4>
                   <Badge variant={mocData.tradeSignal === 'Bullish' ? 'default' : 'destructive'} className="text-sm">
-                    {mocData.tradeSignal}
+                    {mocData.tradeSignal ?? '--'}
                   </Badge>
                 </div>
               </TabsContent>
@@ -422,7 +569,7 @@ export default function ZeroDteSPXPage() {
                     <TableBody>
                       {(Array.isArray(vannaCharm.strikes) ? vannaCharm.strikes : []).map((s: { strike: number; vanna: number; charm: number }) => (
                         <TableRow key={s.strike}>
-                          <TableCell className="font-mono">{s.strike}</TableCell>
+                          <TableCell className="font-mono">{s.strike ?? 0}</TableCell>
                           <TableCell>{(s.vanna ?? 0).toFixed(2)}</TableCell>
                           <TableCell>{(s.charm ?? 0).toFixed(2)}</TableCell>
                         </TableRow>
@@ -449,9 +596,9 @@ export default function ZeroDteSPXPage() {
                   <p className="text-xs"><strong>Heatmap:</strong> Brighter green = more activity at that strike. Look for clusters — they reveal where the &quot;battle&quot; is happening. <strong>Largest Trades</strong> show institutional-sized bets.</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                  <MetricCard title="Call Volume" value={volume.callVolume?.toLocaleString() ?? '-'} />
-                  <MetricCard title="Put Volume" value={volume.putVolume?.toLocaleString() ?? '-'} />
-                  <MetricCard title="C/P Ratio" value={volume.ratio?.toFixed(2) ?? '-'} />
+                  <MetricCard title="Call Volume" value={(volume.callVolume ?? 0).toLocaleString()} />
+                  <MetricCard title="Put Volume" value={(volume.putVolume ?? 0).toLocaleString()} />
+                  <MetricCard title="C/P Ratio" value={(volume.ratio ?? 0).toFixed(2)} />
                   <MetricCard
                     title="Gamma Squeeze"
                     value={volume.gammaSqueezeSignal ? 'Yes' : 'No'}
@@ -462,7 +609,7 @@ export default function ZeroDteSPXPage() {
                   <h4 className="font-medium mb-2">Volume by Strike (heatmap)</h4>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
                     {(Array.isArray(volume.volumeByStrike) ? volume.volumeByStrike : []).map((v: { strike: number; calls: number; puts: number }) => {
-                      const total = v.calls + v.puts
+                      const total = (v.calls ?? 0) + (v.puts ?? 0)
                       const intensity = Math.min(100, (total / 150) * 100)
                       return (
                         <div
@@ -471,7 +618,7 @@ export default function ZeroDteSPXPage() {
                           style={{ backgroundColor: `rgba(34, 197, 94, ${intensity / 100})` }}
                         >
                           <div className="font-mono font-medium">{v.strike}</div>
-                          <div>C:{v.calls} P:{v.puts}</div>
+                          <div>C:{v.calls ?? 0} P:{v.puts ?? 0}</div>
                         </div>
                       )
                     })}
@@ -482,8 +629,8 @@ export default function ZeroDteSPXPage() {
                   <div className="space-y-2">
                     {(Array.isArray(volume.largestTrades) ? volume.largestTrades : []).map((t: { strike: number; type: string; size: number; premium: number }, i: number) => (
                       <div key={i} className="flex justify-between text-sm p-2 rounded border">
-                        <span className="font-mono">{t.strike}{t.type}</span>
-                        <span>{t.size} @ ${(t.size ? (t.premium / t.size / 100) : 0).toFixed(2)}</span>
+                        <span className="font-mono">{t.strike ?? 0}{t.type ?? ''}</span>
+                        <span>{t.size ?? 0} @ ${((t.size ?? 0) ? ((t.premium ?? 0) / (t.size ?? 1) / 100) : 0).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -510,19 +657,19 @@ export default function ZeroDteSPXPage() {
                   <h4 className="font-semibold">AI Composite Trade Plan</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <span className="text-muted-foreground">Direction</span>
-                    <Badge variant={tradePlan.direction === 'LONG' ? 'default' : 'destructive'}>{tradePlan.direction}</Badge>
+                    <Badge variant={tradePlan.direction === 'LONG' ? 'default' : 'destructive'}>{tradePlan.direction ?? '--'}</Badge>
                     <span className="text-muted-foreground">Instrument</span>
-                    <span>{tradePlan.instrument}</span>
+                    <span>{tradePlan.instrument ?? '--'}</span>
                     <span className="text-muted-foreground">Strikes</span>
-                    <span className="font-mono">{tradePlan.strikes}</span>
+                    <span className="font-mono">{tradePlan.strikes ?? '--'}</span>
                     <span className="text-muted-foreground">Size</span>
-                    <span>{tradePlan.size}</span>
+                    <span>{tradePlan.size ?? '--'}</span>
                     <span className="text-muted-foreground">Entry</span>
-                    <span>{tradePlan.entry}</span>
+                    <span>{tradePlan.entry ?? '--'}</span>
                     <span className="text-muted-foreground">Stop</span>
-                    <span>{tradePlan.stop}</span>
+                    <span>{tradePlan.stop ?? '--'}</span>
                     <span className="text-muted-foreground">Target</span>
-                    <span>{tradePlan.target}</span>
+                    <span>{tradePlan.target ?? '--'}</span>
                   </div>
                   <div className="pt-2">
                     <p className="text-xs text-muted-foreground mb-1">Signals:</p>
@@ -532,14 +679,28 @@ export default function ZeroDteSPXPage() {
                       ))}
                     </div>
                   </div>
-                  <Button
-                    className="w-full mt-4"
-                    onClick={() => executeMutation.mutate()}
-                    disabled={executeMutation.isPending || tradingMode === 'observe'}
-                  >
-                    <Target className="h-4 w-4 mr-2" />
-                    Execute Plan
-                  </Button>
+                  {/* Z7: Execute button disabled with tooltip when not wired */}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="w-full inline-block">
+                          <Button
+                            className="w-full mt-4"
+                            disabled={tradingMode === 'observe'}
+                          >
+                            <Target className="h-4 w-4 mr-2" />
+                            {tradingMode === 'observe' ? 'Observe Mode (no execution)' : 'Execute Plan (Coming Soon)'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {tradingMode === 'observe'
+                          ? <p>Switch to Paper or Live mode to enable execution</p>
+                          : <p>Coming soon -- auto-execution is under development</p>
+                        }
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </TabsContent>
             </Tabs>
@@ -556,20 +717,31 @@ export default function ZeroDteSPXPage() {
                   <SelectValue placeholder="Select instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {instances.map((inst) => (
+                  {(instances || []).map((inst) => (
                     <SelectItem key={inst.id} value={inst.id}>{inst.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Button
-              className="w-full"
-              onClick={() => deployMutation.mutate()}
-              disabled={deployMutation.isPending}
-            >
-              <Zap className="h-4 w-4 mr-2" />
-              Deploy 0DTE Agent
-            </Button>
+            {/* Z7: Deploy button with "Coming soon" tooltip */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="w-full inline-block">
+                    <Button
+                      className="w-full"
+                      disabled
+                    >
+                      <Zap className="h-4 w-4 mr-2" />
+                      Deploy 0DTE Agent
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Coming soon -- agent deployment is under development</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <div>
               <Label className="text-sm">Trading Mode</Label>
               <Select value={tradingMode} onValueChange={(v) => setTradingMode(v as 'observe' | 'paper' | 'live')}>
@@ -599,6 +771,15 @@ export default function ZeroDteSPXPage() {
               <Label className="text-sm">Auto-execute</Label>
               <Switch checked={autoExecute} onCheckedChange={setAutoExecute} />
             </div>
+            {/* Z8: Save settings button */}
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => saveSettingsMutation.mutate()}
+              disabled={saveSettingsMutation.isPending}
+            >
+              {settingsSaved ? 'Settings Saved' : 'Save Settings'}
+            </Button>
           </div>
         </FlexCard>
       </div>

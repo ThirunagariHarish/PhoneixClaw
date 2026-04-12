@@ -1,6 +1,6 @@
 /**
  * Narrative & Sentiment — NLP-powered sentiment intelligence from the Narrative Sentinel agent.
- * Phoenix v2.
+ * Phoenix v3.
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -18,8 +18,33 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  LineChart as RechartsLineChart,
+  Line as RechartsLine,
+  XAxis as RechartsXAxis,
+  YAxis as RechartsYAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer as RechartsResponsiveContainer,
+} from 'recharts'
+import type { ComponentType } from 'react'
 import { MessageCircle, Brain, TrendingUp, AlertTriangle, Newspaper } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+
+const ResponsiveContainer = RechartsResponsiveContainer as unknown as ComponentType<any>
+const LineChart = RechartsLineChart as unknown as ComponentType<any>
+const XAxis = RechartsXAxis as unknown as ComponentType<any>
+const YAxis = RechartsYAxis as unknown as ComponentType<any>
+const Tooltip = RechartsTooltip as unknown as ComponentType<any>
+const Line = RechartsLine as unknown as ComponentType<any>
 
 const EMPTY_SOCIAL = {
   cashtags: [] as string[],
@@ -34,11 +59,19 @@ function sentimentColor(score: number) {
   return 'bg-red-500'
 }
 
+function heatmapCellColor(score: number): string {
+  if (score >= 0.5) return 'bg-emerald-600 text-white'
+  if (score >= 0.2) return 'bg-emerald-400/60'
+  if (score >= -0.2) return 'bg-slate-200 dark:bg-slate-700'
+  if (score >= -0.5) return 'bg-red-400/60'
+  return 'bg-red-600 text-white'
+}
+
 export default function NarrativeSentimentPage() {
   const [selectedInstance, setSelectedInstance] = useState<string>('')
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [alertThreshold, setAlertThreshold] = useState(0.7)
-  const [sourceToggles, setSourceToggles] = useState({ twitter: true, news: true, reddit: true, sec: true })
+  const [sentimentDays, setSentimentDays] = useState('7')
   const queryClient = useQueryClient()
 
   const { data: instances = [] } = useQuery<Array<{ id: string; name: string }>>({
@@ -115,6 +148,58 @@ export default function NarrativeSentimentPage() {
     },
   })
 
+  // N2: Sentiment heatmap
+  const { data: heatmapData = { heatmap: [] } } = useQuery({
+    queryKey: ['narrative-heatmap'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/narrative/sentiment-heatmap')
+        return res.data ?? { heatmap: [] }
+      } catch {
+        return { heatmap: [] }
+      }
+    },
+  })
+
+  // N3: Fear & Greed
+  const { data: fearGreedData = { score: 50, label: 'Neutral', components: {} } } = useQuery({
+    queryKey: ['narrative-fear-greed'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/narrative/fear-greed')
+        return res.data ?? { score: 50, label: 'Neutral', components: {} }
+      } catch {
+        return { score: 50, label: 'Neutral', components: {} }
+      }
+    },
+  })
+
+  // N4: Sentiment time-series
+  const { data: sentimentTs = { timeseries: [] } } = useQuery({
+    queryKey: ['narrative-sentiment-ts', sentimentDays],
+    queryFn: async () => {
+      try {
+        const res = await api.get(`/api/v2/narrative/sentiment-timeseries?days=${sentimentDays}`)
+        return res.data ?? { timeseries: [] }
+      } catch {
+        return { timeseries: [] }
+      }
+    },
+  })
+
+  // N6: Earnings history
+  const { data: earningsHistory = [] } = useQuery({
+    queryKey: ['narrative-earnings-history'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/api/v2/narrative/earnings-history')
+        return res.data ?? []
+      } catch {
+        return []
+      }
+    },
+  })
+
   const createAgentMutation = useMutation({
     mutationFn: async () => {
       await api.post('/api/v2/narrative/agent/create', {
@@ -131,6 +216,14 @@ export default function NarrativeSentimentPage() {
   const fedItems = Array.isArray(fedWatch) ? fedWatch : []
   const earningsItems = Array.isArray(earnings) ? earnings : []
   const analystItems = Array.isArray(analystMoves) ? analystMoves : []
+  const heatmapItems = Array.isArray(heatmapData.heatmap) ? heatmapData.heatmap : []
+  const timeseriesItems = Array.isArray(sentimentTs.timeseries) ? sentimentTs.timeseries : []
+  const earningsHistoryItems = Array.isArray(earningsHistory) ? earningsHistory : []
+
+  // Fear & Greed gauge color
+  const fgScore = fearGreedData.score ?? 50
+  const fgColor = fgScore >= 60 ? 'text-emerald-600' : fgScore >= 40 ? 'text-amber-600' : 'text-red-600'
+  const fgBg = fgScore >= 60 ? 'bg-emerald-500' : fgScore >= 40 ? 'bg-amber-500' : 'bg-red-500'
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -146,12 +239,12 @@ export default function NarrativeSentimentPage() {
         />
         <MetricCard
           title="Fear & Greed Index"
-          value={metrics.fearGreed != null ? metrics.fearGreed : 50}
-          subtitle="0-100"
-          trend={(metrics.fearGreed ?? 50) >= 50 ? 'up' : 'down'}
+          value={fgScore}
+          subtitle={fearGreedData.label ?? '0-100'}
+          trend={fgScore >= 50 ? 'up' : 'down'}
         />
         <MetricCard
-          title="Twitter Velocity"
+          title="Discord Activity"
           value={((metrics.twitterVelocity != null ? metrics.twitterVelocity : 0) * 100).toFixed(0) + '%'}
           subtitle="Activity score"
         />
@@ -189,22 +282,14 @@ export default function NarrativeSentimentPage() {
               Deploy Sentiment Agent
             </Button>
             <div>
-              <label className="text-sm font-medium">Source toggles</label>
+              <label className="text-sm font-medium">Active sources</label>
               <div className="flex flex-wrap gap-2 mt-2">
-                {(['twitter', 'news', 'reddit', 'sec'] as const).map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setSourceToggles((s) => ({ ...s, [k]: !s[k] }))}
-                    className={cn(
-                      'px-3 py-1 rounded text-xs font-medium',
-                      sourceToggles[k] ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                    )}
-                  >
-                    {k}
-                  </button>
-                ))}
+                <Badge variant="default" className="bg-primary text-primary-foreground">Discord</Badge>
+                <Badge variant="secondary" className="text-muted-foreground">FinBERT NLP</Badge>
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Twitter/Reddit sources planned for future release
+              </p>
             </div>
             <div>
               <label className="text-sm font-medium">Alert threshold: {alertThreshold}</label>
@@ -236,6 +321,18 @@ export default function NarrativeSentimentPage() {
             <Newspaper className="h-4 w-4" />
             Sentiment Feed
           </TabsTrigger>
+          <TabsTrigger value="heatmap" className="gap-1">
+            <TrendingUp className="h-4 w-4" />
+            Heatmap
+          </TabsTrigger>
+          <TabsTrigger value="feargreed" className="gap-1">
+            <AlertTriangle className="h-4 w-4" />
+            Fear/Greed
+          </TabsTrigger>
+          <TabsTrigger value="timeseries" className="gap-1">
+            <TrendingUp className="h-4 w-4" />
+            Trend
+          </TabsTrigger>
           <TabsTrigger value="fed" className="gap-1">
             <MessageCircle className="h-4 w-4" />
             Fed Watch
@@ -246,7 +343,7 @@ export default function NarrativeSentimentPage() {
           </TabsTrigger>
           <TabsTrigger value="earnings" className="gap-1">
             <AlertTriangle className="h-4 w-4" />
-            Earnings Intelligence
+            Earnings
           </TabsTrigger>
           <TabsTrigger value="analyst" className="gap-1">
             <TrendingUp className="h-4 w-4" />
@@ -297,6 +394,106 @@ export default function NarrativeSentimentPage() {
           </FlexCard>
         </TabsContent>
 
+        {/* N2: Sentiment Heatmap */}
+        <TabsContent value="heatmap" className="space-y-4">
+          <FlexCard title="Sentiment Heatmap by Ticker">
+            {heatmapItems.length > 0 ? (
+              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                {heatmapItems.map((h: { ticker: string; sentiment: number; mentions: number; label: string }) => (
+                  <div
+                    key={h.ticker}
+                    className={cn(
+                      'p-3 rounded-lg text-center',
+                      heatmapCellColor(h.sentiment)
+                    )}
+                    title={`${h.ticker}: ${h.sentiment.toFixed(2)} (${h.mentions} mentions)`}
+                  >
+                    <p className="font-mono font-bold text-sm">{h.ticker}</p>
+                    <p className="text-xs">{h.sentiment.toFixed(2)}</p>
+                    <p className="text-xs opacity-70">{h.mentions}m</p>
+                    <p className="text-[10px] opacity-80">{h.label}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No heatmap data available. Sentiment is computed from Discord messages with ticker mentions.</p>
+            )}
+          </FlexCard>
+        </TabsContent>
+
+        {/* N3: Fear & Greed */}
+        <TabsContent value="feargreed" className="space-y-4">
+          <FlexCard title="Fear & Greed Index">
+            <div className="flex flex-col items-center gap-4">
+              {/* Gauge visualization */}
+              <div className="relative w-48 h-24 overflow-hidden">
+                <div className="absolute w-48 h-48 rounded-full border-[16px] border-muted -top-24" />
+                <div
+                  className={cn('absolute w-48 h-48 rounded-full border-[16px] -top-24', fgBg)}
+                  style={{
+                    clipPath: `polygon(0 50%, ${fgScore}% 50%, ${fgScore}% 100%, 0 100%)`,
+                    opacity: 0.7,
+                  }}
+                />
+              </div>
+              <div className="text-center">
+                <p className={cn('text-4xl font-bold', fgColor)}>{fgScore}</p>
+                <p className="text-lg font-medium text-muted-foreground">{fearGreedData.label}</p>
+              </div>
+
+              {/* Component breakdown */}
+              <div className="w-full space-y-3 mt-4">
+                {Object.entries(fearGreedData.components ?? {}).map(([key, comp]: [string, any]) => (
+                  <div key={key} className="flex items-center gap-3">
+                    <span className="w-40 text-sm text-muted-foreground">{comp.label}</span>
+                    <div className="flex-1 h-3 rounded bg-muted overflow-hidden">
+                      <div
+                        className={cn('h-full rounded', comp.score >= 50 ? 'bg-emerald-500' : 'bg-red-500')}
+                        style={{ width: `${comp.score}%` }}
+                      />
+                    </div>
+                    <span className="w-10 text-xs text-right">{comp.score}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </FlexCard>
+        </TabsContent>
+
+        {/* N4: Sentiment time-series */}
+        <TabsContent value="timeseries" className="space-y-4">
+          <FlexCard title="Sentiment Over Time">
+            <div className="flex items-center gap-2 mb-4">
+              <label className="text-sm text-muted-foreground">Period:</label>
+              <Select value={sentimentDays} onValueChange={setSentimentDays}>
+                <SelectTrigger className="w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">7 days</SelectItem>
+                  <SelectItem value="14">14 days</SelectItem>
+                  <SelectItem value="30">30 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {timeseriesItems.length > 0 ? (
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={timeseriesItems}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(d: string) => d.slice(5)} />
+                    <YAxis tick={{ fontSize: 11 }} domain={[-1, 1]} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="sentiment" name="Avg Sentiment" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No time-series data available</p>
+            )}
+          </FlexCard>
+        </TabsContent>
+
         <TabsContent value="fed" className="space-y-4">
           <FlexCard title="Fed Watch" action={<MessageCircle className="h-4 w-4 text-muted-foreground" />}>
             <div className="space-y-4">
@@ -323,7 +520,7 @@ export default function NarrativeSentimentPage() {
           <FlexCard title="Social Pulse" action={<TrendingUp className="h-4 w-4 text-muted-foreground" />}>
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium text-muted-foreground mb-2">Twitter trending cashtags</p>
+                <p className="text-sm font-medium text-muted-foreground mb-2">Trending cashtags (Discord)</p>
                 <div className="flex flex-wrap gap-2">
                   {(social.cashtags ?? []).map((t: string) => (
                     <Badge key={t} variant="secondary">{t}</Badge>
@@ -331,7 +528,7 @@ export default function NarrativeSentimentPage() {
                 </div>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground mb-2">WSB momentum tickers</p>
+                <p className="text-sm font-medium text-muted-foreground mb-2">Top contributors</p>
                 <div className="flex flex-wrap gap-2">
                   {(social.wsbMomentum ?? []).map((t: string) => (
                     <Badge key={t} variant="outline">{t}</Badge>
@@ -339,7 +536,7 @@ export default function NarrativeSentimentPage() {
                 </div>
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground mb-2">Sentiment heatmap by ticker</p>
+                <p className="text-sm font-medium text-muted-foreground mb-2">Sentiment by ticker</p>
                 <div className="space-y-2">
                   {(social.heatmap ?? []).map((h: { ticker: string; sentiment: number }) => (
                     <div key={h.ticker} className="flex items-center gap-2">
@@ -360,7 +557,7 @@ export default function NarrativeSentimentPage() {
         </TabsContent>
 
         <TabsContent value="earnings" className="space-y-4">
-          <FlexCard title="Earnings Intelligence" action={<AlertTriangle className="h-4 w-4 text-muted-foreground" />}>
+          <FlexCard title="Upcoming Earnings" action={<AlertTriangle className="h-4 w-4 text-muted-foreground" />}>
             <div className="space-y-4">
               {earningsItems.map((e: { ticker: string; date: string; expectation: number; postRisk: string | null }) => (
                 <div key={e.ticker} className="p-4 rounded-lg border">
@@ -378,19 +575,57 @@ export default function NarrativeSentimentPage() {
               ))}
             </div>
           </FlexCard>
+
+          {/* N6: Earnings beat/miss history */}
+          {earningsHistoryItems.length > 0 && (
+            <FlexCard title="EPS Beat/Miss History">
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>EPS Est</TableHead>
+                      <TableHead>EPS Actual</TableHead>
+                      <TableHead>Surprise %</TableHead>
+                      <TableHead>Result</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {earningsHistoryItems.map((eh: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono font-semibold">{eh.ticker}</TableCell>
+                        <TableCell className="text-muted-foreground">{eh.date ?? 'N/A'}</TableCell>
+                        <TableCell>{eh.epsEstimate != null ? `$${eh.epsEstimate.toFixed(2)}` : 'N/A'}</TableCell>
+                        <TableCell>{eh.epsActual != null ? `$${eh.epsActual.toFixed(2)}` : 'N/A'}</TableCell>
+                        <TableCell className={eh.surprisePct > 0 ? 'text-emerald-600' : eh.surprisePct < 0 ? 'text-red-600' : ''}>
+                          {eh.surprisePct != null ? `${eh.surprisePct.toFixed(1)}%` : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={eh.result === 'Beat' ? 'default' : eh.result === 'Miss' ? 'destructive' : 'secondary'}>
+                            {eh.result}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </FlexCard>
+          )}
         </TabsContent>
 
         <TabsContent value="analyst" className="space-y-4">
           <FlexCard title="Analyst Moves" action={<TrendingUp className="h-4 w-4 text-muted-foreground" />}>
             <div className="space-y-4">
-              {analystItems.map((a: { ticker: string; action: string; firm: string; target: number; impact: string }) => (
-                <div key={a.ticker} className="p-4 rounded-lg border flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+              {analystItems.map((a: { ticker: string; action: string; firm: string; target: number; impact: string }, i: number) => (
+                <div key={`${a.ticker}-${i}`} className="p-4 rounded-lg border flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                   <div>
                     <p className="font-semibold">{a.ticker}</p>
-                    <p className="text-sm text-muted-foreground">{a.firm} — {a.action}</p>
-                    <p className="text-sm">Target: ${a.target}</p>
+                    <p className="text-sm text-muted-foreground">{a.firm} -- {a.action}</p>
+                    {a.target > 0 && <p className="text-sm">Target: ${a.target}</p>}
                   </div>
-                  <Badge variant={a.impact.startsWith('+') ? 'default' : 'destructive'}>{a.impact}</Badge>
+                  <Badge variant={a.impact.startsWith('+') ? 'default' : a.impact.startsWith('-') ? 'destructive' : 'secondary'}>{a.impact}</Badge>
                 </div>
               ))}
             </div>

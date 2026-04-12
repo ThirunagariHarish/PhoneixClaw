@@ -184,6 +184,55 @@ async def get_performance_summary(
     }
 
 
+@router.get("/daily")
+async def get_daily_pnl(
+    year: int = Query(..., ge=2020, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    agent_id: str | None = Query(None, description="Filter by agent UUID"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Daily P&L aggregation for the P&L Calendar. Returns one row per trading day."""
+    import calendar
+    import uuid as _uuid
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    end = datetime(year, month, days_in_month, 23, 59, 59, tzinfo=timezone.utc)
+
+    base = (
+        select(
+            func.date_trunc("day", AgentTrade.entry_time).label("day"),
+            func.sum(AgentTrade.pnl_dollar).label("pnl"),
+            func.count(AgentTrade.id).label("trade_count"),
+            func.sum(case((AgentTrade.pnl_dollar > 0, 1), else_=0)).label("wins"),
+            func.sum(case((AgentTrade.pnl_dollar <= 0, 1), else_=0)).label("losses"),
+        )
+        .where(
+            AgentTrade.entry_time >= start,
+            AgentTrade.entry_time <= end,
+            AgentTrade.pnl_dollar.isnot(None),
+        )
+    )
+
+    if agent_id:
+        base = base.where(AgentTrade.agent_id == _uuid.UUID(agent_id))
+
+    base = base.group_by("day").order_by("day")
+    result = await session.execute(base)
+    rows = result.all()
+
+    return [
+        {
+            "date": row.day.strftime("%Y-%m-%d") if row.day else "",
+            "pnl": round(float(row.pnl or 0), 2),
+            "trade_count": int(row.trade_count or 0),
+            "wins": int(row.wins or 0),
+            "losses": int(row.losses or 0),
+        }
+        for row in rows
+    ]
+
+
 @router.get("/by-agent")
 async def get_performance_by_agent(
     session: AsyncSession = Depends(get_session),
