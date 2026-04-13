@@ -301,6 +301,30 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
     if isinstance(selected_channel, dict):
         channel_id = selected_channel.get("channel_id", "")
 
+    # Fall back to connector's selected_channels when payload didn't include channel_id
+    if not channel_id and connector_ids:
+        try:
+            conn_row = await session.execute(
+                select(Connector).where(Connector.id == uuid.UUID(connector_ids[0]))
+            )
+            _conn = conn_row.scalar_one_or_none()
+            if _conn:
+                sel_channels = (_conn.config or {}).get("selected_channels", [])
+                if sel_channels and isinstance(sel_channels[0], dict):
+                    channel_id = sel_channels[0].get("channel_id", "")
+                    if not channel_name:
+                        channel_name = sel_channels[0].get("channel_name", "")
+        except Exception:
+            logger.debug("Failed to extract channel_id from connector, continuing")
+
+    # Persist the resolved channel_id back into the agent config so future
+    # lookups (live agent, re-backtest) don't hit the same empty-channel bug.
+    if channel_id and isinstance(selected_channel, dict) and not selected_channel.get("channel_id"):
+        agent.config = {
+            **(agent.config or {}),
+            "selected_channel": {**(selected_channel or {}), "channel_id": channel_id},
+        }
+
     backtest_config = {
         "agent_id": str(agent_id),
         "backtest_id": str(backtest.id),
@@ -1904,7 +1928,7 @@ async def activate_agent(agent_id: str, session: DbSession):
     agent = agent_result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if agent.status not in ("BACKTEST_COMPLETE", "PAUSED", "CREATED"):
+    if agent.status not in ("BACKTEST_COMPLETE", "PAUSED", "CREATED", "PAPER", "APPROVED"):
         raise HTTPException(status_code=400, detail=f"Cannot activate agent in status {agent.status}")
 
     from apps.api.src.services.agent_gateway import gateway

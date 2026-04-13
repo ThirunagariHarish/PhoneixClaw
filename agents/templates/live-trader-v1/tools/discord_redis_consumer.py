@@ -5,11 +5,11 @@ publishes every Discord message to Redis stream `stream:channel:{connector_id}`.
 Each live agent runs this consumer to read its assigned channel's stream and
 process messages through the existing decision_engine.
 
-Benefits over per-agent Discord clients:
-- One Discord connection per token (avoids rate limits and conflicts)
-- Messages persisted in DB BEFORE delivery (replay on agent restart)
-- Single point to fix Discord API quirks
-- EOD AutoResearch can inspect every message the agent had available
+Uses Redis Consumer Groups (XREADGROUP + XACK) so that:
+- Cursor state lives in Redis, not on local disk
+- Survives container restarts and VPS migrations
+- Supports multiple consumers for the same stream safely
+- On first start, only processes NEW messages (not historical replay)
 
 Usage (called from CLAUDE.md -- runs as persistent daemon until SIGTERM):
     python tools/discord_redis_consumer.py --config config.json --output pending_signals.json
@@ -40,50 +40,20 @@ signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
 
 # ---------------------------------------------------------------------------
-# Cursor persistence
+# Consumer group constants
 # ---------------------------------------------------------------------------
-CURSOR_FILE = Path("stream_cursor.json")
+CONSUMER_GROUP = "phoenix-agents"
 MAX_PENDING = 500
 
 
-def _load_cursor(stream_key: str) -> str:
-    """Return saved last_id for this stream_key, or '0-0' on first start."""
-    if not CURSOR_FILE.exists():
-        return "0-0"
+async def _ensure_consumer_group(
+    redis_client, stream_key: str, group: str = CONSUMER_GROUP
+) -> None:
+    """Create consumer group starting from latest ($). Idempotent."""
     try:
-        data = json.loads(CURSOR_FILE.read_text())
-        if data.get("stream_key") == stream_key and data.get("last_id"):
-            return data["last_id"]
+        await redis_client.xgroup_create(stream_key, group, id="$", mkstream=True)
     except Exception:
-        pass
-    return "0-0"
-
-
-def _load_cursor_data(stream_key: str) -> tuple[str, int]:
-    """Return (last_id, message_count) for this stream_key, or ('0-0', 0) if not found."""
-    if not CURSOR_FILE.exists():
-        return "0-0", 0
-    try:
-        data = json.loads(CURSOR_FILE.read_text())
-        if data.get("stream_key") == stream_key:
-            return data.get("last_id", "0-0"), data.get("message_count", 0)
-    except Exception:
-        pass
-    return "0-0", 0
-
-
-def _save_cursor(stream_key: str, last_id: str, count: int = 0) -> None:
-    """Persist the last-consumed Redis stream ID for this stream_key."""
-    try:
-        from datetime import datetime, timezone
-        CURSOR_FILE.write_text(json.dumps({
-            "stream_key": stream_key,
-            "last_id": last_id,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "message_count": count,
-        }))
-    except Exception as exc:
-        print(f"[redis_consumer] cursor save failed: {exc}", file=sys.stderr)
+        pass  # BUSYGROUP -- group already exists
 
 
 # ---------------------------------------------------------------------------
@@ -128,22 +98,26 @@ async def consume(connector_id: str, output_path: str, redis_url: str = "") -> i
         return 0
 
     stream_key = f"stream:channel:{connector_id}"
-    last_id = _load_cursor(stream_key)
+    await _ensure_consumer_group(r, stream_key)
+    consumer_name = f"agent-{connector_id}"
     total_collected = 0
     _backoff = 0
 
     try:
         while not _shutdown:
             try:
-                # Block for up to 5 s waiting for new messages
-                result = await r.xread({stream_key: last_id}, count=20, block=5000)
+                result = await r.xreadgroup(
+                    CONSUMER_GROUP, consumer_name,
+                    {stream_key: ">"}, count=20, block=5000,
+                )
                 if not result:
                     continue
 
                 batch: list[dict] = []
+                batch_ids: list[str] = []
                 for _stream, entries in result:
                     for msg_id, data in entries:
-                        last_id = msg_id
+                        batch_ids.append(msg_id)
                         batch.append({
                             "stream_id": msg_id,
                             "channel_id": data.get("channel_id", connector_id),
@@ -176,8 +150,7 @@ async def consume(connector_id: str, output_path: str, redis_url: str = "") -> i
                     out.write_text(json.dumps(existing, indent=2, default=str))
                     print(f"[redis_consumer] Collected {len(batch)} msgs -> {output_path}")
 
-                    # Persist cursor after each successful batch (Fix 3.1b)
-                    _save_cursor(stream_key, last_id, total_collected)
+                    await r.xack(stream_key, CONSUMER_GROUP, *batch_ids)
 
             except redis.exceptions.ConnectionError as exc:
                 _backoff += 1

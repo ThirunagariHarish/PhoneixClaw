@@ -134,12 +134,29 @@ bash startup.sh
 ```
 This confirms `config.json` is valid and reports startup to Phoenix. If it reports errors, fix them before proceeding.
 
+**SECOND** — verify broker gateway connectivity:
+```bash
+curl -s {{ broker_gateway_url }}/auth/status || python3 tools/check_auth.py --config config.json
+```
+Read the JSON output carefully:
+- `"status": "ok"` — broker session is valid, proceed normally
+- `"status": "auth_blocked"` — auth not configured; you are in **watchlist-only mode**. Log all signals but do NOT attempt live trades.
+- `"status": "auth_failed"` — auth failed; switched to paper mode. Report the error to Phoenix and notify the user.
+
+If auth is NOT ok, announce this clearly in your first status message to Phoenix.
+
+**THIRD** — verify inference service health:
+```bash
+curl -s {{ inference_service_url }}/health
+```
+If the inference service is down, you can still operate — the decision engine falls back to watchlist mode when inference is unavailable.
+
 ### Pre-Market (30 min before open)
 
 1. Run `python tools/pre_market_analyzer.py` — futures, VIX, calendar
 2. Run `python tools/market_research.py macro_regime` — VIX regime, yield curve
 3. Run `python tools/market_research.py sector_momentum` — sector rotation signals
-4. Review all open positions: call `get_all_positions` via MCP
+4. Review all open positions via broker gateway
 5. For each option position: check theta decay, days to expiry, Greeks
 6. Set mode based on macro context; update `config.json`
 7. Report morning briefing to Phoenix via `report_to_phoenix.py`

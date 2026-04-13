@@ -19,12 +19,20 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [pipeline] %(levelname)s %(message)s",
-    stream=sys.stderr,
-)
+
+class _FlushHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
+_handler = _FlushHandler(sys.stderr)
+_handler.setFormatter(logging.Formatter("%(asctime)s [pipeline] %(levelname)s %(message)s"))
+logging.root.handlers = [_handler]
+logging.root.setLevel(logging.INFO)
 log = logging.getLogger(__name__)
+
+MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 
 # Shared mutable state for the health status file
 _pipeline_state: dict = {
@@ -35,9 +43,7 @@ _pipeline_state: dict = {
     "last_error": None,
     "redis_connected": False,
     "stream_key": None,
-    "cursor": None,
 }
-STATUS_FILE = Path("pipeline_status.json")
 
 
 def _json_safe(obj: object) -> object:
@@ -56,18 +62,6 @@ def _json_safe(obj: object) -> object:
     except ImportError:
         pass
     return obj
-
-
-def _write_status() -> None:
-    """Write pipeline_status.json with current health info."""
-    try:
-        STATUS_FILE.write_text(json.dumps({
-            **_pipeline_state,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "pid": os.getpid(),
-        }, indent=2, default=str))
-    except Exception as exc:
-        log.warning("Failed to write pipeline_status.json: %s", exc)
 
 
 async def _startup_diagnostic(config: dict) -> dict:
@@ -149,7 +143,6 @@ async def _startup_diagnostic(config: dict) -> dict:
     _pipeline_state["started_at"] = datetime.now(timezone.utc).isoformat()
     _pipeline_state["redis_connected"] = diag["redis_ping"]
     _pipeline_state["stream_key"] = stream_key
-    _write_status()
 
     return diag
 
@@ -373,7 +366,7 @@ async def _redis_signal_stream(config: dict):
         log.error("redis-py not installed")
         return
 
-    from discord_redis_consumer import _load_cursor_data, _save_cursor
+    from discord_redis_consumer import CONSUMER_GROUP, _ensure_consumer_group
 
     redis_url = config.get("redis_url") or os.getenv("REDIS_URL", "redis://localhost:6379")
     connector_id = config.get("connector_id")
@@ -398,25 +391,24 @@ async def _redis_signal_stream(config: dict):
         except Exception:
             pass
 
-    last_id, total = _load_cursor_data(stream_key)
-    log.info("Redis stream '%s' (cursor=%s)", stream_key, last_id)
+    await _ensure_consumer_group(redis_client, stream_key)
+    consumer_name = f"agent-{config.get('agent_id', 'default')}"
+    log.info("Redis stream '%s' (consumer=%s)", stream_key, consumer_name)
 
     _pipeline_state["redis_connected"] = True
     _pipeline_state["stream_key"] = stream_key
-    _pipeline_state["cursor"] = last_id
 
     try:
         while True:
             try:
-                result = await redis_client.xread({stream_key: last_id}, count=50, block=5000)
+                result = await redis_client.xreadgroup(
+                    CONSUMER_GROUP, consumer_name,
+                    {stream_key: ">"}, count=50, block=5000,
+                )
                 if not result:
                     continue
                 for _stream, entries in result:
                     for msg_id, data in entries:
-                        last_id = msg_id
-                        total += 1
-                        _save_cursor(stream_key, last_id, total)
-                        _pipeline_state["cursor"] = last_id
                         yield {
                             "stream_id": msg_id,
                             "channel_id": data.get("channel_id", channel_id),
@@ -426,6 +418,7 @@ async def _redis_signal_stream(config: dict):
                             "timestamp": data.get("timestamp", ""),
                             "message_id": data.get("message_id", ""),
                         }
+                        await redis_client.xack(stream_key, CONSUMER_GROUP, msg_id)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -476,22 +469,33 @@ async def run_pipeline(config: dict) -> None:
             except Exception as exc:
                 log.warning("Heartbeat failed: %s", exc)
 
-    async def status_writer_loop() -> None:
-        """Periodically flush pipeline_status.json for external health checks."""
-        while True:
-            await asyncio.sleep(30)
-            _pipeline_state["signals_processed"] = signals_processed
-            _pipeline_state["trades_today"] = trades_today
-            _write_status()
-
     asyncio.create_task(heartbeat_loop())
-    asyncio.create_task(status_writer_loop())
 
     async for signal in _redis_signal_stream(config):
         signals_processed += 1
         _pipeline_state["signals_processed"] = signals_processed
         _pipeline_state["last_signal_time"] = datetime.now(timezone.utc).isoformat()
         log.info("Signal #%d: %s", signals_processed, signal.get("content", "")[:80])
+
+        signal_ts = signal.get("timestamp", "")
+        if signal_ts:
+            try:
+                from dateutil.parser import isoparse
+            except ImportError:
+                from datetime import datetime as _dt
+                isoparse = _dt.fromisoformat
+            try:
+                msg_time = isoparse(signal_ts)
+                if msg_time.tzinfo is None:
+                    msg_time = msg_time.replace(tzinfo=timezone.utc)
+                age_seconds = (datetime.now(timezone.utc) - msg_time).total_seconds()
+                if age_seconds > MAX_SIGNAL_AGE_SECONDS:
+                    log.info("SKIP stale signal (age=%.0fs > %ds): %s",
+                             age_seconds, MAX_SIGNAL_AGE_SECONDS,
+                             signal.get("content", "")[:60])
+                    continue
+            except (ValueError, TypeError):
+                pass
 
         try:
             await report_signal_event(config, "signal_received", {
@@ -506,8 +510,6 @@ async def run_pipeline(config: dict) -> None:
             decision = await process_signal(signal, config)
             decision = _json_safe(decision)
             decision["signal_raw"] = signal.get("content", "")
-
-            Path("decision.json").write_text(json.dumps(decision, indent=2, default=str))
 
             ticker = decision.get("parsed_signal", {}).get("ticker", "?")
             direction = decision.get("parsed_signal", {}).get("direction", "?")
@@ -538,6 +540,16 @@ async def run_pipeline(config: dict) -> None:
                     log.error("Trade execution failed: %s", e, exc_info=True)
             elif decision["decision"] == "WATCHLIST":
                 log.info("WATCHLIST (outside RTH or policy): %s — %s", ticker, decision.get("reason"))
+                try:
+                    import httpx as _httpx
+                    api_url = config.get("phoenix_api_url", "http://localhost:8011")
+                    async with _httpx.AsyncClient(timeout=5) as _wl_client:
+                        await _wl_client.post(
+                            f"{api_url}/api/v2/watchlist/lists",
+                            json={"symbols": [ticker], "watchlist_name": "Agent Signals"},
+                        )
+                except Exception as _wl_err:
+                    log.debug("Watchlist API sync failed: %s", _wl_err)
             else:
                 log.info("REJECT: %s — %s", ticker, decision.get("reason"))
                 if direction in ("sell", "close", "trim") and ticker:
@@ -545,7 +557,6 @@ async def run_pipeline(config: dict) -> None:
         except Exception as e:
             log.error("Pipeline error: %s", e, exc_info=True)
             _pipeline_state["last_error"] = f"{e}"[:200]
-            _write_status()
 
 
 def _route_sell_signal(ticker: str, raw_signal: dict, decision: dict) -> None:

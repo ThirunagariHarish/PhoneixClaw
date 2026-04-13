@@ -30,14 +30,9 @@ scrape_configs:
       - targets: ['phoenix-execution:8020']
     metrics_path: /metrics
 
-  - job_name: 'phoenix-orchestrator'
+  - job_name: 'phoenix-agent-orchestrator'
     static_configs:
-      - targets: ['phoenix-orchestrator:8040']
-    metrics_path: /metrics
-
-  - job_name: 'phoenix-global-monitor'
-    static_configs:
-      - targets: ['phoenix-global-monitor:8050']
+      - targets: ['phoenix-agent-orchestrator:8070']
     metrics_path: /metrics
 
   - job_name: 'phoenix-ws-gateway'
@@ -45,7 +40,32 @@ scrape_configs:
       - targets: ['phoenix-ws-gateway:8031']
     metrics_path: /metrics
 
-  - job_name: 'phoenix-connector-manager'
+  - job_name: 'phoenix-discord-ingestion'
     static_configs:
-      - targets: ['phoenix-connector-manager:8060']
+      - targets: ['phoenix-discord-ingestion:8060']
+    metrics_path: /metrics
+
+  - job_name: 'phoenix-feature-pipeline'
+    static_configs:
+      - targets: ['phoenix-feature-pipeline:8055']
+    metrics_path: /metrics
+
+  - job_name: 'phoenix-inference-service'
+    static_configs:
+      - targets: ['phoenix-inference-service:8045']
+    metrics_path: /metrics
+
+  - job_name: 'phoenix-broker-gateway'
+    static_configs:
+      - targets: ['phoenix-broker-gateway:8040']
+    metrics_path: /metrics
+
+  - job_name: 'phoenix-prediction-monitor'
+    static_configs:
+      - targets: ['phoenix-prediction-monitor:8075']
+    metrics_path: /metrics
+
+  - job_name: 'phoenix-backtesting'
+    static_configs:
+      - targets: ['phoenix-backtesting:8085']
     metrics_path: /metrics

@@ -51,6 +51,11 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     deploy:
       resources:
         limits:
@@ -108,7 +113,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
       - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_EXPAND_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
       - LLM_GATEWAY_URL=http://phoenix-llm-gateway:8050
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -161,6 +166,11 @@ services:
       dockerfile: infra/Dockerfile.nginx
     expose:
       - "80"
+    depends_on:
+      phoenix-api:
+        condition: service_started
+      phoenix-dashboard:
+        condition: service_started
     restart: unless-stopped
 
   # ─── WebSocket Gateway ──────────────────────────────────────────────────
@@ -184,7 +194,7 @@ services:
       context: .
       dockerfile: services/llm-gateway/Dockerfile
     environment:
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_DEFAULT_MODEL=${OLLAMA_EXPAND_MODEL:-llama3.2:1b}
     depends_on:
       postgres:
@@ -231,77 +241,185 @@ services:
           memory: 256M
     restart: unless-stopped
 
-  phoenix-connector-manager:
+  phoenix-discord-ingestion:
     build:
       context: .
-      dockerfile: services/connector-manager/Dockerfile
+      dockerfile: services/discord-ingestion/Dockerfile
     environment:
-      - REDIS_URL=${REDIS_URL}
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
+      - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 512M
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8060/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-  phoenix-backtest-runner:
+  phoenix-feature-pipeline:
     build:
       context: .
-      dockerfile: services/backtest-runner/Dockerfile
+      dockerfile: services/feature-pipeline/Dockerfile
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - REDIS_URL=${REDIS_URL}
     depends_on:
       postgres:
         condition: service_healthy
-      phoenix-db-migrate:
-        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8055/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  phoenix-inference-service:
+    build:
+      context: .
+      dockerfile: services/inference-service/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MODEL_BUCKET=${MODEL_BUCKET:-phoenix-models}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 1G
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8045/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-  phoenix-agent-comm:
+  phoenix-broker-gateway:
     build:
       context: .
-      dockerfile: services/agent-comm/Dockerfile
+      dockerfile: services/broker-gateway/Dockerfile
     environment:
-      - REDIS_URL=${REDIS_URL}
       - DATABASE_URL=${DATABASE_URL}
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    restart: unless-stopped
-
-  phoenix-global-monitor:
-    build:
-      context: .
-      dockerfile: services/global-monitor/Dockerfile
-    environment:
       - REDIS_URL=${REDIS_URL}
-      - DATABASE_URL=${DATABASE_URL}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
+      - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
+      - DRY_RUN_MODE=${DRY_RUN_MODE:-true}
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  phoenix-agent-orchestrator:
+    build:
+      context: .
+      dockerfile: services/agent-orchestrator/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - PHOENIX_API_URL=http://phoenix-api:8011
+      - BROKER_GATEWAY_URL=http://phoenix-broker-gateway:8040
+      - INFERENCE_SERVICE_URL=http://phoenix-inference-service:8045
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
+      - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  phoenix-prediction-monitor:
+    build:
+      context: .
+      dockerfile: services/prediction-monitor/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 256M
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8075/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  phoenix-backtesting:
+    build:
+      context: .
+      dockerfile: services/backtesting/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - PHOENIX_API_URL=http://phoenix-api:8011
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:

@@ -26,6 +26,7 @@ import {
   Settings,
   Shield,
   ListTodo,
+  Server,
 } from 'lucide-react'
 
 const PRIMARY_TABS = [
@@ -43,6 +44,7 @@ const MORE_TABS = [
   { to: '/admin', icon: Shield, label: 'Admin' },
   { to: '/tasks', icon: ListTodo, label: 'Tasks' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/platform-health', icon: Server, label: 'Platform Health' },
 ]
 
 export function BottomNav() {

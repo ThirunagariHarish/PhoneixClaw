@@ -197,6 +197,8 @@ export default function WatchlistPage() {
     queryKey: ['watchlist-lists'],
     queryFn: async () => {
       try {
+        // Auto-sync broker gateway watchlist on load
+        try { await api.post('/api/v2/watchlist/sync-broker') } catch { /* noop */ }
         const res = await api.get('/api/v2/watchlist/lists')
         setServerAvailable(true)
         return res.data

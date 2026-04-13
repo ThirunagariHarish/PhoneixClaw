@@ -16,10 +16,16 @@ import sys
 
 _ALIASES: dict[str, str] = {
     "agent_comm": "agent-comm",
+    "agent_orchestrator": "agent-orchestrator",
     "backtest_runner": "backtest-runner",
+    "broker_gateway": "broker-gateway",
     "connector_manager": "connector-manager",
+    "discord_ingestion": "discord-ingestion",
+    "feature_pipeline": "feature-pipeline",
     "global_monitor": "global-monitor",
+    "inference_service": "inference-service",
     "position_monitor": "position-monitor",
+    "prediction_monitor": "prediction-monitor",
     "skill_sync": "skill-sync",
 }
 

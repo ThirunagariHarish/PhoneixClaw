@@ -84,6 +84,9 @@ class BacktestOrchestrator:
             self.agent_id, self.session_id, self.work_dir,
         )
 
+        # Pre-seed: export channel_messages from DB so transform.py has data
+        await self._export_db_messages()
+
         start_time = datetime.now(timezone.utc)
         all_steps = self._build_pipeline()
         total_steps = len(all_steps)
@@ -121,17 +124,19 @@ class BacktestOrchestrator:
                 self._write_checkpoint(step_num, script)
 
                 # After preprocess completes, check if there is enough data to train.
-                # 0 training rows means no trades were reconstructed — skip all
-                # downstream training and post-training steps gracefully.
+                # ML models need a minimum number of samples to learn anything
+                # meaningful. With too few rows, skip training gracefully.
+                MIN_TRAIN_ROWS = 10
                 if "preprocess" in script:
                     meta_path = self.work_dir / "preprocessed" / "meta.json"
                     try:
                         meta = json.loads(meta_path.read_text())
-                        if meta.get("n_train", 1) == 0:
+                        n_train = meta.get("n_train", 0)
+                        if n_train < MIN_TRAIN_ROWS:
                             logger.warning(
-                                "Preprocess produced 0 training rows for agent %s — "
-                                "skipping all training and post-training steps.",
-                                self.agent_id,
+                                "Preprocess produced %d training rows for agent %s "
+                                "(minimum %d required) — skipping training/post-training.",
+                                n_train, self.agent_id, MIN_TRAIN_ROWS,
                             )
                             break  # failed_step is None → status = "completed"
                     except Exception as e:
@@ -185,14 +190,76 @@ class BacktestOrchestrator:
         )
         return summary
 
+    async def _export_db_messages(self) -> None:
+        """Export channel_messages from the DB into a JSON file for transform.py.
+
+        This bridges the connector-based ingestion with the ML pipeline:
+        the ingestion service already stores messages in channel_messages;
+        transform.py can read them via --messages-file instead of hitting
+        the Discord API directly (which requires credentials in config.json).
+        """
+        messages_path = self.work_dir / "messages.json"
+        if messages_path.exists():
+            try:
+                existing = json.loads(messages_path.read_text())
+                if existing:
+                    logger.info("messages.json already exists with %d messages, skipping export", len(existing))
+                    return
+            except Exception:
+                pass
+
+        try:
+            from sqlalchemy import select as sa_select
+
+            from shared.db.engine import get_session
+            from shared.db.models.channel_message import ChannelMessage
+            from shared.db.models.connector import ConnectorAgent
+
+            messages = []
+            async for db in get_session():
+                # Find connector_ids linked to this agent
+                links = (await db.execute(
+                    sa_select(ConnectorAgent).where(ConnectorAgent.agent_id == self.agent_id)
+                )).scalars().all()
+
+                connector_ids = [link.connector_id for link in links]
+                if not connector_ids:
+                    logger.warning("No connectors linked to agent %s, skipping DB message export", self.agent_id)
+                    return
+
+                rows = (await db.execute(
+                    sa_select(ChannelMessage)
+                    .where(ChannelMessage.connector_id.in_(connector_ids))
+                    .order_by(ChannelMessage.posted_at.asc())
+                )).scalars().all()
+
+                for row in rows:
+                    messages.append({
+                        "content": row.content,
+                        "author": row.author,
+                        "timestamp": row.posted_at.isoformat(),
+                        "message_id": row.platform_message_id,
+                    })
+
+            if messages:
+                messages_path.write_text(json.dumps(messages, indent=2, default=str))
+                logger.info("Exported %d DB messages to %s", len(messages), messages_path)
+            else:
+                logger.warning("No messages found in DB for agent %s connectors", self.agent_id)
+        except Exception as e:
+            logger.warning("DB message export failed (non-fatal): %s", e)
+
     def _build_pipeline(self) -> list[tuple[str, str, str, list[str]]]:
         """Build the ordered pipeline of (script, description, type, args) tuples."""
         steps: list[tuple[str, str, str, list[str]]] = []
 
         # ── Feature engineering pipeline ────────────────────────────────────
+        transform_args = ["--config", "config.json", "--output", "transformed.parquet", "--force"]
+        if (self.work_dir / "messages.json").exists():
+            transform_args += ["--messages-file", "messages.json"]
         steps.append((
             "transform.py", "Feature: transform", "python",
-            ["--config", "config.json", "--output", "transformed.parquet"],
+            transform_args,
         ))
         steps.append((
             "enrich.py", "Feature: enrich", "python",
@@ -456,11 +523,9 @@ Return a JSON object with your findings.""",
                     await client.post(
                         f"{api_url}/api/v2/agents/{self.agent_id}/backtest-progress",
                         json={
-                            "session_id": str(self.session_id),
-                            "current_step": step,
-                            "total_steps": total,
-                            "description": description,
-                            "pct": round(step / total * 100),
+                            "step": description[:100] or f"step_{step}",
+                            "message": f"Step {step}/{total}: {description}",
+                            "progress_pct": round(step / total * 100),
                         },
                         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
                         timeout=5,

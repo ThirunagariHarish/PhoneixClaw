@@ -42,7 +42,11 @@ def send_notification(
     results: dict = {"event_type": event_type, "ticker": ticker, "channels": []}
 
     agent_id = config.get("agent_id") or os.getenv("PHOENIX_AGENT_ID", "")
-    api_base = config.get("api_base_url") or os.getenv("PHOENIX_API_URL", "http://localhost:8011")
+    api_base = (
+        config.get("phoenix_api_url")
+        or config.get("api_base_url")
+        or os.getenv("PHOENIX_API_URL", "http://localhost:8011")
+    )
 
     # 1. Phoenix API notification
     try:

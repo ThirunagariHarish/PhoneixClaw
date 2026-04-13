@@ -10,6 +10,18 @@ import httpx
 _log = logging.getLogger(__name__)
 
 
+def _auth_headers(config: dict) -> dict[str, str]:
+    """Build Authorization header, returning empty dict when no key is set."""
+    key = config.get("phoenix_api_key", "").strip()
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"}
+
+
+def _has_api_key(config: dict) -> bool:
+    return bool(config.get("phoenix_api_key", "").strip())
+
+
 async def register_agent(config: dict) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
@@ -26,7 +38,7 @@ async def register_agent(config: dict) -> dict:
                     "accuracy": config.get("model_info", {}).get("accuracy", 0),
                 },
             },
-            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+            headers=_auth_headers(config),
         )
         return resp.json()
 
@@ -36,11 +48,13 @@ async def report_trade(config: dict, trade: dict):
         await client.post(
             f"{config['phoenix_api_url']}/api/v2/agents/{config['agent_id']}/live-trades",
             json=trade,
-            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+            headers=_auth_headers(config),
         )
 
 
 async def report_heartbeat(config: dict, status: dict):
+    if not _has_api_key(config):
+        return
     async with httpx.AsyncClient(timeout=30) as client:
         await client.post(
             f"{config['phoenix_api_url']}/api/v2/agents/{config['agent_id']}/heartbeat",
@@ -50,7 +64,7 @@ async def report_heartbeat(config: dict, status: dict):
                 "trades_today": status.get("trades_today", 0),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
-            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+            headers=_auth_headers(config),
         )
 
 
@@ -89,7 +103,7 @@ async def report_signal(config: dict, signal: dict):
         resp = await client.post(
             f"{api_url}/api/v2/agents/{agent_id}/trade-signals",
             json=payload,
-            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+            headers=_auth_headers(config),
         )
         if resp.status_code >= 400:
             _log.warning(
@@ -104,6 +118,8 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
     agent_id = config.get("agent_id", "")
     if not agent_id:
         _log.warning("report_signal_event: no agent_id in config, skipping")
+        return
+    if not _has_api_key(config):
         return
     message = f"[{event_type}] "
     if event_type == "signal_received":
@@ -139,7 +155,7 @@ async def report_signal_event(config: dict, event_type: str, data: dict):
                 "message": message,
                 "context": {"event": event_type, **data},
             },
-            headers={"Authorization": f"Bearer {config.get('phoenix_api_key', '')}"},
+            headers=_auth_headers(config),
         )
         if resp.status_code >= 400:
             _log.warning(

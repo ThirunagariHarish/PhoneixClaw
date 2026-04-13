@@ -11,6 +11,8 @@ import os
 import time
 from typing import Any
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,17 +79,15 @@ def check_scheduler() -> tuple[bool, dict[str, Any]]:
 
 
 def check_ingestion() -> tuple[bool, dict[str, Any]]:
-    """Check if message ingestion daemon is running."""
+    """Check discord-ingestion service health."""
+    url = os.environ.get("DISCORD_INGESTION_URL", "http://phoenix-discord-ingestion:8060")
     try:
-        from apps.api.src.services.message_ingestion import get_ingestion_status
-        status = get_ingestion_status()
-        if not status.get("running"):
-            return False, {"connectors": 0}
-        connectors = status.get("connectors", [])
-        alive = sum(1 for c in connectors if c.get("alive"))
-        return True, {"total": len(connectors), "alive": alive}
+        resp = httpx.get(f"{url}/health", timeout=5.0)
+        if resp.status_code == 200:
+            return True, {"detail": "discord-ingestion healthy", "url": url}
+        return False, {"detail": f"discord-ingestion returned {resp.status_code}", "url": url}
     except Exception as exc:
-        return False, {"error": str(exc)[:200]}
+        return False, {"detail": f"discord-ingestion unreachable: {exc}", "url": url}
 
 
 async def check_disk_usage(path: str = "/app/data", warn_threshold: float = 0.85,

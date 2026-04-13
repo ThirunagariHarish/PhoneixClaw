@@ -154,6 +154,9 @@ class TriggerBus:
         client = await self._get_client()
         if client is None:
             return  # no-op generator
+        # "$" = only new messages after subscribe. Historical triggers during
+        # downtime are intentionally skipped — triggers are time-sensitive
+        # fire-and-forget events, not durable commands.
         last_id = "$"
         while True:
             try:

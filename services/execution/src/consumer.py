@@ -19,7 +19,7 @@ class TradeIntentConsumer:
     Each intent goes through a 3-layer risk check chain before execution.
     """
 
-    STREAM_KEY = "phoenix:trade-intents"
+    STREAM_KEY = "stream:trade-intents"
     GROUP_NAME = "execution-service"
     CONSUMER_NAME = "exec-worker-1"
 

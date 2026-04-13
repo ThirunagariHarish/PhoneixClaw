@@ -569,13 +569,14 @@ async def _seed_system_agents() -> None:
                                        current_mode, rules_version,
                                        daily_pnl, total_pnl, total_trades,
                                        win_rate, tokens_used_today_usd,
-                                       tokens_used_month_usd)
+                                       tokens_used_month_usd,
+                                       created_at, updated_at)
                     VALUES (:id, :name, :type, 'CREATED', '{}',
                             'STOPPED', 'system',
                             '{}', '{}',
                             'conservative', 1,
                             0, 0, 0,
-                            0, 0, 0)
+                            0, 0, 0, now(), now())
                     ON CONFLICT (id) DO NOTHING
                 """),
                 {"id": uid, "name": name, "type": atype},
@@ -595,6 +596,19 @@ async def lifespan(app: FastAPI):
         _log.info("[startup] ANTHROPIC_API_KEY set (len=%d)", len(_key))
     else:
         _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+
+    # Validate Fernet encryption key at startup
+    _enc_key = os.getenv("CREDENTIAL_ENCRYPTION_KEY") or os.getenv("FERNET_KEY")
+    if _enc_key:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(_enc_key.encode() if isinstance(_enc_key, str) else _enc_key)
+            _log.info("CREDENTIAL_ENCRYPTION_KEY validated successfully")
+        except Exception as exc:
+            _log.error("CREDENTIAL_ENCRYPTION_KEY is not a valid Fernet key: %s", exc)
+            _log.error("Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"")
+    else:
+        _log.warning("No CREDENTIAL_ENCRYPTION_KEY set — connector credential encryption will fail")
 
     # Security guard: refuse to start with the default JWT secret
     _jwt_secret = os.environ.get("JWT_SECRET_KEY", "")
@@ -660,12 +674,17 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         _log.exception("[heal_mcp] Failed: %s", exc)
 
-    try:
-        from apps.api.src.services.agent_runtime_recovery import recover_agents_on_startup
-        recovery_summary = await recover_agents_on_startup()
-        _log.info("Agent recovery: %s", recovery_summary)
-    except Exception as exc:
-        _log.exception("Agent recovery failed: %s", exc)
+    # Agent recovery is now handled by phoenix-agent-orchestrator.
+    # Keep as fallback during migration, controlled by env var.
+    if os.environ.get("ENABLE_API_AGENT_RECOVERY", "").lower() == "true":
+        try:
+            from apps.api.src.services.agent_runtime_recovery import recover_agents_on_startup
+            recovery_summary = await recover_agents_on_startup()
+            _log.info("Agent recovery: %s", recovery_summary)
+        except Exception as exc:
+            _log.exception("Agent recovery failed: %s", exc)
+    else:
+        _log.info("Agent recovery disabled — handled by phoenix-agent-orchestrator")
 
     # Install SIGTERM handler: mark all running sessions as 'interrupted'
     # so recovery on next startup knows they were gracefully stopped.

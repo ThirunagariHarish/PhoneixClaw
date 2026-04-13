@@ -1,18 +1,8 @@
-"""Add one or more tickers to the Robinhood watchlist via the MCP server.
-
-This is the canonical CLI entrypoint for the live agent to call when it
-decides a signal should be monitored but not traded.  It uses
-RobinhoodMCPClient (which starts robinhood_mcp.py as a subprocess) so the
-actual Robinhood API call goes through the authenticated MCP server.
+"""Add a ticker to a watchlist via the Phoenix broker gateway.
 
 Usage:
-    python3 tools/add_to_watchlist.py --ticker MSFT --config config.json
-    python3 tools/add_to_watchlist.py --ticker MSFT AAPL --config config.json
-    python3 tools/add_to_watchlist.py --ticker MSFT --watchlist-name "My List" --config config.json
-
-Exit codes:
-    0 — added (or paper-mode simulated successfully)
-    1 — failed to add (error printed to stderr, details in stdout JSON)
+    python3 tools/add_to_watchlist.py --ticker PLTR --config config.json
+    python3 tools/add_to_watchlist.py --ticker PLTR --watchlist "My List" --config config.json
 """
 from __future__ import annotations
 
@@ -20,10 +10,10 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from robinhood_mcp_client import RobinhoodMCPClient  # noqa: E402
+import httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,90 +22,73 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+BROKER_TIMEOUT = 15
 
-def add_to_watchlist(
-    tickers: list[str],
-    config: dict,
-    watchlist_name: str = "Phoenix Paper",
-) -> dict:
-    """Call the MCP add_to_watchlist tool and return the result dict."""
-    # R-001: pre-check credentials before starting MCP subprocess.
-    # If no credentials are present and PAPER_MODE is not set, skip the MCP
-    # call so we don't block the poll loop for the full 30-second timeout
-    # waiting for a subprocess that will immediately fail _ensure_login().
-    import os
-    paper_mode = (
-        isinstance(config.get("paper_mode"), bool) and config["paper_mode"]
-    ) or os.environ.get("PAPER_MODE", "").lower() in ("1", "true", "yes")
 
-    if not paper_mode:
-        creds = config.get("robinhood_credentials") or config.get("robinhood") or {}
-        has_creds = (
-            os.environ.get("RH_USERNAME") and os.environ.get("RH_PASSWORD")
-        ) or (creds.get("username") and creds.get("password"))
-        if not has_creds:
-            log.warning(
-                "No Robinhood credentials in config — skipping actual watchlist add. "
-                "Tickers logged to Phoenix dashboard only."
-            )
-            return {
-                "status": "skipped_no_credentials",
-                "symbols": tickers,
-                "watchlist_name": watchlist_name,
-            }
-
-    client = RobinhoodMCPClient(config)
+def add_to_watchlist(ticker: str, watchlist_name: str, broker_url: str) -> dict:
+    """Add ticker to broker-gateway watchlist via HTTP."""
+    url = f"{broker_url.rstrip('/')}/watchlist"
     try:
-        # R-003: catch start() failures (e.g. MCP script missing) gracefully
-        try:
-            client.start()
-        except Exception as start_exc:
-            log.error("MCP server failed to start: %s", start_exc)
-            return {"error": f"MCP start failed: {start_exc}", "skipped": True}
-        result = client.call(
-            "add_to_watchlist",
-            {
-                "symbols": [t.upper() for t in tickers],
-                "watchlist_name": watchlist_name,
-            },
-        )
-        return result
-    finally:
-        client.stop()
+        resp = httpx.post(url, json={"symbols": [ticker], "watchlist_name": watchlist_name}, timeout=BROKER_TIMEOUT)
+        if resp.status_code >= 400:
+            log.warning("Broker gateway returned %d: %s", resp.status_code, resp.text[:200])
+            return {"status": "error", "error": resp.text[:200]}
+        return resp.json()
+    except httpx.ConnectError as exc:
+        log.warning("Cannot reach broker gateway at %s: %s", broker_url, exc)
+        return {"status": "error", "error": f"broker_gateway_unreachable: {exc}"}
+    except Exception as exc:
+        log.warning("Watchlist request failed: %s", exc)
+        return {"status": "error", "error": str(exc)[:200]}
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Add tickers to Robinhood watchlist via MCP")
-    parser.add_argument("--ticker", nargs="+", required=True, help="One or more ticker symbols")
-    parser.add_argument("--config", default="config.json", help="Path to agent config.json")
-    parser.add_argument("--watchlist-name", default="Phoenix Paper", help="Robinhood watchlist name")
+    parser = argparse.ArgumentParser(description="Add ticker to watchlist via broker gateway")
+    parser.add_argument("--ticker", required=True, help="Stock ticker symbol (e.g. PLTR)")
+    parser.add_argument("--watchlist", default="Phoenix Paper", help="Watchlist name")
+    parser.add_argument("--config", default="config.json", help="Path to config.json")
+    parser.add_argument("--strike", type=float, help="Option strike price (for logging)")
+    parser.add_argument("--expiry", help="Option expiry date (for logging)")
+    parser.add_argument("--option-type", help="call or put (for logging)")
+    parser.add_argument("--price", type=float, help="Signal price (for logging)")
+    parser.add_argument("--reason", default="manual", help="Reason for adding")
+    parser.add_argument("--author", default="", help="Signal author")
     args = parser.parse_args()
 
+    config: dict = {}
     config_path = Path(args.config)
-    if not config_path.exists():
-        log.error("Config file not found: %s", config_path.resolve())
-        print(json.dumps({"ok": False, "error": f"Config not found: {args.config}"}))
-        sys.exit(1)
-
-    try:
+    if config_path.exists():
         config = json.loads(config_path.read_text())
-    except Exception as exc:
-        log.error("Failed to parse config: %s", exc)
-        print(json.dumps({"ok": False, "error": str(exc)}))
-        sys.exit(1)
 
-    tickers = [t.upper() for t in args.ticker]
-    log.info("Adding to watchlist '%s': %s", args.watchlist_name, tickers)
+    broker_url = config.get("broker_gateway_url", "http://localhost:8040")
+    result = add_to_watchlist(args.ticker, args.watchlist, broker_url)
 
-    result = add_to_watchlist(tickers, config, watchlist_name=args.watchlist_name)
+    output = {
+        "status": result.get("status", "ok"),
+        "ticker": args.ticker,
+        "watchlist": args.watchlist,
+        "broker_result": result,
+    }
+    print(json.dumps(output, indent=2, default=str))
 
-    if result.get("error"):
-        log.error("add_to_watchlist failed: %s", result["error"])
-        print(json.dumps({"ok": False, "tickers": tickers, **result}))
-        sys.exit(1)
-
-    log.info("Watchlist result: %s", result)
-    print(json.dumps({"ok": True, "tickers": tickers, **result}))
+    watchlist_entry = {
+        "ticker": args.ticker,
+        "option_type": args.option_type,
+        "strike": args.strike,
+        "expiry": args.expiry,
+        "signal_price": args.price,
+        "author": args.author,
+        "reason": args.reason,
+        "watchlist": args.watchlist,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    wl_file = Path("watchlist_entries.json")
+    try:
+        existing = json.loads(wl_file.read_text()) if wl_file.exists() else []
+    except Exception:
+        existing = []
+    existing.append(watchlist_entry)
+    wl_file.write_text(json.dumps(existing, indent=2, default=str))
 
 
 if __name__ == "__main__":

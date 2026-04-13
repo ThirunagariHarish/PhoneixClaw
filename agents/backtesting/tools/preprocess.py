@@ -242,7 +242,7 @@ def main():
         "has_text": text_path.exists(),
         "categorical_features": len(available_cats),
         "label_heads": {
-            head: (head in df.columns and df[head].notna().any())
+            head: bool(head in df.columns and df[head].notna().any())
             for head in [
                 "y_win", "y_pnl_pct", "y_mfe_atr", "y_mae_atr",
                 "y_hold_minutes", "y_exit_bucket", "y_entry_slip_bps", "y_fill_60s",

@@ -444,6 +444,8 @@ _restart_history: dict[str, list[float]] = {}  # agent_id -> [timestamp, ...]
 DATA_DIR = Path(__file__).resolve().parents[4] / "data"
 
 
+# Keepalive is also handled by the orchestrator's _keepalive_loop, but this
+# function is retained for backward compatibility during migration.
 async def _job_live_agent_keepalive() -> None:
     """Keepalive: re-spawn live agents whose Claude session ended cleanly.
 
@@ -659,15 +661,7 @@ async def _job_heartbeat_check() -> None:
     except Exception:
         logger.exception("[scheduler] Heartbeat check failed")
 
-    # Refresh ingestion daemon — restart dead Discord connections, add new connectors
-    try:
-        from apps.api.src.services.message_ingestion import refresh_ingestion
-        status = await refresh_ingestion()
-        dead_count = sum(1 for c in status.get("connectors", []) if not c.get("alive"))
-        if dead_count:
-            logger.warning("[scheduler] Ingestion refresh found %d dead connectors", dead_count)
-    except Exception:
-        logger.debug("[scheduler] Ingestion refresh skipped (non-fatal)")
+    # Discord ingestion refresh is now handled by phoenix-discord-ingestion service.
 
 
 def start_scheduler() -> "AsyncIOScheduler | None":

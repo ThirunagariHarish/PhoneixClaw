@@ -1516,7 +1516,7 @@ export default function AgentsPage() {
           <DialogTrigger asChild>
             <Button><Plus className="h-4 w-4 mr-2" /> New Train Agent</Button>
           </DialogTrigger>
-          <DialogContent className="max-w-xl w-[calc(100vw-2rem)] sm:w-full">
+          <DialogContent className="max-w-xl w-[calc(100vw-2rem)] sm:w-full max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create Agent</DialogTitle>
             </DialogHeader>

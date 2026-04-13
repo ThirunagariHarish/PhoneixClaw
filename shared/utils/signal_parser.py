@@ -94,12 +94,12 @@ _TICKER_BARE_RE = re.compile(r"\b([A-Z]{2,5})\b")
 # Direction patterns
 _BUY_RE = re.compile(
     r"\b(?:buy|bought|buying|long|entered|entry|going\s+long|opening|opened|"
-    r"picked\s+up|grabbed|added|taking|bto|btc)\b",
+    r"picked\s+up|grabbed|added|taking|bto)\b",
     re.IGNORECASE,
 )
 _SELL_RE = re.compile(
     r"\b(?:sell|sold|selling|short|exited|exit|closing|closed|going\s+short|"
-    r"trimmed?|trim|profit|out\s+of|stc|sto)\b",
+    r"trimmed?|trim|profit|out\s+of|stc|sto|btc)\b",
     re.IGNORECASE,
 )
 _CLOSE_RE = re.compile(
@@ -107,6 +107,22 @@ _CLOSE_RE = re.compile(
     r"target\s+hit|target\s+reached|sl\s+hit|stop\s+loss\s+hit)\b",
     re.IGNORECASE,
 )
+
+# Structured one-shot patterns for common option signal formats.
+# "Bought ASTS 100C at 3 Exp: 04/17/2026", "Sold SPY 420P at 1.5 Exp: 05/01"
+# "BTO PLTR 30C @ 2.10 4/18/2026", "STC TSLA 200P @ 5.00"
+_STRUCTURED_OPTION_RE = re.compile(
+    r"\b(?P<action>bought|sold|buy|sell|bto|stc|sto|btc)\s+"
+    r"(?:\$?(?P<ticker>[A-Z]{1,5}))\s+"
+    r"\$?(?P<strike>\d+(?:\.\d+)?)\s*(?P<cp>[CcPp])\b"
+    r"(?:\s+(?:at|@|entry|filled\s+at|in\s+at|for)\s*\$?(?P<price>\d+(?:\.\d+)?))?"
+    r"(?:\s+(?:exp(?:iry|iration)?[:\s]*)?(?P<expiry>\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?))?",
+    re.IGNORECASE,
+)
+_STRUCTURED_ACTION_MAP = {
+    "bought": "BUY", "buy": "BUY", "bto": "BUY",
+    "sold": "SELL", "sell": "SELL", "stc": "SELL", "sto": "SELL", "btc": "SELL",
+}
 
 # Option strike+type: "190c", "190C", "$190 call", "190 calls", "$190C", "190.5P"
 _STRIKE_TYPE_COMPACT_RE = re.compile(
@@ -502,6 +518,48 @@ def parse_trade_signal(
     use parse_trade_signal_async().
     """
     result = ParsedSignal(raw_message=raw_message)
+
+    # Fast path: try structured one-shot extraction for common formats
+    # "Bought ASTS 100C at 3 Exp: 04/17/2026", "BTO PLTR 30C @ 2.10 4/18"
+    sm = _STRUCTURED_OPTION_RE.search(raw_message)
+    if sm:
+        action = sm.group("action").lower()
+        result.ticker = sm.group("ticker").upper()
+        result.primary_ticker = result.ticker
+        result.tickers = [result.ticker]
+        result.direction = _STRUCTURED_ACTION_MAP.get(action, "BUY")
+        result.signal_type = "buy_signal" if result.direction == "BUY" else "sell_signal"
+        result.strike_price = float(sm.group("strike"))
+        result.option_strike = result.strike_price
+        cp = sm.group("cp").upper()
+        result.option_type = cp
+        result.asset_type = "call" if cp == "C" else "put"
+        if sm.group("price"):
+            result.entry_price = float(sm.group("price"))
+            result.price = result.entry_price
+        if sm.group("expiry"):
+            result.option_expiry = sm.group("expiry")
+            result.expiry_date = _normalize_expiry(sm.group("expiry"), as_of_date)
+
+        result.take_profit = _extract_target(raw_message)
+        result.stop_loss = _extract_stop(raw_message)
+
+        if not result.entry_price:
+            result.entry_price = _extract_entry_price(
+                raw_message, strike=result.strike_price,
+                target=result.take_profit, stop=result.stop_loss,
+            )
+            result.price = result.entry_price
+        if not result.expiry_date:
+            raw_exp = _extract_raw_expiry(raw_message)
+            if raw_exp:
+                result.option_expiry = raw_exp
+                result.expiry_date = _normalize_expiry(raw_exp, as_of_date)
+
+        result.exit_pct = _extract_exit_pct(raw_message)
+        result.confidence = _compute_confidence(result)
+        result.parsing_method = "regex"
+        return result
 
     # --- Tickers ---
     tickers = _extract_tickers(raw_message)

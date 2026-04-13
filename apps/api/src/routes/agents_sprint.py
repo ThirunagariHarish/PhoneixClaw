@@ -119,6 +119,7 @@ async def get_channel_messages(
             agent_born = agent_row if isinstance(agent_row, datetime) else agent_row
             if agent_born.tzinfo is None:
                 agent_born = agent_born.replace(tzinfo=timezone.utc)
+            agent_born = min(agent_born, now_utc)
             if agent_born > effective_since:
                 effective_since = agent_born
     except Exception:

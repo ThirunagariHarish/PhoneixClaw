@@ -5,5 +5,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY services/ws-gateway/ .
 ENV PYTHONPATH=/app
 EXPOSE 8031
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "print('ok')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost', 8031)); s.close()" || exit 1
 CMD ["python", "-m", "src.main"]

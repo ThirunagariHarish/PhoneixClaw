@@ -124,7 +124,7 @@ async def get_watchlist_quotes(
 # ---------------------------------------------------------------------------
 
 # Placeholder user_id for when auth is not enforced.
-_DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_DEFAULT_USER_ID = uuid.UUID("4ae350b0-fa7b-440e-a1d8-37ed5eb7f117")
 
 
 class WatchlistAddRequest(BaseModel):
@@ -228,3 +228,48 @@ async def delete_watchlist(watchlist_name: str, session: DbSession):
     )
     await session.commit()
     return {"deleted": watchlist_name}
+
+
+@router.post("/sync-broker")
+async def sync_broker_watchlist(session: DbSession):
+    """Pull symbols from broker-gateway watchlist and merge into API watchlist."""
+    import os
+
+    import httpx
+
+    broker_url = os.getenv("BROKER_GATEWAY_URL", "http://localhost:8040")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{broker_url}/watchlist")
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Broker gateway unreachable: {exc}") from exc
+
+    symbols = data.get("symbols", [])
+    if not symbols:
+        return {"synced": [], "watchlist_name": "Broker"}
+
+    added = []
+    for sym in symbols:
+        sym_upper = sym.strip().upper()
+        if not sym_upper:
+            continue
+        existing = await session.execute(
+            select(WatchlistItem).where(
+                WatchlistItem.user_id == _DEFAULT_USER_ID,
+                WatchlistItem.watchlist_name == "Broker",
+                WatchlistItem.symbol == sym_upper,
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+        session.add(WatchlistItem(
+            id=str(uuid.uuid4()),
+            user_id=_DEFAULT_USER_ID,
+            watchlist_name="Broker",
+            symbol=sym_upper,
+        ))
+        added.append(sym_upper)
+    await session.commit()
+    return {"synced": added, "total_broker_symbols": len(symbols), "watchlist_name": "Broker"}

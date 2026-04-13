@@ -478,3 +478,85 @@ class TestEdgeCases:
         d = sig.to_dict()
         assert "ticker" in d
         assert "raw_message" in d
+
+
+# ---------------------------------------------------------------------------
+# Structured option format parsing
+# ---------------------------------------------------------------------------
+
+class TestStructuredOptionFormats:
+    """Test the one-shot structured regex for 'Bought/Sold TICKER STRIKE_C/P at PRICE Exp: EXPIRY'."""
+
+    def test_bought_call_with_exp(self):
+        sig = parse_trade_signal("Bought ASTS 100C at 3 Exp: 04/17/2026")
+        assert sig.ticker == "ASTS"
+        assert sig.direction == "BUY"
+        assert sig.signal_type == "buy_signal"
+        assert sig.strike_price == 100.0
+        assert sig.option_type == "C"
+        assert sig.asset_type == "call"
+        assert sig.entry_price == 3.0
+        assert sig.expiry_date == "2026-04-17"
+
+    def test_sold_put_with_exp(self):
+        sig = parse_trade_signal("Sold SPY 420P at 1.5 Exp: 05/01/2026")
+        assert sig.ticker == "SPY"
+        assert sig.direction == "SELL"
+        assert sig.signal_type == "sell_signal"
+        assert sig.strike_price == 420.0
+        assert sig.option_type == "P"
+        assert sig.asset_type == "put"
+        assert sig.entry_price == 1.5
+        assert sig.expiry_date == "2026-05-01"
+
+    def test_bto_call_at_sign(self):
+        sig = parse_trade_signal("BTO PLTR 30C @ 2.10 4/18/2026")
+        assert sig.ticker == "PLTR"
+        assert sig.direction == "BUY"
+        assert sig.strike_price == 30.0
+        assert sig.option_type == "C"
+        assert sig.entry_price == 2.10
+        assert sig.expiry_date == "2026-04-18"
+
+    def test_stc_put_no_expiry(self):
+        sig = parse_trade_signal("STC TSLA 200P @ 5.00")
+        assert sig.ticker == "TSLA"
+        assert sig.direction == "SELL"
+        assert sig.strike_price == 200.0
+        assert sig.option_type == "P"
+        assert sig.asset_type == "put"
+        assert sig.entry_price == 5.00
+
+    def test_btc_buy_to_close_is_sell(self):
+        """BTC = Buy To Close, which is closing a position (SELL direction)."""
+        sig = parse_trade_signal("BTC AMD 180C @ 1.20")
+        assert sig.ticker == "AMD"
+        assert sig.direction == "SELL"
+        assert sig.strike_price == 180.0
+
+    def test_sto_sell_to_open(self):
+        sig = parse_trade_signal("STO GOOG 170P @ 3.00 05/02/2026")
+        assert sig.ticker == "GOOG"
+        assert sig.direction == "SELL"
+        assert sig.strike_price == 170.0
+        assert sig.option_type == "P"
+
+    def test_bought_lowercase_c(self):
+        sig = parse_trade_signal("Bought MSFT 450c at 3.50 Exp: 04/25/2026")
+        assert sig.ticker == "MSFT"
+        assert sig.direction == "BUY"
+        assert sig.option_type == "C"
+        assert sig.strike_price == 450.0
+
+    def test_compat_wrapper_with_bought_format(self):
+        result = parse_signal_compat({
+            "content": "Bought ASTS 100C at 3 Exp: 04/17/2026",
+            "author": "analyst",
+            "message_id": "456",
+        })
+        assert result["ticker"] == "ASTS"
+        assert result["direction"] == "buy"
+        assert result["strike"] == 100.0
+        assert result["option_type"] == "call"
+        assert result["signal_price"] == 3.0
+        assert result["expiry"] == "2026-04-17"

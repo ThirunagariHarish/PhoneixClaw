@@ -49,6 +49,7 @@ import NotificationsPage from '@/pages/Notifications'
 import PnlCalendarPage from '@/pages/PnlCalendar'
 import WatchlistPage from '@/pages/Watchlist'
 import AgentHealthPage from '@/pages/AgentHealth'
+import PlatformHealthPage from '@/pages/PlatformHealth'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './index.css'
@@ -138,6 +139,7 @@ function AppRoutes() {
         <Route path="pnl-calendar" element={<PnlCalendarPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
         <Route path="agent-health" element={<AgentHealthPage />} />
+        <Route path="platform-health" element={<PlatformHealthPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

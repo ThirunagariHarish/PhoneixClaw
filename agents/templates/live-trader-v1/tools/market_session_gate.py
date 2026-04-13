@@ -55,14 +55,20 @@ def outside_rth_watchlist_payload(
     ticker = (parsed.get("ticker") or "").strip().upper()
     if ticker:
         try:
-            from robinhood_mcp_client import add_to_watchlist
+            import httpx
 
-            result = add_to_watchlist(ticker, config=config)
+            broker_url = config.get("broker_gateway_url", "http://localhost:8040")
+            account_id = config.get("broker_account_id", "")
+            payload: dict[str, Any] = {"ticker": ticker, "name": "Phoenix Watchlist"}
+            if account_id:
+                payload["account_id"] = account_id
+            resp = httpx.post(f"{broker_url}/watchlist", json=payload, timeout=10.0)
+            result = resp.json()
             wl_status = "error" if "error" in result else "ok"
-            steps.append({"step": "robinhood_watchlist", "status": wl_status, "ticker": ticker})
+            steps.append({"step": "broker_watchlist", "status": wl_status, "ticker": ticker})
         except Exception as exc:
-            log.debug("Robinhood watchlist add skipped: %s", exc)
-            steps.append({"step": "robinhood_watchlist", "status": "skipped", "error": str(exc)[:120]})
+            log.debug("Broker watchlist add skipped: %s", exc)
+            steps.append({"step": "broker_watchlist", "status": "skipped", "error": str(exc)[:120]})
 
     enriched = {**parsed, **status["features_flat"]}
     prediction = {

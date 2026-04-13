@@ -90,7 +90,7 @@ STREAM_HANDLERS: dict[str, Any] = {
 
 async def _poll_streams(r: redis.Redis) -> None:
     """Long-poll Redis streams and dispatch to handlers."""
-    last_ids: dict[str, str] = {s: "0-0" for s in STREAM_HANDLERS}
+    last_ids: dict[str, str] = {s: "$" for s in STREAM_HANDLERS}
 
     active_polls.inc()
     try:
@@ -202,4 +202,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host="0.0.0.0", port=8040)
+    uvicorn.run(app, host="0.0.0.0", port=8042)

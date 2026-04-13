@@ -12,15 +12,14 @@ import {
 import { cn } from '@/lib/utils'
 
 const PIPELINE_STEPS = [
-  { key: 'transform', label: 'Transform', desc: 'Parse Discord messages → trade rows' },
-  { key: 'enrich', label: 'Enrich', desc: 'Add 200+ market attributes' },
-  { key: 'embed', label: 'Embed', desc: 'Compute text embeddings' },
-  { key: 'preprocess', label: 'Preprocess', desc: 'Split & scale for training' },
-  { key: 'train', label: 'Train', desc: 'Train 8 ML models' },
-  { key: 'evaluate', label: 'Evaluate', desc: 'Select best model' },
-  { key: 'explain', label: 'Explain', desc: 'Build explainability' },
-  { key: 'patterns', label: 'Patterns', desc: 'Discover trading patterns' },
-  { key: 'agent', label: 'Create Agent', desc: 'Ship live trading agent' },
+  { key: 'init', label: 'Init', desc: 'Initialise pipeline' },
+  { key: 'resolving_connectors', label: 'Connect', desc: 'Resolve Discord channels' },
+  { key: 'ingesting_messages', label: 'Ingest', desc: 'Fetch historical messages' },
+  { key: 'parsing_signals', label: 'Parse', desc: 'Parse trade signals' },
+  { key: 'enriching_market_data', label: 'Enrich', desc: 'Add market data' },
+  { key: 'analyzing_patterns', label: 'Analyse', desc: 'Discover patterns' },
+  { key: 'computing_metrics', label: 'Metrics', desc: 'Compute performance' },
+  { key: 'complete', label: 'Done', desc: 'Pipeline complete' },
 ]
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; icon: typeof Play }> = {
@@ -96,7 +95,7 @@ export default function Backtests() {
   const selected = backtests.find(b => b.id === selectedId)
 
   const currentStep = logs.length > 0
-    ? logs.find(l => l.step)?.step || null
+    ? logs.filter(l => l.step).at(-1)?.step || null
     : null
 
   return (
@@ -183,9 +182,10 @@ export default function Backtests() {
                 <div className="flex items-center gap-1 overflow-x-auto pb-2">
                   {PIPELINE_STEPS.map((step, i) => {
                     const stepLogs = logs.filter(l => l.step === step.key)
-                    const isDone = stepLogs.some(l => l.message.toLowerCase().includes('complete') || l.message.toLowerCase().includes('saved'))
-                    const isCurrent = currentStep === step.key
-                    const isFailed = stepLogs.some(l => l.level === 'ERROR')
+                    const stepIdx = PIPELINE_STEPS.findIndex(s => s.key === currentStep)
+                    const isDone = stepLogs.length > 0 && (i < stepIdx || currentStep === 'complete' || selected?.status === 'COMPLETED')
+                    const isCurrent = currentStep === step.key && selected?.status !== 'COMPLETED'
+                    const isFailed = stepLogs.some(l => l.level === 'ERROR') || (selected?.status === 'FAILED' && currentStep === step.key)
                     return (
                       <div key={step.key} className="flex items-center gap-1">
                         <div className="flex flex-col items-center min-w-[70px]">

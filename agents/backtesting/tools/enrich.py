@@ -571,26 +571,32 @@ def enrich_trade(row: pd.Series, cache: dict) -> dict:
         cache[vix_key] = _safe_download("^VIX", cache.get("_global_start", ""), cache.get("_global_end", ""))
     vix = cache[vix_key]
     if not vix.empty:
-        vix = vix[vix.index.date <= entry_date]
-        if len(vix) >= 2:
-            attrs["vix_level"] = vix["Close"].iloc[-1]
-            attrs["vix_change_1d"] = vix["Close"].iloc[-1] - vix["Close"].iloc[-2]
-            if len(vix) >= 6:
-                attrs["vix_change_5d"] = vix["Close"].iloc[-1] - vix["Close"].iloc[-6]
-            if len(vix) >= 30:
-                attrs["vix_percentile_30d"] = (vix["Close"].iloc[-30:] < vix["Close"].iloc[-1]).mean()
-            attrs["vix_above_20"] = float(vix["Close"].iloc[-1] > 20)
-            attrs["vix_above_30"] = float(vix["Close"].iloc[-1] > 30)
+        try:
+            vix = vix[vix.index.date <= entry_date]
+            if len(vix) >= 2:
+                attrs["vix_level"] = float(vix["Close"].iloc[-1])
+                attrs["vix_change_1d"] = float(vix["Close"].iloc[-1] - vix["Close"].iloc[-2])
+                if len(vix) >= 6:
+                    attrs["vix_change_5d"] = float(vix["Close"].iloc[-1] - vix["Close"].iloc[-6])
+                if len(vix) >= 30:
+                    attrs["vix_percentile_30d"] = float((vix["Close"].iloc[-30:] < vix["Close"].iloc[-1]).mean())
+                attrs["vix_above_20"] = float(vix["Close"].iloc[-1] > 20)
+                attrs["vix_above_30"] = float(vix["Close"].iloc[-1] > 30)
+        except Exception:
+            pass
 
     # Correlation with SPY
     spy_key = "daily_SPY"
     if spy_key in cache and not cache[spy_key].empty and len(close) >= 20:
-        spy_close = cache[spy_key]
-        spy_close = spy_close[spy_close.index.date <= entry_date]["Close"]
-        if len(spy_close) >= 20:
-            common_idx = close.index.intersection(spy_close.index)[-20:]
-            if len(common_idx) >= 10:
-                attrs["corr_spy_20d"] = close.loc[common_idx].pct_change().corr(spy_close.loc[common_idx].pct_change())
+        try:
+            spy_close = cache[spy_key]
+            spy_close = spy_close[spy_close.index.date <= entry_date]["Close"]
+            if len(spy_close) >= 20:
+                common_idx = close.index.intersection(spy_close.index)[-20:]
+                if len(common_idx) >= 10:
+                    attrs["corr_spy_20d"] = close.loc[common_idx].pct_change().corr(spy_close.loc[common_idx].pct_change())
+        except Exception:
+            pass
 
     # ── Category 6: Time Features ───────────────────────────────────────
     if hasattr(entry_time, "hour"):
