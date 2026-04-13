@@ -82,6 +82,9 @@ data/*
 *.tsbuildinfo
 .playwright-mcp/
 
+# Regression runner output
+tests/regression/last_run_report.json
+
 # Runtime artifacts
 execution_result.json
 position_registry.json

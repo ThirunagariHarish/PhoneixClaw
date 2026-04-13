@@ -1,5 +1,5 @@
 .PHONY: help install dev-install lint test test-cov infra-up infra-down infra-logs \
-       test-integration test-e2e test-e2e-remote test-api-all go-live-regression go-live-regression-quality db-alembic-heads \
+       test-integration test-e2e test-e2e-remote regression-yaml-parallel test-api-all go-live-regression go-live-regression-quality db-alembic-heads \
        db-init db-migrate dev \
        docker-build docker-up docker-down docker-logs clean benchmark \
        up down status logs setup local-up local-down \
@@ -136,6 +136,10 @@ test-e2e: ## Playwright E2E — requires dashboard :3000 + API :8011 running
 test-e2e-remote: ## Playwright E2E against deployed URL — set PHOENIX_E2E_BASE_URL (and optional PHOENIX_E2E_EMAIL/PASSWORD)
 	@if [ -z "$$PHOENIX_E2E_BASE_URL" ]; then echo "Set PHOENIX_E2E_BASE_URL to the live dashboard origin."; exit 1; fi
 	PYTHONPATH=. $(PYTHON) -m pytest tests/e2e/ -v --tb=short
+
+regression-yaml-parallel: ## Run tests/regression/user_journeys.yaml via 10 parallel browsers — set PHOENIX_E2E_BASE_URL, PHOENIX_API_BASE_URL
+	@if [ -z "$$PHOENIX_E2E_BASE_URL" ]; then echo "Set PHOENIX_E2E_BASE_URL"; exit 1; fi
+	$(PYTHON) scripts/regression/run_yaml_parallel.py
 
 go-live-regression: ## Automated go-live: test (unit + api unit), integration, bridge, dashboard
 	$(MAKE) test
