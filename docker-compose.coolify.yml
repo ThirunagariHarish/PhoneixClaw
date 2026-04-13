@@ -284,7 +284,14 @@ services:
           memory: 512M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8055/health"]
+      # Image has no curl — match services/feature-pipeline/Dockerfile
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8055/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -311,7 +318,14 @@ services:
           memory: 1G
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8045/health"]
+      # Image has no curl — match services/inference-service/Dockerfile
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8045/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -337,7 +351,14 @@ services:
           memory: 512M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      # Image has no curl — match services/broker-gateway/Dockerfile
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8040/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -389,7 +410,14 @@ services:
           memory: 256M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8075/health"]
+      # Image has no curl — match services/prediction-monitor/Dockerfile
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8075/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3

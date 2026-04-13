@@ -155,7 +155,13 @@ services:
           memory: 512M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8055/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8055/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -182,7 +188,13 @@ services:
           memory: 1G
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8045/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8045/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -208,7 +220,13 @@ services:
           memory: 512M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8040/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -260,7 +278,13 @@ services:
           memory: 256M
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8075/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8075/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
