@@ -1,7 +1,14 @@
-FROM python:3.12-slim
+# ── Build: install deps with pip cache ────────────────────────────────────
+FROM python:3.12-slim AS builder
 WORKDIR /app
 COPY services/inference-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --prefix=/install -r requirements.txt
+
+# ── Runtime ───────────────────────────────────────────────────────────────
+FROM python:3.12-slim
+WORKDIR /app
+COPY --from=builder /install /usr/local
 COPY shared/ shared/
 COPY services/__init__.py services/
 COPY services/inference-service/ services/inference-service/

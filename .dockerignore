@@ -26,3 +26,25 @@ Dockerfile*
 playwright-report/
 test-results/
 *.tar
+*.gz
+
+# Build artifacts & caches
+.tox/
+.coverage
+htmlcov/
+dist/
+build/
+*.whl
+
+# Large data dirs not needed in most images
+data/
+logs/
+*.parquet
+*.h5
+*.pkl
+*.joblib
+
+# Frontend build artifacts (dashboard has its own Dockerfile)
+apps/dashboard/node_modules/
+apps/dashboard/dist/
+apps/dashboard/.vite/

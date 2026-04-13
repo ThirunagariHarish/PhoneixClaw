@@ -80,8 +80,8 @@ help: ## Show this help
 install: ## Install production dependencies
 	$(PIP) install -e .
 
-dev-install: ## Install all dependencies (prod + dev)
-	$(PIP) install -e ".[dev]"
+dev-install: ## Install all dependencies (prod + dev + ml)
+	$(PIP) install -e ".[dev,ml]"
 
 env-file: ## Create .env from .env.example
 	@if [ ! -f .env ]; then \

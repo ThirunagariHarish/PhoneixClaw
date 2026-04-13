@@ -84,3 +84,7 @@ data/*
 
 # Runtime artifacts
 execution_result.json
+position_registry.json
+agents/templates/live-trader-v1/tools/decision.json
+agents/templates/live-trader-v1/tools/pipeline_status.json
+agents/templates/live-trader-v1/tools/stream_cursor.json
