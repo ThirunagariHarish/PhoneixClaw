@@ -1,0 +1,654 @@
+meta:
+  version: 1
+  total_tasks: 107
+  base_url_env: PHOENIX_E2E_BASE_URL
+  credentials_env:
+  - PHOENIX_E2E_EMAIL
+  - PHOENIX_E2E_PASSWORD
+  notes: Point PHOENIX_E2E_BASE_URL at staging/production. Run pytest tests/e2e with
+    credentials set.
+batches:
+- batch_id: 1
+  name: Authentication & session
+  tasks:
+  - id: T001
+    title: Login page renders
+    route: /login
+    checks:
+    - email_input
+    - password_input
+    - submit
+  - id: T002
+    title: Register page reachable
+    route: /register
+    checks:
+    - form
+  - id: T003
+    title: Trades route auth gate
+    route: /trades
+    checks:
+    - redirect_or_authed
+  - id: T004
+    title: Home dashboard loads authed
+    route: /
+    checks:
+    - shell_visible
+  - id: T005
+    title: Settings account section
+    route: /settings
+    checks:
+    - sections
+  - id: T006
+    title: Refresh session persists
+    route: /
+    checks:
+    - still_authed
+  - id: T007
+    title: Login validation empty submit
+    route: /login
+    checks:
+    - validation
+  - id: T008
+    title: Login wrong password error
+    route: /login
+    checks:
+    - error_message
+  - id: T009
+    title: Trades API data fetch
+    route: /trades
+    checks:
+    - network_200
+  - id: T010
+    title: Agents deep link loads
+    route: /agents
+    checks:
+    - list_or_empty
+- batch_id: 2
+  name: Route smoke 1
+  tasks:
+  - id: T011
+    title: 'Smoke: Home dashboard'
+    route: /
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T012
+    title: 'Smoke: Trades'
+    route: /trades
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T013
+    title: 'Smoke: Positions'
+    route: /positions
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T014
+    title: 'Smoke: Performance'
+    route: /performance
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T015
+    title: 'Smoke: Agents list'
+    route: /agents
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T016
+    title: 'Smoke: Strategies'
+    route: /strategies
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T017
+    title: 'Smoke: Connectors'
+    route: /connectors
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T018
+    title: 'Smoke: Skills'
+    route: /skills
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T019
+    title: 'Smoke: Market'
+    route: /market
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T020
+    title: 'Smoke: Daily signals'
+    route: /daily-signals
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+- batch_id: 3
+  name: Route smoke 2
+  tasks:
+  - id: T021
+    title: 'Smoke: On-chain flow'
+    route: /onchain-flow
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T022
+    title: 'Smoke: Macro pulse'
+    route: /macro-pulse
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T023
+    title: 'Smoke: Zero DTE'
+    route: /zero-dte
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T024
+    title: 'Smoke: Narrative'
+    route: /narrative
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T025
+    title: 'Smoke: Risk & compliance'
+    route: /risk
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T026
+    title: 'Smoke: Tasks'
+    route: /tasks
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T027
+    title: 'Smoke: Settings'
+    route: /settings
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T028
+    title: 'Smoke: Agent learning'
+    route: /agent-learning
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T029
+    title: 'Smoke: Logs'
+    route: /logs
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T030
+    title: 'Smoke: Backtests'
+    route: /backtests
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+- batch_id: 4
+  name: Route smoke 3
+  tasks:
+  - id: T031
+    title: 'Smoke: Agent graph'
+    route: /agent-graph
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T032
+    title: 'Smoke: Morning briefing'
+    route: /morning-briefing
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T033
+    title: 'Smoke: Briefing history'
+    route: /briefings
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T034
+    title: 'Smoke: Auto research'
+    route: /autoresearch
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T035
+    title: 'Smoke: Polymarket'
+    route: /polymarket
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T036
+    title: 'Smoke: Brain wiki'
+    route: /brain/wiki
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T037
+    title: 'Smoke: Notifications'
+    route: /notifications
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T038
+    title: 'Smoke: PnL calendar'
+    route: /pnl-calendar
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T039
+    title: 'Smoke: Watchlist'
+    route: /watchlist
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T040
+    title: 'Smoke: Agent health'
+    route: /agent-health
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+- batch_id: 5
+  name: Route smoke 4
+  tasks:
+  - id: T041
+    title: 'Smoke: Platform health'
+    route: /platform-health
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+  - id: T042
+    title: 'Smoke: Dev dashboard'
+    route: /dev
+    checks:
+    - loads
+    - no_fatal_overlay
+    - shell_visible
+- batch_id: 6
+  name: Connectors deep
+  tasks:
+  - id: T043
+    title: 'Connectors: list loads'
+    route: /connectors
+    checks:
+    - table_or_empty
+  - id: T044
+    title: 'Connectors: add/new control'
+    route: /connectors
+    checks:
+    - cta_visible
+  - id: T045
+    title: 'Connectors: channel selector if present'
+    route: /connectors
+    checks:
+    - ui
+  - id: T046
+    title: 'Connectors: save validates fields'
+    route: /connectors
+    checks:
+    - validation
+  - id: T047
+    title: 'Connectors: existing connector row'
+    route: /connectors
+    checks:
+    - row
+  - id: T048
+    title: 'Connectors: link to Discord docs'
+    route: /connectors
+    checks:
+    - external_optional
+  - id: T049
+    title: 'Connectors: encryption notice'
+    route: /connectors
+    checks:
+    - copy
+  - id: T050
+    title: 'Connectors: refresh status'
+    route: /connectors
+    checks:
+    - button
+  - id: T051
+    title: 'Connectors: error state graceful'
+    route: /connectors
+    checks:
+    - no_white_screen
+  - id: T052
+    title: 'Connectors: mobile layout'
+    route: /connectors
+    checks:
+    - responsive
+- batch_id: 7
+  name: Agents, backtests, strategies
+  tasks:
+  - id: T053
+    title: 'Agents: list loads'
+    route: /agents
+    checks:
+    - loads_or_placeholder
+  - id: T054
+    title: 'Agents: create/wizard entry'
+    route: /agents
+    checks:
+    - loads_or_placeholder
+  - id: T055
+    title: 'Agents: card actions menu'
+    route: /agents
+    checks:
+    - loads_or_placeholder
+  - id: T056
+    title: 'Agent detail: overview'
+    route: /agents/sample-id
+    checks:
+    - loads_or_placeholder
+  - id: T057
+    title: 'Backtests: list page'
+    route: /backtests
+    checks:
+    - loads_or_placeholder
+  - id: T058
+    title: 'Backtests: status column'
+    route: /backtests
+    checks:
+    - loads_or_placeholder
+  - id: T059
+    title: 'Backtests: filter or search'
+    route: /backtests
+    checks:
+    - loads_or_placeholder
+  - id: T060
+    title: Agent learning page
+    route: /agent-learning
+    checks:
+    - loads_or_placeholder
+  - id: T061
+    title: Strategies page
+    route: /strategies
+    checks:
+    - loads_or_placeholder
+  - id: T062
+    title: Skills page
+    route: /skills
+    checks:
+    - loads_or_placeholder
+- batch_id: 8
+  name: Trading & data pages
+  tasks:
+  - id: T063
+    title: Trades table or empty
+    route: /trades
+    checks:
+    - loads
+  - id: T064
+    title: Positions sections
+    route: /positions
+    checks:
+    - loads
+  - id: T065
+    title: Performance view
+    route: /performance
+    checks:
+    - loads
+  - id: T066
+    title: Market view
+    route: /market
+    checks:
+    - loads
+  - id: T067
+    title: Daily signals
+    route: /daily-signals
+    checks:
+    - loads
+  - id: T068
+    title: System logs
+    route: /logs
+    checks:
+    - loads
+  - id: T069
+    title: Notifications
+    route: /notifications
+    checks:
+    - loads
+  - id: T070
+    title: Watchlist
+    route: /watchlist
+    checks:
+    - loads
+  - id: T071
+    title: PnL calendar
+    route: /pnl-calendar
+    checks:
+    - loads
+  - id: T072
+    title: Macro pulse
+    route: /macro-pulse
+    checks:
+    - loads
+- batch_id: 9
+  name: Ops & advanced
+  tasks:
+  - id: T073
+    title: Admin gate (403 vs content)
+    route: /admin
+    checks:
+    - loads
+  - id: T074
+    title: Platform health
+    route: /platform-health
+    checks:
+    - loads
+  - id: T075
+    title: Agent health
+    route: /agent-health
+    checks:
+    - loads
+  - id: T076
+    title: Tasks board
+    route: /tasks
+    checks:
+    - loads
+  - id: T077
+    title: Polymarket
+    route: /polymarket
+    checks:
+    - loads
+  - id: T078
+    title: Brain wiki
+    route: /brain/wiki
+    checks:
+    - loads
+  - id: T079
+    title: Auto research
+    route: /autoresearch
+    checks:
+    - loads
+  - id: T080
+    title: Morning briefing
+    route: /morning-briefing
+    checks:
+    - loads
+  - id: T081
+    title: Briefing history
+    route: /briefings
+    checks:
+    - loads
+  - id: T082
+    title: Agent graph
+    route: /agent-graph
+    checks:
+    - loads
+- batch_id: 10
+  name: Navigation stress
+  tasks:
+  - id: T083
+    title: 'Regression spot-check 1: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T084
+    title: 'Regression spot-check 2: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T085
+    title: 'Regression spot-check 3: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T086
+    title: 'Regression spot-check 4: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T087
+    title: 'Regression spot-check 5: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T088
+    title: 'Regression spot-check 6: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T089
+    title: 'Regression spot-check 7: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T090
+    title: 'Regression spot-check 8: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T091
+    title: 'Regression spot-check 9: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+  - id: T092
+    title: 'Regression spot-check 10: navigation from sidebar'
+    route: /
+    checks:
+    - click_nav
+    - route_change
+- batch_id: 11
+  name: API & infrastructure smoke
+  tasks:
+  - id: T093
+    title: API GET /health/lite
+    route: (api)
+    checks:
+    - curl_or_fetch
+  - id: T094
+    title: API GET /health
+    route: (api)
+    checks:
+    - '200'
+  - id: T095
+    title: API auth /api/v2/agents
+    route: (api)
+    checks:
+    - 401_without_token
+  - id: T096
+    title: API /api/v2/connectors with auth
+    route: (api)
+    checks:
+    - 200_or_list
+  - id: T097
+    title: API /api/v2/system-logs
+    route: (api)
+    checks:
+    - '200'
+  - id: T098
+    title: WebSocket gateway port reachable
+    route: (api)
+    checks:
+    - ops_only
+  - id: T099
+    title: Redis URL configured
+    route: (api)
+    checks:
+    - env
+  - id: T100
+    title: Postgres migration head
+    route: (api)
+    checks:
+    - alembic
+  - id: T101
+    title: MinIO bucket for models
+    route: (api)
+    checks:
+    - ops
+  - id: T102
+    title: Inference service /health
+    route: (api)
+    checks:
+    - ops
+  - id: T103
+    title: Broker gateway /health
+    route: (api)
+    checks:
+    - ops
+  - id: T104
+    title: Discord ingestion /health
+    route: (api)
+    checks:
+    - ops
+  - id: T105
+    title: Rate limit headers present
+    route: (api)
+    checks:
+    - optional
+  - id: T106
+    title: CORS preflight for dashboard origin
+    route: (api)
+    checks:
+    - browser
+  - id: T107
+    title: JWT expiry handling refresh
+    route: (api)
+    checks:
+    - session

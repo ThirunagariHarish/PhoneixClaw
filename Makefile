@@ -1,5 +1,5 @@
 .PHONY: help install dev-install lint test test-cov infra-up infra-down infra-logs \
-       test-integration test-e2e test-api-all go-live-regression go-live-regression-quality db-alembic-heads \
+       test-integration test-e2e test-e2e-remote test-api-all go-live-regression go-live-regression-quality db-alembic-heads \
        db-init db-migrate dev \
        docker-build docker-up docker-down docker-logs clean benchmark \
        up down status logs setup local-up local-down \
@@ -131,6 +131,10 @@ test-integration: ## Run pytest integration tests (live pipeline mocks, etc.)
 	PYTHONPATH=. $(PYTHON) -m pytest tests/integration/ -v --tb=short
 
 test-e2e: ## Playwright E2E — requires dashboard :3000 + API :8011 running
+	PYTHONPATH=. $(PYTHON) -m pytest tests/e2e/ -v --tb=short
+
+test-e2e-remote: ## Playwright E2E against deployed URL — set PHOENIX_E2E_BASE_URL (and optional PHOENIX_E2E_EMAIL/PASSWORD)
+	@if [ -z "$$PHOENIX_E2E_BASE_URL" ]; then echo "Set PHOENIX_E2E_BASE_URL to the live dashboard origin."; exit 1; fi
 	PYTHONPATH=. $(PYTHON) -m pytest tests/e2e/ -v --tb=short
 
 go-live-regression: ## Automated go-live: test (unit + api unit), integration, bridge, dashboard

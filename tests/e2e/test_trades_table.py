@@ -2,19 +2,7 @@
 E2E tests for trades table. M1.10.
 """
 
-import pytest
 from playwright.sync_api import Page, expect
-
-
-@pytest.fixture
-def logged_in_page(page: Page, base_url: str):
-    """Page after login."""
-    page.goto(f"{base_url}/login")
-    page.get_by_label("Email").fill("test@phoenix.io")
-    page.get_by_label("Password").fill("testpassword123")
-    page.get_by_role("button", name="Sign in").click()
-    page.wait_for_url("**/trades**", timeout=5000)
-    return page
 
 
 def test_trades_table_renders(logged_in_page: Page, base_url: str):

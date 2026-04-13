@@ -2,19 +2,7 @@
 E2E tests for agent creation flow. M1.11.
 """
 
-import pytest
 from playwright.sync_api import Page, expect
-
-
-@pytest.fixture
-def logged_in_page(page: Page, base_url: str):
-    """Page after login (assumes test user)."""
-    page.goto(f"{base_url}/login")
-    page.get_by_label("Email").fill("test@phoenix.io")
-    page.get_by_label("Password").fill("testpassword123")
-    page.get_by_role("button", name="Sign in").click()
-    page.wait_for_url("**/trades**", timeout=5000)
-    return page
 
 
 def test_agent_create_dialog_opens(logged_in_page: Page, base_url: str):

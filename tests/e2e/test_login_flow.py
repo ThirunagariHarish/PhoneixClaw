@@ -2,6 +2,8 @@
 E2E tests for login flow. M1.4.
 """
 
+import os
+
 from playwright.sync_api import Page, expect
 
 
@@ -26,9 +28,9 @@ def test_login_form_validation(page: Page, base_url: str):
 def test_login_redirect_to_dashboard(page: Page, base_url: str):
     """Successful login redirects to dashboard (mocked or test creds)."""
     page.goto(f"{base_url}/login")
-    page.get_by_label("Email").fill("test@phoenix.io")
-    page.get_by_label("Password").fill("testpassword123")
+    page.get_by_label("Email").fill(os.environ.get("PHOENIX_E2E_EMAIL", "test@phoenix.io"))
+    page.get_by_label("Password").fill(os.environ.get("PHOENIX_E2E_PASSWORD", "testpassword123"))
     page.get_by_role("button", name="Sign in").click()
     # Redirect to / or /trades; may fail if API not running
-    page.wait_for_url("**/trades**", timeout=5000)
+    page.wait_for_url("**/trades**", timeout=15000)
     expect(page).to_have_url("**/trades**")
