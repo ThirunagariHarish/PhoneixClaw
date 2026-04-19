@@ -91,7 +91,7 @@ class BaseDataClient(ABC):
     # ------------------------------------------------------------------
     def _cache_key_path(self, key: str) -> Path:
         """Return a filesystem-safe cache path for *key*."""
-        safe = hashlib.md5(key.encode()).hexdigest()  # noqa: S324
+        safe = hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
         return self._cache_dir / f"{safe}.json"
 
     def _is_cache_fresh(self, path: Path, ttl_seconds: float | None = None) -> bool:

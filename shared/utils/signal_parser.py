@@ -654,7 +654,7 @@ Rules:
 
 async def _llm_parse(raw_message: str) -> Optional[dict]:
     """Call LLM to parse a signal message. Returns parsed dict or None."""
-    cache_key = hashlib.md5(raw_message.encode()).hexdigest()
+    cache_key = hashlib.md5(raw_message.encode(), usedforsecurity=False).hexdigest()
     if cache_key in _llm_cache:
         return None  # Will use cached ParsedSignal directly
 
@@ -770,7 +770,7 @@ async def parse_trade_signal_async(
     result = parse_trade_signal(raw_message, as_of_date=as_of_date)
 
     # Check LLM cache first
-    cache_key = hashlib.md5(raw_message.encode()).hexdigest()
+    cache_key = hashlib.md5(raw_message.encode(), usedforsecurity=False).hexdigest()
     if cache_key in _llm_cache:
         return _llm_cache[cache_key]
 

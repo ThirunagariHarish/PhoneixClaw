@@ -68,7 +68,7 @@ class PMNewsItem:
 def make_item_id(source: str, url: str, title: str) -> str:
     """Stable id derived from (source, url, title)."""
     raw = f"{source}|{url}|{title}".encode("utf-8", errors="replace")
-    return hashlib.sha1(raw).hexdigest()
+    return hashlib.sha1(raw, usedforsecurity=False).hexdigest()
 
 
 class BasePMNewsCollector(ABC):

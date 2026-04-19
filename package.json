@@ -13,6 +13,8 @@
     "flatted": "^3.4.2",
     "esbuild": "^0.25.0",
     "lodash": "^4.17.21",
-    "vite": "^6.4.2"
+    "vite": "^6.4.2",
+    "follow-redirects": "^1.15.10",
+    "axios": "^1.12.2"
   }
 }

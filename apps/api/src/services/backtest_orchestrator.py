@@ -75,7 +75,7 @@ class BacktestOrchestrator:
         # changing the algorithm set invalidates stale checkpoints automatically.
         _algo_key = ",".join(sorted(enabled_algorithms)) if enabled_algorithms else "all"
         import hashlib
-        self._config_hash = hashlib.md5(_algo_key.encode()).hexdigest()[:8]
+        self._config_hash = hashlib.md5(_algo_key.encode(), usedforsecurity=False).hexdigest()[:8]
 
     async def run(self) -> dict:
         """Execute the full backtest pipeline with checkpoint recovery."""
