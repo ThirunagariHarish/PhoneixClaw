@@ -331,6 +331,14 @@ def execute(decision_path: str, config_path: str):
                 "status": "rejected",
                 "decision_trail": decision_trail,
             })
+            trade_success_counter.labels(status="rejected").inc()
+            tool_latency_histogram.labels(tool="execute_trade").observe(time.monotonic() - start_time)
+            circuit_breaker_gauge.labels(name="robinhood").set(
+                2 if robinhood_breaker.state == "open" else 1 if robinhood_breaker.state == "half_open" else 0
+            )
+            circuit_breaker_gauge.labels(name="phoenix_api").set(
+                2 if phoenix_api_breaker.state == "open" else 1 if phoenix_api_breaker.state == "half_open" else 0
+            )
             return {"status": "rejected", "reason": order_result.get("reason", state)}
 
         # Record successful trade in Phoenix
