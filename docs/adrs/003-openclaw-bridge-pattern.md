@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+SUPERSEDED (2026-04-18 — replaced by Claude Code SDK runtime; see docs/prd/phase-f-openclaw-removal.md)
 
 ## Context
 
