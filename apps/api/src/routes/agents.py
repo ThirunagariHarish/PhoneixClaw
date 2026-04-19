@@ -44,6 +44,7 @@ class AgentCreate(BaseModel):
     """Agent creation wizard payload."""
     name: str = Field(..., min_length=1, max_length=100)
     type: str = Field(..., pattern="^(trading|trend|sentiment|analyst)$")
+    engine_type: str = Field(default="sdk", pattern="^(sdk|pipeline)$")
     config: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     data_source: str = ""
@@ -81,6 +82,7 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     type: str
+    engine_type: str = "sdk"
     status: str
     worker_status: str = "STOPPED"
     runtime_status: str = "unknown"  # P4: derived from last_activity_at / heartbeat age
@@ -126,6 +128,7 @@ class AgentResponse(BaseModel):
             id=str(a.id),
             name=a.name,
             type=a.type,
+            engine_type=getattr(a, "engine_type", None) if isinstance(getattr(a, "engine_type", None), str) else "sdk",
             status=a.status,
             worker_status=a.worker_status or "STOPPED",
             runtime_status=cls._derive_runtime_status(a),
@@ -153,6 +156,7 @@ async def list_agents(
     session: DbSession,
     agent_type: str | None = Query(None, alias="type"),
     status_filter: str | None = Query(None, alias="status"),
+    engine_type: str | None = Query(None, alias="engine_type"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -162,6 +166,8 @@ async def list_agents(
         query = query.where(Agent.type == agent_type)
     if status_filter:
         query = query.where(Agent.status == status_filter)
+    if engine_type:
+        query = query.where(Agent.engine_type == engine_type)
     # Enforce per-user isolation unless the caller is an admin
     caller_id = getattr(request.state, "user_id", None)
     is_admin = getattr(request.state, "is_admin", False)
@@ -237,6 +243,7 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
         user_id=agent_user_id,
         name=payload.name,
         type=agent_type,
+        engine_type=payload.engine_type,
         status="BACKTESTING",
         channel_name=channel_name,
         analyst_name=analyst_name,
@@ -569,6 +576,11 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
         auto_spawn_result = await gateway.create_analyst(uuid.UUID(agent_id))
         logger.info("Auto-spawned analyst session for %s after approval: %s",
                     agent_id, auto_spawn_result)
+        if auto_spawn_result:
+            agent.status = "RUNNING"
+            agent.worker_status = "RUNNING"
+            await session.commit()
+            await session.refresh(agent)
     except Exception as exc:
         logger.warning("Failed to auto-spawn analyst for %s: %s", agent_id, exc)
 
@@ -1183,7 +1195,15 @@ async def process_live_message(agent_id: str, payload: LiveMessagePayload, sessi
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    if agent.status != "RUNNING":
+
+    if getattr(agent, "engine_type", "sdk") == "pipeline":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline agents process messages via Redis streams, not this endpoint. "
+                   "Messages are consumed automatically by the pipeline worker.",
+        )
+
+    if agent.status not in ("RUNNING", "PAPER", "APPROVED"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Agent is not running, current: {agent.status}")
 
     bt_result = await session.execute(
@@ -1935,7 +1955,11 @@ async def activate_agent(agent_id: str, session: DbSession):
     mgr_result = await gateway.create_analyst(uuid.UUID(agent_id))
     if not mgr_result:
         raise HTTPException(status_code=400, detail="Could not start agent")
-    return {"message": "Agent activated", "agent_id": agent_id, "status": "RUNNING", "worker": mgr_result}
+    agent.status = "RUNNING"
+    agent.worker_status = "RUNNING"
+    await session.commit()
+    await session.refresh(agent)
+    return {"message": "Agent activated", "agent_id": agent_id, "status": agent.status, "worker": mgr_result}
 
 
 @router.get("/{agent_id}/worker-status")

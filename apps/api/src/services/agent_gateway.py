@@ -46,6 +46,8 @@ TRADE_FEEDBACK_TEMPLATE = REPO_ROOT / "agents" / "templates" / "trade-feedback-a
 ANALYST_TEMPLATE = "analyst-agent"
 DATA_DIR = REPO_ROOT / "data"
 
+PIPELINE_WORKER_URL = os.environ.get("PIPELINE_WORKER_URL", "http://localhost:8055")
+
 # Tools that must exist in every live agent's tools/ directory.
 # Add a filename here whenever a new tool is introduced in the template so it
 # is hot-deployed to already-running agents on the next API restart or spawn.
@@ -536,7 +538,12 @@ class AgentGateway:
                 await db.commit()
 
         # Three-tier: use BacktestOrchestrator (Tier 1) instead of Claude SDK
-        use_orchestrator = os.getenv("BACKTEST_TIER", "orchestrator") != "sdk"
+        # Pipeline agents always use the orchestrator path (no Claude SDK).
+        engine_type = await self._get_agent_engine_type(agent_id)
+        use_orchestrator = (
+            engine_type == "pipeline"
+            or os.getenv("BACKTEST_TIER", "orchestrator") != "sdk"
+        )
         if use_orchestrator:
             try:
                 from apps.api.src.services.backtest_orchestrator import BacktestOrchestrator
@@ -846,13 +853,133 @@ class AgentGateway:
         logger.info("Backtest manifest loaded for agent %s, awaiting user approval", agent_id)
 
     # ------------------------------------------------------------------
+    # Pipeline Engine lifecycle
+    # ------------------------------------------------------------------
+
+    async def start_pipeline_agent(
+        self, agent_id: uuid.UUID, config: dict | None = None
+    ) -> str | None:
+        """Start a pipeline worker for an agent via the pipeline-worker service.
+
+        Returns the worker_id on success, None on failure.
+        """
+        import httpx
+
+        connector_ids: list[str] = []
+        async for db in _get_session():
+            agent = (await db.execute(
+                select(Agent).where(Agent.id == agent_id)
+            )).scalar_one_or_none()
+            if not agent:
+                logger.warning("[gateway] start_pipeline_agent: agent %s not found", agent_id)
+                return None
+            connector_ids = (agent.config or {}).get("connector_ids", [])
+
+        payload = {
+            "agent_id": str(agent_id),
+            "connector_ids": connector_ids,
+            "config": config or {},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{PIPELINE_WORKER_URL}/workers/start",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                worker_id = data.get("worker_id", str(agent_id))
+        except Exception as exc:
+            logger.error("[gateway] Failed to start pipeline worker for %s: %s", agent_id, exc)
+            async for db in _get_session():
+                agent = (await db.execute(
+                    select(Agent).where(Agent.id == agent_id)
+                )).scalar_one_or_none()
+                if agent:
+                    agent.worker_status = "ERROR"
+                    agent.error_message = f"Pipeline worker start failed: {str(exc)[:200]}"
+                    agent.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+            return None
+
+        async for db in _get_session():
+            session_row_id = uuid.uuid4()
+            db.add(AgentSession(
+                id=session_row_id,
+                agent_id=agent_id,
+                agent_type="pipeline_worker",
+                status="running",
+                config=config or {},
+            ))
+            agent = (await db.execute(
+                select(Agent).where(Agent.id == agent_id)
+            )).scalar_one_or_none()
+            if agent:
+                agent.worker_status = "RUNNING"
+                agent.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        logger.info("[gateway] Pipeline worker started for agent %s (worker_id=%s)", agent_id, worker_id)
+        return worker_id
+
+    async def stop_pipeline_agent(self, agent_id: uuid.UUID) -> bool:
+        """Stop a pipeline worker via the pipeline-worker service."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{PIPELINE_WORKER_URL}/workers/{agent_id}/stop",
+                )
+                resp.raise_for_status()
+        except Exception as exc:
+            logger.error("[gateway] Failed to stop pipeline worker for %s: %s", agent_id, exc)
+            return False
+
+        async for db in _get_session():
+            agent = (await db.execute(
+                select(Agent).where(Agent.id == agent_id)
+            )).scalar_one_or_none()
+            if agent:
+                agent.worker_status = "STOPPED"
+                agent.updated_at = datetime.now(timezone.utc)
+
+            sess = (await db.execute(
+                select(AgentSession)
+                .where(
+                    AgentSession.agent_id == agent_id,
+                    AgentSession.agent_type == "pipeline_worker",
+                    AgentSession.status.in_(["running", "starting"]),
+                )
+                .order_by(AgentSession.started_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if sess:
+                sess.status = "stopped"
+                sess.stopped_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        logger.info("[gateway] Pipeline worker stopped for agent %s", agent_id)
+        return True
+
+    async def _get_agent_engine_type(self, agent_id: uuid.UUID) -> str:
+        """Load engine_type for an agent from DB. Returns 'sdk' if not found."""
+        async for db in _get_session():
+            agent = (await db.execute(
+                select(Agent).where(Agent.id == agent_id)
+            )).scalar_one_or_none()
+            return getattr(agent, "engine_type", "sdk") if agent else "sdk"
+        return "sdk"
+
+    # ------------------------------------------------------------------
     # Analyst (live trading) agent
     # ------------------------------------------------------------------
 
     async def create_analyst(
         self, agent_id: uuid.UUID, config: dict | None = None
     ) -> str:
-        """Start a live trading Claude Code agent session."""
+        """Start a live trading agent session (Claude SDK or pipeline worker)."""
         # Phase H7 budget check
         try:
             from apps.api.src.services.budget_enforcer import check_budget
@@ -893,6 +1020,12 @@ class AgentGateway:
             if not agent:
                 logger.warning("[gateway] create_analyst: agent %s not found", agent_id)
                 return ""
+
+            # Pipeline agents bypass Claude SDK entirely
+            if getattr(agent, "engine_type", "sdk") == "pipeline":
+                worker_id = await self.start_pipeline_agent(agent_id, config)
+                return worker_id or ""
+
             if agent.status not in ("BACKTEST_COMPLETE", "APPROVED", "PAPER", "RUNNING", "PAUSED"):
                 logger.warning(
                     "[gateway] create_analyst rejected %s (name=%s): status=%s not eligible",
@@ -2474,7 +2607,13 @@ class AgentGateway:
     # ------------------------------------------------------------------
 
     async def stop_agent(self, agent_id: uuid.UUID) -> dict:
-        """Stop a running agent (backtester or analyst)."""
+        """Stop a running agent (backtester, analyst, or pipeline worker)."""
+        # Pipeline agents: delegate to pipeline-worker service
+        engine_type = await self._get_agent_engine_type(agent_id)
+        if engine_type == "pipeline":
+            ok = await self.stop_pipeline_agent(agent_id)
+            return {"status": "stopped" if ok else "error", "agent_id": str(agent_id)}
+
         agent_key = str(agent_id)
         task = _running_tasks.get(agent_key)
 
@@ -2512,6 +2651,21 @@ class AgentGateway:
 
     async def pause_agent(self, agent_id: uuid.UUID) -> dict:
         """Pause a running agent (preserves session for resume)."""
+        # Pipeline agents: stop the worker (resume will restart it)
+        engine_type = await self._get_agent_engine_type(agent_id)
+        if engine_type == "pipeline":
+            ok = await self.stop_pipeline_agent(agent_id)
+            if ok:
+                async for db in _get_session():
+                    agent = (await db.execute(
+                        select(Agent).where(Agent.id == agent_id)
+                    )).scalar_one_or_none()
+                    if agent:
+                        agent.status = "PAUSED"
+                        agent.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+            return {"status": "paused" if ok else "error", "agent_id": str(agent_id)}
+
         agent_key = str(agent_id)
         task = _running_tasks.get(agent_key)
 
@@ -2547,6 +2701,24 @@ class AgentGateway:
 
     async def resume_agent(self, agent_id: uuid.UUID) -> dict:
         """Resume a paused agent."""
+        # Pipeline agents: restart the worker
+        engine_type = await self._get_agent_engine_type(agent_id)
+        if engine_type == "pipeline":
+            worker_id = await self.start_pipeline_agent(agent_id)
+            if worker_id:
+                async for db in _get_session():
+                    agent = (await db.execute(
+                        select(Agent).where(Agent.id == agent_id)
+                    )).scalar_one_or_none()
+                    if agent:
+                        agent.status = "RUNNING"
+                        agent.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+            return {
+                "status": "resuming" if worker_id else "error",
+                "agent_id": str(agent_id),
+            }
+
         agent_key = str(agent_id)
         if agent_key in _running_tasks and not _running_tasks[agent_key].done():
             return {"status": "already_running", "agent_id": agent_key}

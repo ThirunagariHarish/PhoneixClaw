@@ -74,34 +74,53 @@ function makeAgent(overrides: Partial<AgentData> = {}): AgentData {
 }
 
 // ---------------------------------------------------------------------------
-// computeCanAdvance — wizard step 0
+// computeCanAdvance — wizard steps
 // ---------------------------------------------------------------------------
-describe('computeCanAdvance – step 0', () => {
-  it('canAdvance_step0_trend_no_connector — returns true when type="trend", name set, no connector', () => {
-    expect(computeCanAdvance(0, 'My Trend Agent', 'trend', [], null)).toBe(true)
+describe('computeCanAdvance – step 0 (engine type)', () => {
+  it('canAdvance_step0_always_true — engine type step always advances', () => {
+    expect(computeCanAdvance(0, '', 'trading', [], null, undefined, 'sdk')).toBe(true)
+    expect(computeCanAdvance(0, '', 'trend', [], null, undefined, 'pipeline')).toBe(true)
+  })
+})
+
+describe('computeCanAdvance – step 1 (channel)', () => {
+  it('canAdvance_step1_trend_no_connector — returns true when type="trend", name set, no connector, SDK engine', () => {
+    expect(computeCanAdvance(1, 'My Trend Agent', 'trend', [], null, undefined, 'sdk')).toBe(true)
   })
 
-  it('canAdvance_step0_trading_no_connector — returns false when type="trading", no connector', () => {
-    expect(computeCanAdvance(0, 'My Trading Agent', 'trading', [], null)).toBe(false)
+  it('canAdvance_step1_trading_no_connector — returns false when type="trading", no connector', () => {
+    expect(computeCanAdvance(1, 'My Trading Agent', 'trading', [], null, undefined, 'sdk')).toBe(false)
   })
 
-  it('canAdvance_step0_trading_with_connector_and_channel — returns true', () => {
+  it('canAdvance_step1_trading_with_connector_and_channel — returns true', () => {
     expect(
-      computeCanAdvance(0, 'My Trading Agent', 'trading', ['connector-1'], {
+      computeCanAdvance(1, 'My Trading Agent', 'trading', ['connector-1'], {
         channel_id: 'ch-1',
         channel_name: 'general',
-      }),
+      }, undefined, 'sdk'),
     ).toBe(true)
   })
 
-  it('canAdvance_step0_empty_name — returns false for any type', () => {
-    expect(computeCanAdvance(0, '', 'trend', [], null)).toBe(false)
-    expect(computeCanAdvance(0, '   ', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' })).toBe(false)
-    expect(computeCanAdvance(0, '', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' })).toBe(false)
+  it('canAdvance_step1_empty_name — returns false for any type', () => {
+    expect(computeCanAdvance(1, '', 'trend', [], null, undefined, 'sdk')).toBe(false)
+    expect(computeCanAdvance(1, '   ', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' }, undefined, 'sdk')).toBe(false)
+    expect(computeCanAdvance(1, '', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' }, undefined, 'sdk')).toBe(false)
   })
 
-  it('canAdvance_step0_sentiment_no_connector — returns true when type="sentiment", name set, no connector', () => {
-    expect(computeCanAdvance(0, 'Sentiment Agent', 'sentiment', [], null)).toBe(true)
+  it('canAdvance_step1_sentiment_no_connector — returns true when type="sentiment", name set, no connector', () => {
+    expect(computeCanAdvance(1, 'Sentiment Agent', 'sentiment', [], null, undefined, 'sdk')).toBe(true)
+  })
+
+  it('canAdvance_step1_pipeline_no_broker — returns false when engine=pipeline and no broker_account_id', () => {
+    expect(computeCanAdvance(1, 'Pipeline Agent', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' }, undefined, 'pipeline', undefined)).toBe(false)
+  })
+
+  it('canAdvance_step1_pipeline_with_broker — returns true when engine=pipeline and broker_account_id set', () => {
+    expect(computeCanAdvance(1, 'Pipeline Agent', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' }, undefined, 'pipeline', 'broker-123')).toBe(true)
+  })
+
+  it('canAdvance_step1_sdk_no_broker — returns true when SDK engine without broker', () => {
+    expect(computeCanAdvance(1, 'SDK Agent', 'trading', ['c'], { channel_id: 'x', channel_name: 'x' }, undefined, 'sdk', undefined)).toBe(true)
   })
 })
 

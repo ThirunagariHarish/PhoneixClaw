@@ -21,7 +21,7 @@ from services.connector_manager.src.factory import register_connector
 @register_connector(ConnectorType.DISCORD)
 class DiscordConnector(BaseConnector):
     """
-    Connects to Discord via bot token or self-bot token, listens
+    Connects to Discord via official Bot token, listens
     to configured channels, and yields normalized ConnectorMessages.
     """
 

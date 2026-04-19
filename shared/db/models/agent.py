@@ -21,6 +21,7 @@ class Agent(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     type: Mapped[str] = mapped_column(String(30), nullable=False)  # trading | trend
+    engine_type: Mapped[str] = mapped_column(String(20), nullable=False, default="sdk")  # sdk | pipeline
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="CREATED")
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -110,3 +111,25 @@ class AgentLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     context: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class PipelineWorkerState(Base):
+    """Per-agent pipeline worker state for cursor tracking and stats."""
+    __tablename__ = "pipeline_worker_state"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    stream_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    last_cursor: Mapped[str] = mapped_column(String(50), nullable=False, default="0-0")
+    signals_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trades_executed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signals_skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    portfolio_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    last_heartbeat: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
