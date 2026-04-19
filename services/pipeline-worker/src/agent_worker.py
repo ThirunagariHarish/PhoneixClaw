@@ -484,7 +484,6 @@ class AgentWorker:
     ) -> None:
         """Record trade in DB and update position tracking."""
         ticker = parsed.ticker
-        direction = parsed.direction
 
         if side == "buy":
             # New position: create AgentTrade row

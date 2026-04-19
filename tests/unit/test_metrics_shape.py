@@ -24,8 +24,8 @@ def test_tool_latency_histogram():
 
 
 def test_trade_success_counter():
-    """Trade counter has status label."""
-    trade_success_counter.labels(status="success").inc()
+    """Trade counter has service and status labels."""
+    trade_success_counter.labels(service="test", status="success").inc()
     output = generate_latest(REGISTRY).decode("utf-8")
     assert "phoenix_trades_total" in output
     assert 'status="success"' in output
@@ -50,7 +50,7 @@ def test_circuit_breaker_gauge():
     circuit_breaker_gauge.labels(name="robinhood").set(0)
     circuit_breaker_gauge.labels(name="yfinance").set(2)
     output = generate_latest(REGISTRY).decode("utf-8")
-    assert "phoenix_circuit_breaker_state" in output
+    assert "phoenix_circuit_breaker_state_by_name" in output
     assert 'name="robinhood"' in output
     assert 'name="yfinance"' in output
 
@@ -85,7 +85,7 @@ def test_all_metrics_registered():
         "phoenix_trades_total",
         "phoenix_agent_sessions_created_total",
         "phoenix_subagent_spawned_total",
-        "phoenix_circuit_breaker_state",
+        "phoenix_circuit_breaker_state_by_name",
         "phoenix_dlq_unresolved_total",
         "phoenix_redis_stream_lag_seconds",
         "phoenix_discord_messages_total",
