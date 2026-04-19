@@ -2,19 +2,20 @@
 
 Provides:
 - tool_latency_histogram — phoenix_tool_duration_seconds{tool}
-- trade_success_counter — phoenix_trades_total{status}
 - agent_session_counter — phoenix_agent_sessions_created_total
 - subagent_spawn_counter — phoenix_subagent_spawned_total
-- circuit_breaker_gauge — phoenix_circuit_breaker_state{name} (0=closed, 1=half_open, 2=open)
+- circuit_breaker_gauge_by_name — phoenix_circuit_breaker_state_by_name{name} (0=closed, 1=half_open, 2=open)
 - dlq_size_gauge — phoenix_dlq_unresolved_total{connector_id}
 - stream_lag_gauge — phoenix_redis_stream_lag_seconds{stream_key}
 - discord_messages_counter — phoenix_discord_messages_total
 
-All metrics share the global registry from shared.metrics for unified scraping.
+Note: phoenix_trades_total already exists in shared.metrics.TRADE_COUNTER with {service, status} labels.
+We reuse it for tool-side trade metrics.
 """
 
 from prometheus_client import Counter, Gauge, Histogram
 
+from shared.metrics import TRADE_COUNTER as trade_success_counter
 from shared.metrics import registry
 
 # Tool latency across parse_signal, enrich_single, inference, risk_check, technical_analysis, execute_trade
@@ -23,14 +24,6 @@ tool_latency_histogram = Histogram(
     "Duration of agent tool calls in seconds",
     ["tool"],
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
-    registry=registry,
-)
-
-# Trade success rate (status ∈ {success, failed, rejected, error})
-trade_success_counter = Counter(
-    "phoenix_trades_total",
-    "Total trades by status",
-    ["status"],
     registry=registry,
 )
 
@@ -48,9 +41,10 @@ subagent_spawn_counter = Counter(
     registry=registry,
 )
 
-# Circuit breaker state gauge (0=closed, 1=half_open, 2=open)
+# Circuit breaker state gauge with "name" label (0=closed, 1=half_open, 2=open)
+# Note: shared.metrics.CIRCUIT_BREAKER_STATE uses "service" label; we need "name" label for tool-side.
 circuit_breaker_gauge = Gauge(
-    "phoenix_circuit_breaker_state",
+    "phoenix_circuit_breaker_state_by_name",
     "Circuit breaker state: 0=closed, 1=half_open, 2=open",
     ["name"],
     registry=registry,

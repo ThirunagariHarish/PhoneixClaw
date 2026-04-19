@@ -45,12 +45,24 @@ class WorkerManager:
         if len(self._workers) >= settings.MAX_WORKERS:
             raise RuntimeError(f"Max workers ({settings.MAX_WORKERS}) reached")
 
+        # Fetch user_id from agent
+        user_id = None
+        try:
+            async with self._session_factory() as session:
+                result = await session.execute(
+                    select(Agent.user_id).where(Agent.id == agent_id)
+                )
+                user_id = result.scalar_one_or_none()
+        except Exception as exc:
+            logger.warning("Failed to fetch user_id for agent %s: %s", agent_id, exc)
+
         worker = AgentWorker(
             agent_id=agent_id,
             connector_ids=connector_ids,
             config=config,
             redis_client=self._redis,
             session_factory=self._session_factory,
+            user_id=str(user_id) if user_id else "",
         )
 
         task = asyncio.create_task(
