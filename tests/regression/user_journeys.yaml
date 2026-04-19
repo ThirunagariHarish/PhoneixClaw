@@ -1,6 +1,6 @@
 meta:
   version: 1
-  total_tasks: 107
+  total_tasks: 112
   base_url_env: PHOENIX_E2E_BASE_URL
   credentials_env:
   - PHOENIX_E2E_EMAIL
@@ -652,3 +652,53 @@ batches:
     route: (api)
     checks:
     - session
+- batch_id: 12
+  name: Pipeline Agent & Multi-Broker (Phase A.8)
+  tasks:
+  - id: T108
+    title: Pipeline agent creation with Robinhood broker
+    route: /agents
+    checks:
+    - agent_wizard_visible
+    - select_pipeline_engine
+    - broker_dropdown_visible
+    - select_robinhood_broker
+    - complete_wizard
+    - agent_created
+    - pipeline_badge_visible
+    - robinhood_badge_visible
+  - id: T109
+    title: Pipeline agent creation with IBKR broker
+    route: /agents
+    checks:
+    - agent_wizard_visible
+    - select_pipeline_engine
+    - broker_dropdown_visible
+    - select_ibkr_broker
+    - complete_wizard
+    - agent_created
+    - pipeline_badge_visible
+    - ibkr_badge_visible
+  - id: T110
+    title: SDK agent creation regression (no broker fields)
+    route: /agents
+    checks:
+    - agent_wizard_visible
+    - select_sdk_engine
+    - broker_dropdown_not_visible
+    - complete_wizard
+    - agent_created
+    - sdk_badge_visible
+  - id: T111
+    title: Pipeline agent detail page shows stats panel
+    route: /agents
+    checks:
+    - pipeline_agent_detail
+    - pipeline_stats_panel_visible
+    - stats_metrics_present
+  - id: T112
+    title: API GET /trading-accounts category=broker
+    route: (api)
+    checks:
+    - 200_or_list
+    - broker_accounts_filtered
