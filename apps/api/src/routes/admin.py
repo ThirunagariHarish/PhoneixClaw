@@ -339,20 +339,26 @@ async def replay_dlq_message(dlq_id: str, session: DbSession, request: Request):
     from sqlalchemy import text
 
     result = await session.execute(
-        text("SELECT connector_id, payload, attempts FROM dead_letter_messages WHERE id = :id AND resolved = false"),
+        text(
+            "SELECT connector_id, payload, attempts FROM dead_letter_messages WHERE id = :id AND resolved = false"
+        ),
         {"id": dlq_id},
     )
     row = result.one_or_none()
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DLQ message not found or already resolved")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="DLQ message not found or already resolved"
+        )
 
     connector_id, payload_json, attempts = row
     payload = json.loads(payload_json)
 
     # Re-inject into Redis stream
     try:
-        import redis.asyncio as aioredis
         import os
+
+        import redis.asyncio as aioredis
+
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         redis_client = aioredis.from_url(redis_url, decode_responses=True)
         stream_key = f"stream:channel:{connector_id}"
@@ -360,7 +366,9 @@ async def replay_dlq_message(dlq_id: str, session: DbSession, request: Request):
         await redis_client.xadd(stream_key, stream_payload)
         await redis_client.aclose()
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redis re-injection failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redis re-injection failed: {exc}"
+        )
 
     # Increment attempts
     await session.execute(

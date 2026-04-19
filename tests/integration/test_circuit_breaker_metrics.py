@@ -35,10 +35,10 @@ async def test_circuit_breaker_closed_to_open():
 
     # Check metric
     output = generate_latest(REGISTRY).decode("utf-8")
-    assert "phoenix_circuit_breaker_state" in output
+    assert "phoenix_circuit_breaker_state_by_name" in output
     assert 'name="test_breaker"' in output
     # Value should be 2 (OPEN)
-    assert 'phoenix_circuit_breaker_state{name="test_breaker"} 2.0' in output
+    assert 'phoenix_circuit_breaker_state_by_name{name="test_breaker"} 2.0' in output
 
 
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_circuit_breaker_open_to_closed():
     # Check metric
     output = generate_latest(REGISTRY).decode("utf-8")
     # Value should be 0 (CLOSED)
-    lines = [line for line in output.split("\n") if "phoenix_circuit_breaker_state" in line and "test_recovery" in line and not line.startswith("#")]
+    lines = [line for line in output.split("\n") if "phoenix_circuit_breaker_state_by_name" in line and "test_recovery" in line and not line.startswith("#")]
     assert any("0.0" in line for line in lines)
 
 

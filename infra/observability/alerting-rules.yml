@@ -18,7 +18,7 @@ groups:
           summary: "High error rate on {{ $labels.job }}"
 
       - alert: CircuitBreakerOpen
-        expr: phoenix_circuit_breaker_state == 2
+        expr: phoenix_circuit_breaker_state_by_name == 2
         for: 5m
         labels:
           severity: critical

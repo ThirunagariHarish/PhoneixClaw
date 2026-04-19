@@ -137,8 +137,8 @@
       "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "phoenix_circuit_breaker_state",
-          "legendFormat": "{{name}}: {{state}}"
+          "expr": "phoenix_circuit_breaker_state_by_name",
+          "legendFormat": "{{name}}"
         }
       ],
       "yaxes": [
