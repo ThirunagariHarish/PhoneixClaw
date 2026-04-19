@@ -2,13 +2,10 @@
 
 Covers B-GAP-03 (correlation ID), B-GAP-04 (DLQ writes), B-GAP-05 (circuit breakers).
 """
-import asyncio
 import json
-import os
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +16,7 @@ from shared.utils.circuit_breaker import CircuitBreaker
 async def test_parse_signal_failure_writes_dlq():
     """B-GAP-04: parse_signal failure writes DLQ row."""
     from sqlalchemy import text
+
     from shared.db.engine import get_session
 
     connector_id = str(uuid.uuid4())
@@ -75,6 +73,7 @@ async def test_yfinance_timeout_trips_circuit_breaker():
 async def test_robinhood_failure_writes_dlq():
     """B-GAP-05: Robinhood MCP down writes DLQ row."""
     from sqlalchemy import text
+
     from shared.db.engine import get_session
 
     connector_id = str(uuid.uuid4())

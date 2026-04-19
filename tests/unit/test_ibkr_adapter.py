@@ -1,6 +1,5 @@
 """Unit tests for IBKR broker adapter."""
 
-import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 

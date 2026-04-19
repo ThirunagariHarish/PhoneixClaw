@@ -1,11 +1,11 @@
 """Tests for risk checker — enhanced with OldProject validation patterns."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+# Import only the necessary items without triggering model imports
+import sys
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Import only the necessary items without triggering model imports
-import sys
 sys.path.insert(0, "/Users/harishkumar/Projects/TradingBot/ProjectPhoneix/services/pipeline-worker/src")
 
 from pipeline.risk_checker import (

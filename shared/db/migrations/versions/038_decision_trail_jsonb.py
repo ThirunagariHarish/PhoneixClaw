@@ -3,8 +3,8 @@
 Revision ID: 038_decision_trail
 Revises: 037_context_sessions
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "038_decision_trail"

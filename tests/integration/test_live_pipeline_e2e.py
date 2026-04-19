@@ -8,20 +8,18 @@ Usage:
     python -m pytest tests/integration/test_live_pipeline_e2e.py -v --tb=short
 """
 
-import asyncio
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 LIVE_TOOLS = Path(__file__).resolve().parents[2] / "agents" / "templates" / "live-trader-v1" / "tools"
 sys.path.insert(0, str(LIVE_TOOLS))
 
-from execute_trade import execute, _report_trade_to_phoenix
+from execute_trade import _report_trade_to_phoenix, execute
 
 
 @pytest.fixture
