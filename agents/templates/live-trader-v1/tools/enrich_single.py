@@ -36,6 +36,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+from shared.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+
+yfinance_breaker = CircuitBreaker("yfinance", failure_threshold=5, cooldown_seconds=60)
+
 SECTOR_ETFS = {
     "XLF": "financials",
     "XLK": "technology",
@@ -56,17 +60,31 @@ MARKET_ETFS = ["SPY", "QQQ", "IWM", "DIA"]
 # Technical indicator helpers
 # ---------------------------------------------------------------------------
 
-def _safe_download(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+async def _safe_download_async(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     if yf is None:
         return pd.DataFrame()
     try:
-        data = yf.download(ticker, period=period, interval=interval, progress=False)
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-        return data
+        async with yfinance_breaker:
+            data = yf.download(ticker, period=period, interval=interval, progress=False)
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            return data
+    except CircuitBreakerOpen as cbe:
+        log.warning("Circuit breaker open for yfinance: %s", cbe)
+        return pd.DataFrame()
     except Exception as exc:
         log.warning("Download failed for %s: %s", ticker, exc)
         return pd.DataFrame()
+
+
+def _safe_download(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(_safe_download_async(ticker, period, interval))
 
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -896,12 +914,30 @@ def enrich_signal(signal: dict) -> dict:
     return result
 
 
+async def _write_dlq(connector_id: str, payload: dict, error: str) -> None:
+    """Write failed signal to dead_letter_messages table."""
+    try:
+        from sqlalchemy import text
+
+        from shared.db.engine import get_session
+        async for session in get_session():
+            await session.execute(
+                text("INSERT INTO dead_letter_messages (connector_id, payload, error) VALUES (:cid, :payload, :error)"),
+                {"cid": connector_id, "payload": json.dumps(payload), "error": error[:500]},
+            )
+            await session.commit()
+            log.warning("DLQ write succeeded for connector %s", connector_id, extra={"correlation_id": payload.get("correlation_id")})
+    except Exception as dlq_exc:
+        log.error("DLQ write failed: %s", dlq_exc)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Real-time single-trade enrichment")
     parser.add_argument("--signal", required=True, help="Path to pending_signals.json")
     parser.add_argument("--output", default="enriched_signal.json", help="Output path")
     parser.add_argument("--index", type=int, default=0,
                         help="Which signal to enrich if the file contains an array")
+    parser.add_argument("--config", help="Path to config.json for connector_id")
     args = parser.parse_args()
 
     signal_path = Path(args.signal)
@@ -909,28 +945,51 @@ def main():
         log.error("Signal file not found: %s", args.signal)
         sys.exit(1)
 
-    with open(signal_path) as f:
-        raw = json.load(f)
+    signal = None
+    try:
+        with open(signal_path) as f:
+            raw = json.load(f)
 
-    if isinstance(raw, list):
-        if args.index >= len(raw):
-            log.error("Index %d out of range (file has %d signals)", args.index, len(raw))
-            sys.exit(1)
-        signal = raw[args.index]
-        log.info("Enriching signal %d of %d", args.index + 1, len(raw))
-    else:
-        signal = raw
+        if isinstance(raw, list):
+            if args.index >= len(raw):
+                log.error("Index %d out of range (file has %d signals)", args.index, len(raw))
+                sys.exit(1)
+            signal = raw[args.index]
+            log.info("Enriching signal %d of %d", args.index + 1, len(raw))
+        else:
+            signal = raw
 
-    log.info("Enriching signal for ticker=%s", signal.get("ticker", "unknown"))
-    enriched = enrich_signal(signal)
+        correlation_id = signal.get("correlation_id") or os.getenv("CORRELATION_ID")
+        if correlation_id:
+            log.info("Enriching signal for ticker=%s", signal.get("ticker", "unknown"), extra={"correlation_id": correlation_id})
+        else:
+            log.info("Enriching signal for ticker=%s", signal.get("ticker", "unknown"))
 
-    feature_count = len([k for k in enriched if k not in signal])
-    log.info("Computed %d features", feature_count)
+        enriched = enrich_signal(signal)
 
-    with open(args.output, "w") as f:
-        json.dump(enriched, f, indent=2, default=str)
+        feature_count = len([k for k in enriched if k not in signal])
+        if correlation_id:
+            log.info("Computed %d features", feature_count, extra={"correlation_id": correlation_id})
+        else:
+            log.info("Computed %d features", feature_count)
 
-    print(json.dumps({"status": "ok", "features_added": feature_count, "output": args.output}))
+        with open(args.output, "w") as f:
+            json.dump(enriched, f, indent=2, default=str)
+
+        print(json.dumps({"status": "ok", "features_added": feature_count, "output": args.output}))
+
+    except Exception as exc:
+        log.error("enrich_single failed: %s", exc, exc_info=True)
+        connector_id = "unknown"
+        if args.config and Path(args.config).exists():
+            try:
+                cfg = json.loads(Path(args.config).read_text())
+                connector_id = cfg.get("connector_id", "unknown")
+            except Exception:
+                pass
+        import asyncio
+        asyncio.run(_write_dlq(connector_id, signal or {}, str(exc)))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

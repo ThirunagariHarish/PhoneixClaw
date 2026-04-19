@@ -11,7 +11,6 @@ import math
 import sys
 import warnings
 from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 
@@ -29,8 +28,8 @@ except ImportError:
     yf = None
 
 try:
-    from scipy.stats import norm
     from scipy.optimize import brentq
+    from scipy.stats import norm
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False

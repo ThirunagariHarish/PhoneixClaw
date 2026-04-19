@@ -27,13 +27,11 @@ def analyze_portfolio(config_path: str | None = None) -> dict:
     This function orchestrates MCP calls (via config) and local analysis tools
     to produce a comprehensive portfolio report the agent can reason about.
     """
-    from market_research import stock_snapshot, key_levels, position_health_check, _calc_rsi
 
     config: dict = {}
     if config_path and Path(config_path).exists():
         config = json.loads(Path(config_path).read_text())
 
-    import subprocess
     mcp_script = Path(__file__).parent / "robinhood_mcp.py"
 
     report: dict[str, Any] = {
@@ -90,7 +88,6 @@ def enrich_stock_position(position: dict) -> dict:
 
 def enrich_option_position(position: dict) -> dict:
     """Enrich an option position dict with risk metrics and exit analysis."""
-    from market_research import position_health_check
 
     ticker = position.get("ticker", "?")
     avg_cost = float(position.get("avg_cost_per_contract", 0))
