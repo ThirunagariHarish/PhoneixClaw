@@ -23,6 +23,8 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from shared.observability.metrics import discord_messages_counter
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("discord-ingestion")
 
@@ -218,6 +220,7 @@ async def _persist_message(
             },
         )
         await session.commit()
+        discord_messages_counter.inc()
 
     state.messages_received += 1
 

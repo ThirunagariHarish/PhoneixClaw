@@ -15,8 +15,11 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from shared.observability.metrics import stream_lag_gauge
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,9 +75,28 @@ async def listen(config: dict, output_dir: Path) -> None:
     log.info("Listening on '%s' (cursor=%s), writing to %s/", stream_key, last_id, output_dir)
 
     total = 0
+    last_lag_check = 0.0
     try:
         while True:
             try:
+                # Every 30s, compute stream lag
+                now_mono = time.monotonic()
+                if now_mono - last_lag_check >= 30:
+                    try:
+                        stream_info = await redis_client.execute_command("XINFO", "STREAM", stream_key)
+                        if stream_info and len(stream_info) > 0:
+                            info_dict = {stream_info[i]: stream_info[i + 1] for i in range(0, len(stream_info), 2)}
+                            last_entry_id_bytes = info_dict.get(b"last-generated-id") or info_dict.get("last-generated-id")
+                            if last_entry_id_bytes:
+                                last_entry_id = last_entry_id_bytes.decode() if isinstance(last_entry_id_bytes, bytes) else str(last_entry_id_bytes)
+                                last_ts = int(last_entry_id.split("-")[0])
+                                cursor_ts = int(last_id.split("-")[0]) if last_id != "0-0" else last_ts
+                                lag_ms = max(0, last_ts - cursor_ts)
+                                stream_lag_gauge.labels(stream_key=stream_key).set(lag_ms / 1000.0)
+                    except Exception as exc:
+                        log.debug("Stream lag check failed: %s", exc)
+                    last_lag_check = now_mono
+
                 result = await redis_client.xread({stream_key: last_id}, count=50, block=5000)
                 if not result:
                     continue

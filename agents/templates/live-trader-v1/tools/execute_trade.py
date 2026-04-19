@@ -372,6 +372,8 @@ def execute(decision_path: str, config_path: str):
         # Spawn position monitor sub-agent for exit management
         if side == "buy":
             spawn_result = _spawn_position_agent(config, ticker, side, fill_price, quantity)
+            if spawn_result and spawn_result.get("session_id"):
+                subagent_spawn_counter.inc()
             _register_position(ticker, side, fill_price, quantity, order_id, spawn_result)
 
         # Write execution result for the agent to read
@@ -392,6 +394,14 @@ def execute(decision_path: str, config_path: str):
             result_path = Path("execution_result.json")
         result_path.write_text(json.dumps(result, indent=2))
         log.info("Trade executed: %s %s %.0f @ $%.2f", side, ticker, quantity, fill_price)
+        trade_success_counter.labels(status="success").inc()
+        tool_latency_histogram.labels(tool="execute_trade").observe(time.monotonic() - start_time)
+        circuit_breaker_gauge.labels(name="robinhood").set(
+            2 if robinhood_breaker.state == "open" else 1 if robinhood_breaker.state == "half_open" else 0
+        )
+        circuit_breaker_gauge.labels(name="phoenix_api").set(
+            2 if phoenix_api_breaker.state == "open" else 1 if phoenix_api_breaker.state == "half_open" else 0
+        )
         return result
 
     finally:

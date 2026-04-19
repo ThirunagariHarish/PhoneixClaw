@@ -346,29 +346,11 @@ def main():
         raw_messages = _load_messages_from_postgres(args.db_url)
         print(f"Loaded {len(raw_messages)} messages from PostgreSQL")
 
-    # ── Source: Discord API (default) ──────────────────────────────────────
+    # ── Source: Discord API (DEPRECATED) ──────────────────────────────────────
     else:
-        with open(args.config) as f:
-            config = json.load(f)
-
-        channel_name = config.get("channel_name", "unknown")
-
-        if args.messages_file:
-            with open(args.messages_file) as f:
-                raw_messages = json.load(f)
-            for m in raw_messages:
-                if isinstance(m["timestamp"], str):
-                    m["timestamp"] = datetime.fromisoformat(m["timestamp"])
-        else:
-            import asyncio
-            raw_messages = asyncio.run(fetch_discord_history(
-                token=config["discord_token"],
-                channel_id=config["channel_id"],
-                lookback_days=config.get("lookback_days", 730),
-                auth_type=config.get("discord_auth_type", "bot_token"),
-            ))
-
-        print(f"Fetched {len(raw_messages)} messages from {channel_name}")
+        # This path is unreachable due to ValueError raised earlier
+        # Kept as dead code for clarity; will be removed in next cleanup
+        raise RuntimeError("Unreachable: --source discord blocked by earlier validation")
 
     # Parse signals
     signals = []

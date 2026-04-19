@@ -87,6 +87,7 @@ from apps.api.src.routes import tasks as tasks_routes
 from apps.api.src.routes import token_usage as token_usage_routes
 from apps.api.src.routes import trade_signals as trade_signals_routes
 from apps.api.src.routes import trades as trades_routes
+from apps.api.src.routes import trading_accounts as trading_accounts_routes
 from apps.api.src.routes import user as user_routes
 from apps.api.src.routes import watchlist as watchlist_routes
 from apps.api.src.routes import whatsapp_webhook as whatsapp_webhook_routes
@@ -776,6 +777,7 @@ app.include_router(connector_routes.router)
 app.include_router(trades_routes.router)
 app.include_router(positions_routes.router)
 app.include_router(agents_routes.router)
+app.include_router(trading_accounts_routes.router)
 app.include_router(execution_routes.router)
 app.include_router(backtests_routes.router)
 app.include_router(strategies_routes.router)
@@ -868,6 +870,36 @@ async def health_lite() -> dict:
     Use this for k8s liveness probes; use /health for readiness probes.
     """
     return {"status": "ready", "service": "phoenix-api"}
+
+
+@app.get("/metrics")
+async def metrics() -> str:
+    """Prometheus metrics endpoint with DLQ size gauge."""
+    from prometheus_client import generate_latest
+    from sqlalchemy import text
+
+    from shared.db.engine import get_session
+    from shared.metrics import registry
+    from shared.observability.metrics import dlq_size_gauge
+
+    # Update DLQ size gauge from DB
+    try:
+        async for session in get_session():
+            result = await session.execute(
+                text("SELECT connector_id, COUNT(*) FROM dead_letter_messages WHERE resolved = false GROUP BY connector_id")
+            )
+            rows = result.all()
+            # Reset all gauges first
+            for connector_id, count in rows:
+                dlq_size_gauge.labels(connector_id=connector_id).set(count)
+    except Exception:
+        pass  # Metrics endpoint should not fail on DB errors
+
+    from starlette.responses import Response
+    return Response(
+        content=generate_latest(registry),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 if __name__ == "__main__":

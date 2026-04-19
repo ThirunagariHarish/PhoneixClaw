@@ -1,7 +1,7 @@
 """Drop openclaw_instances table (Phase F).
 
-Revision ID: 046_drop_openclaw_instances
-Revises: 045_pipeline_engine
+Revision ID: 047_drop_openclaw_instances
+Revises: 046_position_tracking
 Create Date: 2026-04-18
 """
 from typing import Sequence, Union
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "046_drop_openclaw_instances"
-down_revision: Union[str, None] = "045_pipeline_engine"
+revision: str = "047_drop_openclaw_instances"
+down_revision: Union[str, None] = "046_position_tracking"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
