@@ -64,3 +64,19 @@ groups:
           severity: critical
         annotations:
           summary: "Daily loss exceeds $5000"
+
+      - alert: DLQBacklog
+        expr: sum(phoenix_dlq_unresolved_total) > 50
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue has {{ $value }} unresolved entries (threshold: 50)"
+
+      - alert: StreamLagHigh
+        expr: phoenix_redis_stream_lag_seconds > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis stream lag is {{ $value }}s on {{ $labels.stream_key }} (threshold: 300s)"
