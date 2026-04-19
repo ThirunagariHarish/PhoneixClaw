@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from robinhood_mcp_client import RobinhoodMCPClient  # noqa: E402
 
 from shared.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from shared.observability.metrics import (
+    circuit_breaker_gauge,
+    subagent_spawn_counter,
+    tool_latency_histogram,
+    trade_success_counter,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,6 +142,7 @@ def _register_position(ticker: str, side: str, entry_price: float, quantity: flo
 
 
 def execute(decision_path: str, config_path: str):
+    start_time = time.monotonic()
     if isinstance(decision_path, dict):
         decision = decision_path
     else:

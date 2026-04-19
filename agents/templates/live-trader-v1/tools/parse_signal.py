@@ -17,10 +17,12 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 # Use the shared intelligent parser (backward-compatible wrapper)
 from shared.utils.signal_parser import parse_signal_compat
+from shared.observability.metrics import tool_latency_histogram
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +73,7 @@ def main() -> None:
     ap.add_argument("--config", help="Path to config.json for connector_id")
     args = ap.parse_args()
 
+    start_time = time.monotonic()
     try:
         raw = json.loads(Path(args.input).read_text())
         if isinstance(raw, list):
@@ -83,6 +86,7 @@ def main() -> None:
             "direction": result.get("direction"),
             "signal_price": result.get("signal_price"),
         }))
+        tool_latency_histogram.labels(tool="parse_signal").observe(time.monotonic() - start_time)
     except Exception as exc:
         log.error("parse_signal failed: %s", exc, exc_info=True)
         connector_id = "unknown"

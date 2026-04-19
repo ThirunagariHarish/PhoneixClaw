@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     HEARTBEAT_INTERVAL_SEC: int = 30
     API_BASE_URL: str = "http://localhost:8011"
 
+    # Broker connection settings
+    ROBINHOOD_MCP_URL: str = "http://robinhood-mcp-server:8080"
+    IB_GATEWAY_HOST: str = "ib-gateway"
+    IB_GATEWAY_PORT: int = 4001  # Paper trading port; 4000 for live
+
     model_config = {"env_prefix": "", "case_sensitive": True}
 
 

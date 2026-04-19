@@ -5,10 +5,13 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import joblib
 import pandas as pd
+
+from shared.observability.metrics import tool_latency_histogram
 
 logging.basicConfig(
     level=logging.INFO,
@@ -180,10 +183,12 @@ def main():
     parser.add_argument("--config", help="Path to config.json for connector_id")
     args = parser.parse_args()
 
+    start_time = time.monotonic()
     try:
         result = predict(args.features, args.models)
         with open(args.output, "w") as f:
             json.dump(result, f, indent=2)
+        tool_latency_histogram.labels(tool="inference").observe(time.monotonic() - start_time)
         print(json.dumps({"status": "ok", "prediction": result["prediction"]}))
     except Exception as exc:
         log.error("inference failed: %s", exc, exc_info=True)

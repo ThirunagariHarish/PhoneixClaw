@@ -8,10 +8,13 @@ import argparse
 import json
 import logging
 import sys
+import time
 import warnings
 from datetime import datetime, timezone
 
 import numpy as np
+
+from shared.observability.metrics import tool_latency_histogram
 
 warnings.filterwarnings("ignore")
 
@@ -565,12 +568,14 @@ def main():
         log.error("yfinance is required: pip install yfinance")
         sys.exit(1)
 
+    start_time = time.monotonic()
     result = run_analysis(args.ticker)
     result = _json_safe(result)
 
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2, default=str)
 
+    tool_latency_histogram.labels(tool="technical_analysis").observe(time.monotonic() - start_time)
     print(json.dumps({
         "status": "ok",
         "ticker": args.ticker,

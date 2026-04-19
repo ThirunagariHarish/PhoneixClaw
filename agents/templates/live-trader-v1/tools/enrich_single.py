@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sys
+import time
 import warnings
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 from shared.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from shared.observability.metrics import tool_latency_histogram, circuit_breaker_gauge
 
 yfinance_breaker = CircuitBreaker("yfinance", failure_threshold=5, cooldown_seconds=60)
 
@@ -945,6 +947,7 @@ def main():
         log.error("Signal file not found: %s", args.signal)
         sys.exit(1)
 
+    start_time = time.monotonic()
     signal = None
     try:
         with open(signal_path) as f:
@@ -976,6 +979,10 @@ def main():
         with open(args.output, "w") as f:
             json.dump(enriched, f, indent=2, default=str)
 
+        tool_latency_histogram.labels(tool="enrich_single").observe(time.monotonic() - start_time)
+        circuit_breaker_gauge.labels(name="yfinance").set(
+            2 if yfinance_breaker.state == "open" else 1 if yfinance_breaker.state == "half_open" else 0
+        )
         print(json.dumps({"status": "ok", "features_added": feature_count, "output": args.output}))
 
     except Exception as exc:

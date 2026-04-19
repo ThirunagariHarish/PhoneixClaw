@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from shared.db.engine import get_database_url
 from shared.db.models.agent import Agent  # noqa: F401 — register table
 from shared.db.models.base import Base
-from shared.db.models.openclaw_instance import OpenClawInstance  # noqa: F401
 from shared.db.models.user import User  # noqa: F401
 
 config = context.config

@@ -117,73 +117,8 @@ def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
 
 
 # ── Discord Fetching ────────────────────────────────────────────────────────
-
-async def fetch_discord_history(token: str, channel_id: str, lookback_days: int = 730, auth_type: str = "bot_token") -> list[dict]:
-    """Fetch message history from Discord REST API."""
-    import httpx
-
-    # Guard against empty token or channel_id
-    if not token or not token.strip() or not channel_id or not channel_id.strip():
-        print("WARNING: discord_token or channel_id is empty — skipping Discord fetch, returning 0 messages.")
-        return []
-
-    if auth_type == "user_token":
-        headers = {"Authorization": token}
-    else:
-        headers = {"Authorization": f"Bot {token}"}
-    base_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-    messages = []
-    before = None
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        while True:
-            params = {"limit": 100}
-            if before:
-                params["before"] = before
-
-            for attempt in range(3):
-                try:
-                    resp = await client.get(base_url, headers=headers, params=params)
-                    break
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-                    if attempt == 2:
-                        print(f"Discord API connection failed after 3 attempts: {exc}")
-                        return messages
-                    import asyncio
-                    await asyncio.sleep(2 ** attempt)
-
-            if resp.status_code == 429:
-                import asyncio
-                retry_after = resp.json().get("retry_after", 5)
-                await asyncio.sleep(retry_after)
-                continue
-
-            if resp.status_code != 200:
-                print(f"Discord API error {resp.status_code}: {resp.text[:200]}")
-                break
-
-            batch = resp.json()
-            if not batch:
-                break
-
-            for msg in batch:
-                ts = datetime.fromisoformat(msg["timestamp"].replace("+00:00", "+00:00"))
-                if ts < since:
-                    return messages
-                messages.append({
-                    "content": msg["content"],
-                    "author": msg["author"]["username"],
-                    "timestamp": ts,
-                    "message_id": msg["id"],
-                })
-
-            before = batch[-1]["id"]
-
-            if len(batch) < 100:
-                break
-
-    return messages
+# REMOVED: fetch_discord_history() deprecated in Phase C.4 (backtesting-db-robustness).
+# Use `python -m tools.backfill` to import historical data, then run with --source postgres.
 
 
 # ── Trade Reconstruction ────────────────────────────────────────────────────
@@ -365,8 +300,8 @@ def main():
     parser.add_argument(
         "--source",
         choices=["discord", "postgres"],
-        default="discord",
-        help="Message source: 'discord' (default, uses config.json) or 'postgres' (reads raw_messages table)",
+        default="postgres",
+        help="Message source: 'postgres' (default, reads channel_messages table) or 'discord' (DEPRECATED)",
     )
     parser.add_argument(
         "--db-url",
@@ -375,6 +310,13 @@ def main():
     )
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists")
     args = parser.parse_args()
+
+    # Enforce --source postgres (discord deprecated in Phase C.4)
+    if args.source == "discord":
+        raise ValueError(
+            "--source discord deprecated in Phase C.4 (backtesting-db-robustness). "
+            "Use 'python -m tools.backfill' to import historical data, then re-run with --source postgres."
+        )
 
     if args.source == "discord" and args.config is None:
         parser.error("--config is required when --source discord")

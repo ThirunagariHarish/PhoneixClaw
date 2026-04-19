@@ -2,7 +2,10 @@
 
 import argparse
 import json
+import time
 from pathlib import Path
+
+from shared.observability.metrics import tool_latency_histogram
 
 
 def check_risk(signal: dict, prediction: dict, portfolio: dict, config: dict) -> dict:
@@ -38,6 +41,7 @@ def main():
     parser.add_argument("--output", default="risk_result.json")
     args = parser.parse_args()
 
+    start_time = time.monotonic()
     with open(args.signal) as f:
         signal = json.load(f)
     with open(args.prediction) as f:
@@ -54,6 +58,7 @@ def main():
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2)
 
+    tool_latency_histogram.labels(tool="risk_check").observe(time.monotonic() - start_time)
     status = "APPROVED" if result["approved"] else f"REJECTED ({result['rejection_reason']})"
     print(f"Risk check: {status}")
 
