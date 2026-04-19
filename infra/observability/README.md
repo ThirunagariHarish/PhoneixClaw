@@ -47,7 +47,6 @@ curl http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job, he
 
 Expected targets (subset):
 - phoenix-api
-- phoenix-bridge
 - phoenix-llm-gateway
 - phoenix-orchestrator
 - node-exporter

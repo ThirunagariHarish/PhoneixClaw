@@ -110,7 +110,7 @@ async def health_matrix():
     services = [
         "phoenix-api", "phoenix-ws-gateway", "phoenix-execution",
         "phoenix-orchestrator", "phoenix-global-monitor", "phoenix-connector-manager",
-        "phoenix-backtest-runner", "phoenix-skill-sync", "phoenix-automation",
+        "phoenix-backtest-runner", "phoenix-automation",
         "phoenix-agent-comm", "phoenix-comms", "phoenix-code-executor",
     ]
     return {

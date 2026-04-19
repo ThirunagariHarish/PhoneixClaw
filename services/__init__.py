@@ -28,7 +28,6 @@ _ALIASES: dict[str, str] = {
     "pipeline_worker": "pipeline-worker",
     "position_monitor": "position-monitor",
     "prediction_monitor": "prediction-monitor",
-    "skill_sync": "skill-sync",
 }
 
 _SERVICES_DIR = os.path.dirname(os.path.abspath(__file__))
