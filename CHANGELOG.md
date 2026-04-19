@@ -5,7 +5,7 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2026-04-XX
+## [2.0.0] - 2026-04-19
 
 **MAJOR RELEASE** — Breaking changes require migration steps. See [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md) for full release notes and migration guide.
 

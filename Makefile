@@ -151,7 +151,7 @@ test-cov: ## Run tests with coverage report
 	PYTHONPATH=. $(PYTHON) -m pytest tests/unit/ apps/api/tests/ --cov=shared --cov=apps --cov-report=term-missing --cov-report=html
 
 benchmark: ## Run latency benchmark
-	$(PYTHON) -m tests.benchmark.run_benchmark --count 1000
+	$(PYTHON) -m pytest tests/benchmark/ -v --tb=short
 
 # ─────────────────────────────────────────────
 # Local Infrastructure (Docker Compose)
