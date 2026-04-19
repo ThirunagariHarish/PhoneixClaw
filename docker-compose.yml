@@ -43,21 +43,6 @@ services:
           memory: 128M
     restart: unless-stopped
 
-  phoenix-bridge:
-    build:
-      context: .
-      dockerfile: openclaw/bridge/Dockerfile
-    ports:
-      - "18800:18800"
-    environment:
-      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    restart: unless-stopped
-
   phoenix-ws-gateway:
     build:
       context: .
