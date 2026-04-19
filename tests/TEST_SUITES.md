@@ -17,7 +17,6 @@ Run first; must pass before deeper suites.
 | S04 | API health | GET `/health` (API) | 200, `{"status":"ok"}` or similar | [x] |
 | S05 | Instances API | GET `/api/v2/instances` (with auth) | 200, array (may be empty) | [x] |
 | S06 | Dashboard nav | After login, click Trades, Positions, Agents | Each route loads, no 500 | [x] |
-| S07 | OpenClaw connect | Register instance 187.124.77.249:18800 (or :41100) | Instance appears in list | [x] |
 
 ---
 
@@ -60,7 +59,7 @@ Run first; must pass before deeper suites.
 | E16 | Summary cards | View positions | Summary metrics visible | [x] |
 | E17 | Close position | If open position, click Close | Modal or confirm | [x] |
 
-### 2.5 Agents & OpenClaw (M1.11, M1.8)
+### 2.5 Agents (M1.11, M1.8)
 
 | ID | Test | Steps | Expected | Pass |
 |----|------|--------|----------|------|
@@ -68,14 +67,14 @@ Run first; must pass before deeper suites.
 | E19 | New Agent wizard | Click New Agent | Dialog, step 1 (name/type) | [x] |
 | E20 | Wizard instance step | Step 2 | Instance dropdown; if no instances, message | [x] |
 | E21 | Create agent (with instance) | Fill name, select instance, Create | Agent created or error | [x] |
-| E22 | Instance in dropdown | After registering OpenClaw instance | Instance appears in Agent wizard | [x] |
+| E22 | Instance in dropdown | After registering agent instance | Instance appears in Agent wizard | [x] |
 | E23 | Pause/Resume | If agent exists, Pause then Resume | State toggles | [x] |
 
-### 2.6 OpenClaw Instance (M1.8, §6 Architecture)
+### 2.6 Agent Instance (M1.8, §6 Architecture)
 
 | ID | Test | Steps | Expected | Pass |
 |----|------|--------|----------|------|
-| E24 | Register instance | POST `/api/v2/instances` { name, host: "187.124.77.249", port: 18800 } | 201, instance in list | [x] |
+| E24 | Register instance | POST `/api/v2/instances` { name, host, port } | 201, instance in list | [x] |
 | E25 | List instances | GET `/api/v2/instances` | 200, array includes registered instance | [x] |
 | E26 | Network page | Go to `/network` | Instances and agents shown or empty | [x] |
 
@@ -111,7 +110,7 @@ Run first; must pass before deeper suites.
 
 ## 3. Integration Tests (API + DB)
 
-Run against running API (and DB). Mock OpenClaw Bridge where needed.
+Run against running API (and DB).
 
 | ID | Scope | Test | Expected | Pass |
 |----|--------|------|----------|------|
@@ -132,7 +131,7 @@ Run against running API (and DB). Mock OpenClaw Bridge where needed.
 |-----------|---------|-------|-----|-------------|
 | M1.3 | Auth | S02,S03 | E01–E05 | I01 |
 | M1.4 | Dashboard shell | S01,S06 | E06–E11 | — |
-| M1.8 | First OpenClaw instance | S07 | E22,E24–E26 | I02 |
+| M1.8 | First agent instance | — | E22,E24–E26 | I02 |
 | M1.9 | Connectors | — | E27–E29 | I06 |
 | M1.10 | Trades & Positions | — | E12–E17 | I04,I05 |
 | M1.11 | Agent CRUD | — | E18–E23 | I03 |
@@ -142,29 +141,15 @@ Run against running API (and DB). Mock OpenClaw Bridge where needed.
 
 ---
 
-## 5. OpenClaw Remote Instance (187.124.77.249)
-
-- **OpenClaw UI**: http://187.124.77.249:41100/ (login page).
-- **Bridge API** (for Phoenix): Usually on port **18800** on the same host. Some setups expose Bridge on **41100** (same as UI); try both if one fails.
-
-**Register via script (after login, set PHOENIX_TOKEN):**
-```bash
-# Get token: login at http://localhost:3000/login, then from browser DevTools → Application → Local Storage copy phoenix-v2-token
-export PHOENIX_TOKEN="<paste_token>"
-export OPENCLAW_HOST=187.124.77.249
-export OPENCLAW_PORT=18800   # or 41100 if Bridge is on same port as UI
-python scripts/register_openclaw_instance.py
-```
+## 5. Agent Instance Registration
 
 **Register via API (with JWT):**
 ```bash
 curl -X POST http://localhost:8011/api/v2/instances \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <JWT>" \
-  -d '{"name":"OpenClaw-Remote","host":"187.124.77.249","port":18800,"role":"general","node_type":"vps"}'
+  -d '{"name":"Agent-Instance","host":"<host>","port":<port>,"role":"general","node_type":"vps"}'
 ```
-
-**Mocking**: For tests without a live OpenClaw, use a mock Bridge (e.g. stub HTTP server returning `/health`, `/agents`) or in-memory instance; ensure the app can still "connect" (register instance and show it in the dashboard).
 
 ---
 

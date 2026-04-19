@@ -8,11 +8,6 @@ scrape_configs:
       - targets: ['phoenix-api:8011']
     metrics_path: /metrics
 
-  - job_name: 'phoenix-bridge'
-    static_configs:
-      - targets: ['phoenix-bridge:18800']
-    metrics_path: /metrics
-
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']

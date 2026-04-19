@@ -24,7 +24,6 @@ Combined run order for manual testing: Smoke (TEST_SUITES.md), E2E (TEST_SUITES.
 | S04 | API health: GET `/health` (API) → 200, status ok | [ ] |
 | S05 | Instances API: GET `/api/v2/instances` with auth → 200, array | [ ] |
 | S06 | Dashboard nav: After login, click Trades, Positions, Agents → each loads | [ ] |
-| S07 | OpenClaw connect: Register instance → instance in list | [ ] |
 
 ---
 

@@ -135,7 +135,7 @@ ALTER TABLE agents ADD COLUMN vps_instance_id UUID REFERENCES claude_code_instan
 
 ### `agents.instance_id` — re-target FK
 
-Currently references `openclaw_instances`. Needs migration to `claude_code_instances` or rename in place.
+Currently references `openclaw_instances`. The `openclaw_instances` table was dropped in migration 046/047 (Phase F). Future migrations will handle FK re-targeting to `claude_code_instances`.
 
 ## Migration Strategy
 

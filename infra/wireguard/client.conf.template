@@ -1,4 +1,4 @@
-# Phoenix v2 — WireGuard client (OpenClaw node) config template.
+# Phoenix v2 — WireGuard client (agent node) config template.
 # Use on VPS or local laptop. Replace placeholders.
 # Reference: Milestones.md M1.2, ImplementationPlan.md Section 13.
 
