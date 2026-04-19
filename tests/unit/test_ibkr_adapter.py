@@ -1,9 +1,13 @@
 """Unit tests for IBKR broker adapter."""
 
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Mock ib_insync before importing adapter
+sys.modules["ib_insync"] = MagicMock()
 
 from shared.broker.ibkr_adapter import BrokerAPIError, IBKRBrokerAdapter
 
