@@ -6,6 +6,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import ARRAY, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -39,11 +40,11 @@ class AgentWikiEntry(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    subcategory: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list] = mapped_column(
@@ -103,7 +104,7 @@ class AgentWikiEntryVersion(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
-    change_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    change_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     entry: Mapped["AgentWikiEntry"] = relationship(
         "AgentWikiEntry", back_populates="versions"

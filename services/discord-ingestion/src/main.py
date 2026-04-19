@@ -179,6 +179,7 @@ async def _persist_message(
     raw_data: dict[str, Any],
     platform_message_id: str,
     posted_at: datetime,
+    channel_id_snowflake: str | None = None,
 ) -> None:
     """INSERT a message row into channel_messages and publish to Redis."""
     tickers = _extract_tickers(content)
@@ -199,16 +200,17 @@ async def _persist_message(
         await session.execute(
             text("""
                 INSERT INTO channel_messages
-                    (id, connector_id, channel, author, content, message_type, tickers_mentioned,
-                     raw_data, platform_message_id, posted_at, created_at)
+                    (id, connector_id, channel, channel_id_snowflake, author, content, message_type,
+                     tickers_mentioned, raw_data, platform_message_id, posted_at, created_at)
                 VALUES
-                    (:id, :connector_id, :channel, :author, :content, :message_type, :tickers,
-                     :raw_data, :platform_message_id, :posted_at, :created_at)
+                    (:id, :connector_id, :channel, :channel_id_snowflake, :author, :content, :message_type,
+                     :tickers, :raw_data, :platform_message_id, :posted_at, :created_at)
             """),
             {
                 "id": str(msg_id),
                 "connector_id": str(connector_uuid),
                 "channel": channel_name,
+                "channel_id_snowflake": channel_id_snowflake,
                 "author": author,
                 "content": content,
                 "message_type": "info",
@@ -337,6 +339,7 @@ async def _http_poller(state: ConnectorState) -> None:
                                 raw_data=raw,
                                 platform_message_id=mid,
                                 posted_at=posted_at,
+                                channel_id_snowflake=channel_id,
                             )
                         except Exception as exc:
                             logger.error("HTTP poller persist error for connector %s: %s", state.connector_id, exc)
@@ -436,6 +439,7 @@ async def _discord_listener(state: ConnectorState) -> None:
                             if message.created_at and message.created_at.tzinfo is None
                             else message.created_at or datetime.now(timezone.utc)
                         ),
+                        channel_id_snowflake=str(message.channel.id),
                     )
                 except Exception as exc:
                     logger.error("Error processing message on connector %s: %s", state.connector_id, exc)

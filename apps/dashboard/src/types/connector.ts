@@ -21,7 +21,8 @@ export interface ConnectorAgent {
   id: string
   connector_id: string
   agent_id: string
-  channel: string
+  channel: string  // Legacy field, use channel_id_snowflake instead
+  channel_id_snowflake?: string  // Canonical Discord snowflake identifier (migration 048)
   is_active: boolean
   created_at: string
 }

@@ -283,7 +283,8 @@ class DiscordBackfiller:
 
         return {
             "connector_id": self.connector_id,
-            "channel": self.channel_id,  # Legacy column (will be replaced by channel_id_snowflake in migration 046)
+            "channel": self.channel_id,  # Legacy column (will be dropped in migration 049)
+            "channel_id_snowflake": self.channel_id,  # Canonical snowflake identifier (migration 048)
             "author": msg["author"].get("username", "unknown"),
             "content": msg.get("content", ""),
             "message_type": "unknown",
