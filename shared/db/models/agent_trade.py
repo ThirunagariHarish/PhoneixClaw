@@ -25,6 +25,8 @@ class AgentTrade(Base):
     entry_price: Mapped[float] = mapped_column(Float, nullable=False)
     exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    current_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    position_status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exit_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     pnl_dollar: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

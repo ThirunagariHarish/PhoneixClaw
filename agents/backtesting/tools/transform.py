@@ -6,8 +6,9 @@ Usage:
 
 import argparse
 import json
+import os as _os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -117,73 +118,8 @@ def parse_signal(content: str, posted_at: datetime) -> Optional[dict]:
 
 
 # ── Discord Fetching ────────────────────────────────────────────────────────
-
-async def fetch_discord_history(token: str, channel_id: str, lookback_days: int = 730, auth_type: str = "bot_token") -> list[dict]:
-    """Fetch message history from Discord REST API."""
-    import httpx
-
-    # Guard against empty token or channel_id
-    if not token or not token.strip() or not channel_id or not channel_id.strip():
-        print("WARNING: discord_token or channel_id is empty — skipping Discord fetch, returning 0 messages.")
-        return []
-
-    if auth_type == "user_token":
-        headers = {"Authorization": token}
-    else:
-        headers = {"Authorization": f"Bot {token}"}
-    base_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-    messages = []
-    before = None
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        while True:
-            params = {"limit": 100}
-            if before:
-                params["before"] = before
-
-            for attempt in range(3):
-                try:
-                    resp = await client.get(base_url, headers=headers, params=params)
-                    break
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-                    if attempt == 2:
-                        print(f"Discord API connection failed after 3 attempts: {exc}")
-                        return messages
-                    import asyncio
-                    await asyncio.sleep(2 ** attempt)
-
-            if resp.status_code == 429:
-                import asyncio
-                retry_after = resp.json().get("retry_after", 5)
-                await asyncio.sleep(retry_after)
-                continue
-
-            if resp.status_code != 200:
-                print(f"Discord API error {resp.status_code}: {resp.text[:200]}")
-                break
-
-            batch = resp.json()
-            if not batch:
-                break
-
-            for msg in batch:
-                ts = datetime.fromisoformat(msg["timestamp"].replace("+00:00", "+00:00"))
-                if ts < since:
-                    return messages
-                messages.append({
-                    "content": msg["content"],
-                    "author": msg["author"]["username"],
-                    "timestamp": ts,
-                    "message_id": msg["id"],
-                })
-
-            before = batch[-1]["id"]
-
-            if len(batch) < 100:
-                break
-
-    return messages
+# REMOVED: fetch_discord_history() deprecated in Phase C.4 (backtesting-db-robustness).
+# Use `python -m tools.backfill` to import historical data, then run with --source postgres.
 
 
 # ── Trade Reconstruction ────────────────────────────────────────────────────
@@ -326,7 +262,6 @@ def _build_trade_row(trade_id: int, position: dict) -> Optional[dict]:
 
 _SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
 # Override via env var: export SEED_DB_URL="postgresql://seeduser:<pw>@localhost:5434/phoenix_seed"
-import os as _os
 _SEED_DB_URL = _os.environ.get("SEED_DB_URL", _SEED_DB_URL)
 
 
@@ -365,8 +300,8 @@ def main():
     parser.add_argument(
         "--source",
         choices=["discord", "postgres"],
-        default="discord",
-        help="Message source: 'discord' (default, uses config.json) or 'postgres' (reads raw_messages table)",
+        default="postgres",
+        help="Message source: 'postgres' (default, reads channel_messages table) or 'discord' (DEPRECATED)",
     )
     parser.add_argument(
         "--db-url",
@@ -375,6 +310,13 @@ def main():
     )
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists")
     args = parser.parse_args()
+
+    # Enforce --source postgres (discord deprecated in Phase C.4)
+    if args.source == "discord":
+        raise ValueError(
+            "--source discord deprecated in Phase C.4 (backtesting-db-robustness). "
+            "Use 'python -m tools.backfill' to import historical data, then re-run with --source postgres."
+        )
 
     if args.source == "discord" and args.config is None:
         parser.error("--config is required when --source discord")
@@ -404,29 +346,11 @@ def main():
         raw_messages = _load_messages_from_postgres(args.db_url)
         print(f"Loaded {len(raw_messages)} messages from PostgreSQL")
 
-    # ── Source: Discord API (default) ──────────────────────────────────────
+    # ── Source: Discord API (DEPRECATED) ──────────────────────────────────────
     else:
-        with open(args.config) as f:
-            config = json.load(f)
-
-        channel_name = config.get("channel_name", "unknown")
-
-        if args.messages_file:
-            with open(args.messages_file) as f:
-                raw_messages = json.load(f)
-            for m in raw_messages:
-                if isinstance(m["timestamp"], str):
-                    m["timestamp"] = datetime.fromisoformat(m["timestamp"])
-        else:
-            import asyncio
-            raw_messages = asyncio.run(fetch_discord_history(
-                token=config["discord_token"],
-                channel_id=config["channel_id"],
-                lookback_days=config.get("lookback_days", 730),
-                auth_type=config.get("discord_auth_type", "bot_token"),
-            ))
-
-        print(f"Fetched {len(raw_messages)} messages from {channel_name}")
+        # This path is unreachable due to ValueError raised earlier
+        # Kept as dead code for clarity; will be removed in next cleanup
+        raise RuntimeError("Unreachable: --source discord blocked by earlier validation")
 
     # Parse signals
     signals = []

@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff mypy
-      - run: ruff check shared/ services/ apps/ tests/ openclaw/
+      - run: ruff check shared/ services/ apps/ tests/
 
   test-api:
     runs-on: ubuntu-latest
@@ -72,9 +72,6 @@ jobs:
           - service: phoenix-dashboard
             context: .
             dockerfile: apps/dashboard/Dockerfile
-          - service: phoenix-bridge
-            context: .
-            dockerfile: openclaw/bridge/Dockerfile
           - service: phoenix-ws-gateway
             context: .
             dockerfile: services/ws-gateway/Dockerfile
@@ -96,9 +93,6 @@ jobs:
           - service: phoenix-backtest-runner
             context: .
             dockerfile: services/backtest-runner/Dockerfile
-          - service: phoenix-skill-sync
-            context: .
-            dockerfile: services/skill-sync/Dockerfile
           - service: phoenix-agent-comm
             context: .
             dockerfile: services/agent-comm/Dockerfile

@@ -25,6 +25,14 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# Import metrics if available (tools may not have it installed)
+try:
+    from shared.observability.metrics import circuit_breaker_gauge
+    _METRICS_AVAILABLE = True
+except ImportError:
+    _METRICS_AVAILABLE = False
+    circuit_breaker_gauge = None
+
 
 class CircuitBreakerOpen(Exception):
     """Raised when the circuit breaker is open."""
@@ -124,16 +132,20 @@ class CircuitBreaker:
 
     def _on_success(self) -> None:
         self._total_successes += 1
+        old_state = self._state
         if self._state in (self.HALF_OPEN, self.OPEN):
             logger.info("Circuit breaker '%s': CLOSED (probe succeeded)", self.name)
         self._state = self.CLOSED
         self._failure_count = 0
         self._half_open_calls = 0
+        if _METRICS_AVAILABLE and circuit_breaker_gauge and old_state != self.CLOSED:
+            circuit_breaker_gauge.labels(name=self.name).set(0)
 
     def _on_failure(self) -> None:
         self._failure_count += 1
         self._total_failures += 1
         self._last_failure_time = time.monotonic()
+        old_state = self._state
 
         if self._state == self.HALF_OPEN:
             self._state = self.OPEN
@@ -142,12 +154,16 @@ class CircuitBreaker:
                 "Circuit breaker '%s': OPEN (half-open probe failed, cooldown=%.0fs)",
                 self.name, self.cooldown_seconds,
             )
+            if _METRICS_AVAILABLE and circuit_breaker_gauge:
+                circuit_breaker_gauge.labels(name=self.name).set(2)
         elif self._failure_count >= self.failure_threshold:
             self._state = self.OPEN
             logger.warning(
                 "Circuit breaker '%s': OPEN after %d consecutive failures (cooldown=%.0fs)",
                 self.name, self._failure_count, self.cooldown_seconds,
             )
+            if _METRICS_AVAILABLE and circuit_breaker_gauge and old_state != self.OPEN:
+                circuit_breaker_gauge.labels(name=self.name).set(2)
 
     def reset(self) -> None:
         """Manually reset the circuit breaker."""

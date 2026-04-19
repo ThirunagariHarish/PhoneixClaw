@@ -5,6 +5,7 @@ Used by the backtesting pipeline to reconstruct trades from historical signals.
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -21,6 +22,8 @@ class ChannelMessage(Base):
         UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False, index=True
     )
     channel: Mapped[str] = mapped_column(String(200), nullable=False)
+    channel_id_snowflake: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    backfill_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     author: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(

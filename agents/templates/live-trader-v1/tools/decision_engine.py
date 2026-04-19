@@ -62,8 +62,9 @@ def _build_execution_params(parsed: dict, enriched: dict, prediction: dict,
     max_pct = risk_params.get("max_position_size_pct", 5.0)
 
     try:
-        from trade_intelligence import get_intelligence
         import os as _os
+
+        from trade_intelligence import get_intelligence
         models_dir = _os.environ.get("PHOENIX_MODELS_DIR") or str(TOOLS_DIR.parent / "models")
         intel = get_intelligence(models_dir)
         feature_names = None
@@ -289,8 +290,9 @@ def make_decision(signal_path: str, config_path: str, output_path: str) -> dict:
 
     # Regime recalibration
     try:
-        from trade_intelligence import get_intelligence
         import os as _os
+
+        from trade_intelligence import get_intelligence
         _models_dir = _os.environ.get("PHOENIX_MODELS_DIR") or str(TOOLS_DIR.parent / "models")
         _intel = get_intelligence(_models_dir)
         regime = enriched.get("market_regime") or enriched.get("regime")

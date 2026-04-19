@@ -24,6 +24,8 @@ _ALIASES: dict[str, str] = {
     "feature_pipeline": "feature-pipeline",
     "global_monitor": "global-monitor",
     "inference_service": "inference-service",
+    "message_ingestion": "message-ingestion",
+    "pipeline_worker": "pipeline-worker",
     "position_monitor": "position-monitor",
     "prediction_monitor": "prediction-monitor",
     "skill_sync": "skill-sync",

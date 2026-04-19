@@ -42,6 +42,7 @@ class BacktestTrade(Base):
     close_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("channel_messages.id", ondelete="SET NULL"), nullable=True
     )
+    channel_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Technical enrichment at entry
     entry_rsi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

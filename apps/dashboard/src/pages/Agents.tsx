@@ -26,7 +26,7 @@ import {
   Bot, Plus, Pause, Play, Trash2, CheckCircle2, Rocket, ChevronLeft, ChevronRight,
   Plug, MessageSquare, Globe, Radio, Activity, Newspaper, Webhook, TrendingUp, Landmark, BarChart3,
   CheckSquare, Square as SquareIcon, Hash, Loader2, Eye, ArrowUpRight, ArrowDownRight, Minus,
-  FlaskConical, Zap, Shield, AlertCircle, Search, StopCircle,
+  FlaskConical, Zap, Shield, AlertCircle, Search, StopCircle, Sparkles, Cog,
 } from 'lucide-react'
 
 export interface AgentData {
@@ -34,6 +34,9 @@ export interface AgentData {
   name: string
   type: string
   status: string
+  engine_type?: 'sdk' | 'pipeline'
+  broker_type?: 'robinhood' | 'ibkr' | 'alpaca' | 'tradier'
+  broker_account_id?: string
   worker_status?: string
   config: Record<string, unknown>
   created_at: string
@@ -48,6 +51,8 @@ export interface AgentData {
   last_signal_at?: string
   last_trade_at?: string
   error_message?: string | null
+  signals_processed?: number
+  trades_executed?: number
 }
 
 interface AgentStats {
@@ -99,8 +104,8 @@ const AGENT_TYPES = [
   { value: 'analyst', label: 'Analyst Agent' },
 ]
 
-const WIZARD_STEPS = ['Channel', 'Risk Config', 'Review'] as const
-const ANALYST_WIZARD_STEPS = ['Channel', 'Persona', 'Risk Config', 'Review'] as const
+const WIZARD_STEPS = ['Engine', 'Channel', 'Risk Config', 'Review'] as const
+const ANALYST_WIZARD_STEPS = ['Engine', 'Channel', 'Persona', 'Risk Config', 'Review'] as const
 
 interface ConnectorInfo {
   id: string
@@ -166,12 +171,21 @@ interface SelectedChannel {
   channel_name: string
 }
 
+interface BrokerAccount {
+  id: string
+  name: string
+  broker_type: 'robinhood' | 'ibkr' | 'alpaca' | 'tradier'
+  category?: string
+}
+
 interface WizardFormData {
+  engine_type: 'sdk' | 'pipeline'
   name: string
   type: string
   description: string
   connector_ids: string[]
   selected_channel: SelectedChannel | null
+  broker_account_id?: string
   skills: string[]
   max_daily_loss_pct: number
   max_position_pct: number
@@ -288,6 +302,7 @@ function QuickSpawnTypedAgentButton() {
 }
 
 const DEFAULT_FORM: WizardFormData = {
+  engine_type: 'sdk',
   name: '',
   type: 'trading',
   description: '',
@@ -314,23 +329,27 @@ export function computeCanAdvance(
   connector_ids: string[],
   selected_channel: SelectedChannel | null,
   persona_id?: string,
+  engine_type?: 'sdk' | 'pipeline',
+  broker_account_id?: string,
 ): boolean {
   const isAnalyst = type === 'analyst'
   switch (step) {
-    case 0: {
+    case 0: return true
+    case 1: {
       if (name.trim().length === 0) return false
+      // Pipeline agents require broker account selection
+      if (engine_type === 'pipeline' && !broker_account_id) return false
       if (type === 'trading') {
         return connector_ids.length === 1 && selected_channel !== null
       }
       return true
     }
-    case 1: {
-      // For analyst: persona step must have a selection
+    case 2: {
       if (isAnalyst) return Boolean(persona_id && persona_id.length > 0)
       return true
     }
-    case 2: return true
     case 3: return true
+    case 4: return true
     default: return false
   }
 }
@@ -384,6 +403,27 @@ function MetricPill({ label, value, trend }: { label: string; value: string; tre
       <span className={`text-xs font-semibold font-mono ${trendColor}`}>{value}</span>
       {trend && <Icon className={`h-3 w-3 ${trendColor}`} />}
     </div>
+  )
+}
+
+function BrokerBadge({ brokerId, brokerType }: { brokerId?: string; brokerType?: string }) {
+  const { data: brokerAccounts } = useQuery<BrokerAccount[]>({
+    queryKey: ['trading-accounts', 'broker'],
+    queryFn: async () => {
+      const res = await api.get('/api/v2/trading-accounts?category=broker')
+      return res.data
+    },
+    staleTime: 60_000,
+  })
+
+  const account = brokerAccounts?.find(acc => acc.id === brokerId)
+  const displayName = account?.name || (brokerType ? brokerType.toUpperCase() : 'Broker')
+
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-600 dark:text-violet-400">
+      <Landmark className="h-2.5 w-2.5" />
+      {displayName}
+    </span>
   )
 }
 
@@ -470,7 +510,21 @@ export function AgentCard({ agent, onSelect, onPause, onResume, onDelete, onRevi
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-sm truncate">{agent.name}</p>
-              <p className="text-[11px] text-muted-foreground capitalize">{agent.type} agent</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-[11px] text-muted-foreground capitalize">{agent.type} agent</p>
+                {agent.engine_type === 'pipeline' ? (
+                  <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    <Cog className="h-2.5 w-2.5" /> ML
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-blue-600 dark:text-blue-400">
+                    <Sparkles className="h-2.5 w-2.5" /> SDK
+                  </span>
+                )}
+                {agent.engine_type === 'pipeline' && agent.broker_account_id && (
+                  <BrokerBadge brokerId={agent.broker_account_id} brokerType={agent.broker_type} />
+                )}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -668,6 +722,67 @@ function StepIndicator({ currentStep, steps = WIZARD_STEPS }: { currentStep: num
   )
 }
 
+const ENGINE_OPTIONS = [
+  {
+    value: 'sdk' as const,
+    label: 'AI Agent (Claude SDK)',
+    icon: Sparkles,
+    color: 'text-blue-500',
+    bgColor: 'bg-blue-500/10',
+    borderActive: 'border-blue-500 ring-1 ring-blue-500/30',
+    description: 'Uses Claude AI for intelligent decision-making. More adaptive but costs API tokens.',
+  },
+  {
+    value: 'pipeline' as const,
+    label: 'Pipeline Agent (Python ML)',
+    icon: Cog,
+    color: 'text-emerald-500',
+    bgColor: 'bg-emerald-500/10',
+    borderActive: 'border-emerald-500 ring-1 ring-emerald-500/30',
+    description: 'Pure Python with ML models. Fast, deterministic, zero AI cost.',
+  },
+]
+
+function StepEngineType({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-sm font-medium mb-1">Choose Engine</h3>
+        <p className="text-xs text-muted-foreground mb-3">Select how this agent will process signals and make decisions.</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {ENGINE_OPTIONS.map((opt) => {
+          const Icon = opt.icon
+          const selected = form.engine_type === opt.value
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange({ engine_type: opt.value })}
+              className={`relative text-left rounded-xl border-2 p-4 transition-all ${
+                selected
+                  ? `${opt.borderActive} ${opt.bgColor}`
+                  : 'border-border hover:border-muted-foreground/40'
+              }`}
+            >
+              {selected && (
+                <div className="absolute top-3 right-3">
+                  <CheckCircle2 className={`h-4 w-4 ${opt.color}`} />
+                </div>
+              )}
+              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${opt.bgColor} mb-3`}>
+                <Icon className={`h-5 w-5 ${opt.color}`} />
+              </div>
+              <p className="text-sm font-semibold">{opt.label}</p>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{opt.description}</p>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function StepChannel({ form, onChange, connectors }: {
   form: WizardFormData
   onChange: (f: Partial<WizardFormData>) => void
@@ -827,6 +942,84 @@ function StepChannel({ form, onChange, connectors }: {
           </p>
         )}
       </div>
+
+      {/* Broker Account Selection - Pipeline Engine Only */}
+      {form.engine_type === 'pipeline' && <BrokerAccountSelector form={form} onChange={onChange} />}
+    </div>
+  )
+}
+
+function BrokerAccountSelector({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
+  const { data: brokerAccounts = [], isLoading, error } = useQuery<BrokerAccount[]>({
+    queryKey: ['trading-accounts', 'broker'],
+    queryFn: async () => {
+      const res = await api.get('/api/v2/trading-accounts?category=broker')
+      return res.data
+    },
+    staleTime: 60_000,
+  })
+
+  if (error) {
+    return (
+      <div className="border-t pt-4">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Failed to load broker accounts. Please check your connection.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-t pt-4">
+      <Label>Broker Account (Required for Pipeline Engine)</Label>
+      {isLoading ? (
+        <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading broker accounts...
+        </div>
+      ) : brokerAccounts.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-8 text-center mt-2">
+          <Landmark className="h-8 w-8 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">No broker accounts configured</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Pipeline agents require a broker account. Add one in Connectors.
+            </p>
+          </div>
+          <Link to="/connectors">
+            <Button variant="outline" size="sm">
+              <Plus className="h-4 w-4 mr-1.5" /> Configure Broker
+            </Button>
+          </Link>
+        </div>
+      ) : (
+        <Select
+          value={form.broker_account_id ?? ''}
+          onValueChange={(v) => onChange({ broker_account_id: v })}
+        >
+          <SelectTrigger className="mt-1.5">
+            <SelectValue placeholder="Select a broker account..." />
+          </SelectTrigger>
+          <SelectContent>
+            {brokerAccounts.map((acc) => (
+              <SelectItem key={acc.id} value={acc.id}>
+                <div className="flex items-center gap-2">
+                  <span className="capitalize">{acc.broker_type}</span>
+                  <span className="text-muted-foreground">—</span>
+                  <span>{acc.name}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {form.broker_account_id && (
+        <p className="text-xs text-muted-foreground mt-1.5">
+          This agent will execute trades through the selected broker account.
+        </p>
+      )}
     </div>
   )
 }
@@ -859,12 +1052,20 @@ function StepReview({ form, connectors }: {
 }) {
   const typeName = AGENT_TYPES.find((t) => t.value === form.type)?.label ?? form.type
   const selectedConnectors = connectors.filter((c) => form.connector_ids.includes(c.id))
+  const engineOpt = ENGINE_OPTIONS.find((e) => e.value === form.engine_type) ?? ENGINE_OPTIONS[0]
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">Review your agent configuration before creating.</p>
 
       <div className="rounded-lg border divide-y">
+        <div className="p-3">
+          <p className="text-xs text-muted-foreground">Engine</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <engineOpt.icon className={`h-4 w-4 ${engineOpt.color}`} />
+            <p className="font-medium">{engineOpt.label}</p>
+          </div>
+        </div>
         <div className="p-3">
           <p className="text-xs text-muted-foreground">Name</p>
           <p className="font-medium">{form.name}</p>
@@ -1413,13 +1614,27 @@ export default function AgentsPage() {
       if (form.type === 'analyst' && form.persona_id) {
         config.persona_id = form.persona_id
       }
-      const payload = {
+      if (form.engine_type === 'pipeline' && form.broker_account_id) {
+        config.broker_account_id = form.broker_account_id
+      }
+      const payload: Record<string, unknown> = {
         name: form.name,
         type: form.type,
         description: form.description,
+        engine_type: form.engine_type,
         skills: form.skills,
         connector_ids: form.connector_ids,
         config,
+      }
+      // Fetch broker_type from the selected broker account if pipeline engine
+      if (form.engine_type === 'pipeline' && form.broker_account_id) {
+        const brokerAccountsRes = await api.get('/api/v2/trading-accounts?category=broker')
+        const brokerAccounts = brokerAccountsRes.data as BrokerAccount[]
+        const selectedAccount = brokerAccounts.find(acc => acc.id === form.broker_account_id)
+        if (selectedAccount) {
+          payload.broker_type = selectedAccount.broker_type
+          payload.broker_account_id = form.broker_account_id
+        }
       }
       await api.post('/api/v2/agents', payload)
     },
@@ -1493,7 +1708,7 @@ export default function AgentsPage() {
   })
 
   const canAdvance = (step: number): boolean =>
-    computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel, form.persona_id)
+    computeCanAdvance(step, form.name, form.type, form.connector_ids, form.selected_channel, form.persona_id, form.engine_type, form.broker_account_id)
 
   const isAnalyst = form.type === 'analyst'
   const activeSteps = isAnalyst ? ANALYST_WIZARD_STEPS : WIZARD_STEPS
@@ -1524,17 +1739,18 @@ export default function AgentsPage() {
             <StepIndicator currentStep={wizardStep} steps={activeSteps} />
 
             <div className="min-h-[280px]">
-              {wizardStep === 0 && <StepChannel form={form} onChange={updateForm} connectors={connectors} />}
+              {wizardStep === 0 && <StepEngineType form={form} onChange={updateForm} />}
+              {wizardStep === 1 && <StepChannel form={form} onChange={updateForm} connectors={connectors} />}
               {isAnalyst ? (
                 <>
-                  {wizardStep === 1 && <StepPersona form={form} onChange={updateForm} />}
-                  {wizardStep === 2 && <StepRiskConfig form={form} onChange={updateForm} />}
-                  {wizardStep === 3 && <StepReview form={form} connectors={connectors} />}
+                  {wizardStep === 2 && <StepPersona form={form} onChange={updateForm} />}
+                  {wizardStep === 3 && <StepRiskConfig form={form} onChange={updateForm} />}
+                  {wizardStep === 4 && <StepReview form={form} connectors={connectors} />}
                 </>
               ) : (
                 <>
-                  {wizardStep === 1 && <StepRiskConfig form={form} onChange={updateForm} />}
-                  {wizardStep === 2 && <StepReview form={form} connectors={connectors} />}
+                  {wizardStep === 2 && <StepRiskConfig form={form} onChange={updateForm} />}
+                  {wizardStep === 3 && <StepReview form={form} connectors={connectors} />}
                 </>
               )}
             </div>

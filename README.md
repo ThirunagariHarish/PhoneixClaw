@@ -73,7 +73,6 @@ apps/
   dashboard/         React 18 + Vite + Tailwind
 shared/              DB models (28+ tables), broker adapters, LLM client, NLP
 services/            Microservices (execution, orchestrator, connector-manager, etc.)
-openclaw/            Bridge service for remote VPS agent management
 docs/                Architecture, operations, development, specs
 tests/               unit/ + integration/ + e2e/ + regression/ + benchmark/
 ```
@@ -84,7 +83,6 @@ tests/               unit/ + integration/ + e2e/ + regression/ + benchmark/
 make test                # Unit tests
 make test-integration    # Integration tests
 make test-dashboard      # Dashboard tests
-make test-bridge         # OpenClaw bridge tests
 make go-live-regression  # Full regression suite
 ```
 

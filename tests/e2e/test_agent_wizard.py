@@ -19,7 +19,7 @@ def test_agent_create_form_has_name_type(logged_in_page: Page, base_url: str):
     logged_in_page.get_by_role("button", name="New Agent").click()
     expect(logged_in_page.get_by_placeholder("e.g. SPY-Discord-Trader")).to_be_visible()
     expect(logged_in_page.get_by_text("Trading Agent")).to_be_visible()
-    expect(logged_in_page.get_by_text("OpenClaw Instance")).to_be_visible()
+    expect(logged_in_page.get_by_text("Agent Instance")).to_be_visible()
 
 
 def test_agent_create_form_has_data_source(logged_in_page: Page, base_url: str):

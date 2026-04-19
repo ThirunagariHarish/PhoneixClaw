@@ -27,7 +27,7 @@ import {
   ChevronDown, ChevronUp, Check, X, Eye,
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
-  Loader2, CheckCircle2, XCircle,
+  Loader2, CheckCircle2, XCircle, Sparkles, Cog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -45,14 +45,31 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 /* ---------- Types ---------- */
 
+interface PipelineStats {
+  signals_processed: number
+  trades_executed: number
+  signals_skipped: number
+  last_heartbeat: string | null
+  uptime_seconds: number
+  circuit_state: 'open' | 'closed' | 'half_open'
+}
+
+interface RuntimeInfo {
+  pipeline_stats?: PipelineStats
+}
+
 interface AgentData {
   id: string; name: string; type: string; status: string
+  engine_type?: 'sdk' | 'pipeline'
   worker_status?: string; config: Record<string, unknown>
+  runtime_info?: RuntimeInfo
   channel_name?: string; analyst_name?: string
   model_type?: string; model_accuracy?: number
   daily_pnl?: number; total_pnl?: number; total_trades?: number; win_rate?: number
   current_mode?: string; rules_version?: number
   last_signal_at?: string; last_trade_at?: string; created_at: string
+  signals_processed?: number; trades_executed?: number
+  error_message?: string
 }
 
 interface Position {
@@ -216,6 +233,149 @@ function PatternRow({ p, i }: { p: Record<string, unknown>; i: number }) {
         </pre>
       )}
     </div>
+  )
+}
+
+/* Pipeline Stats Panel Component */
+function PipelineStatsPanel({ agent }: { agent: AgentData }) {
+  const stats = agent.runtime_info?.pipeline_stats
+
+  if (!stats) {
+    return null
+  }
+
+  const isWaiting = stats.signals_processed === 0 && agent.worker_status === 'RUNNING'
+  const isOffline = agent.worker_status === 'STOPPED'
+  const isError = agent.worker_status === 'ERROR'
+
+  // Check for stale heartbeat (>5 minutes)
+  const heartbeatStale = stats.last_heartbeat
+    ? (Date.now() - new Date(stats.last_heartbeat).getTime()) > 5 * 60 * 1000
+    : false
+  const showStaleWarning = heartbeatStale && agent.worker_status === 'RUNNING'
+
+  const formatUptime = (seconds: number): string => {
+    const hours = Math.floor(seconds / 3600)
+    const mins = Math.floor((seconds % 3600) / 60)
+    if (hours > 0) return `${hours}h ${mins}m`
+    return `${mins}m`
+  }
+
+  const formatHeartbeat = (timestamp: string | null): string => {
+    if (!timestamp) return 'Never'
+    const date = new Date(timestamp)
+    const now = Date.now()
+    const diff = now - date.getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'Just now'
+    if (mins < 60) return `${mins}m ago`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h ago`
+    return `${Math.floor(hours / 24)}d ago`
+  }
+
+  const circuitStateConfig = {
+    closed: { label: 'Closed', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-500/10' },
+    open: { label: 'Open', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-500/10' },
+    half_open: { label: 'Half-Open', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-500/10' },
+  }
+
+  const circuitConfig = circuitStateConfig[stats.circuit_state] || circuitStateConfig.closed
+
+  return (
+    <Card className="mt-4">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-emerald-500" />
+            Pipeline Stats
+          </CardTitle>
+          <Badge variant="outline" className={`text-xs ${circuitConfig.color} ${circuitConfig.bg}`}>
+            Circuit: {circuitConfig.label}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isError && agent.error_message && (
+          <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+            <div className="flex items-start gap-2">
+              <XCircle className="h-4 w-4 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-600 dark:text-red-400">Pipeline Worker Error</p>
+                <p className="text-xs text-red-600/80 dark:text-red-400/80 mt-1">{agent.error_message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showStaleWarning && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-amber-600 dark:text-amber-400">Heartbeat Stale</p>
+                <p className="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
+                  No heartbeat in over 5 minutes. Worker may be offline.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isWaiting ? (
+          <div className="flex items-center gap-3 p-6 justify-center text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <p className="text-sm">Waiting for first signal...</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className={`rounded-lg border p-3 ${isOffline ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Radio className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Signals</p>
+              </div>
+              <p className="text-xl font-semibold font-mono">{stats.signals_processed}</p>
+            </div>
+
+            <div className={`rounded-lg border p-3 ${isOffline ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Trades</p>
+              </div>
+              <p className="text-xl font-semibold font-mono">{stats.trades_executed}</p>
+            </div>
+
+            <div className={`rounded-lg border p-3 ${isOffline ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <StopCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Skipped</p>
+              </div>
+              <p className="text-xl font-semibold font-mono">{stats.signals_skipped}</p>
+            </div>
+
+            <div className={`rounded-lg border p-3 ${isOffline ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Uptime</p>
+              </div>
+              <p className="text-xl font-semibold font-mono">{formatUptime(stats.uptime_seconds)}</p>
+            </div>
+          </div>
+        )}
+
+        <div className={`mt-3 flex items-center justify-between text-xs ${isOffline ? 'opacity-50' : ''}`}>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Server className="h-3.5 w-3.5" />
+            <span>Last heartbeat: {formatHeartbeat(stats.last_heartbeat)}</span>
+          </div>
+          {isOffline && (
+            <Badge variant="outline" className="text-xs text-muted-foreground">
+              (Offline)
+            </Badge>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -1866,6 +2026,8 @@ export default function AgentDashboardPage() {
       catch { return { id: id ?? '', name: 'Unknown Agent', type: 'trading', status: 'CREATED', config: {}, created_at: new Date().toISOString() } }
     },
     enabled: !!id,
+    refetchInterval: agent?.engine_type === 'pipeline' ? 5000 : 30000,
+    staleTime: 0,
   })
 
   const pauseMut = useMutation({
@@ -1907,6 +2069,15 @@ export default function AgentDashboardPage() {
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <Badge variant="outline" className="text-xs">{agent.type}</Badge>
               <StatusBadge status={agent.worker_status === 'STARTING' && agent.status === 'RUNNING' ? 'Setting up' : agent.status} />
+              {agent.engine_type === 'pipeline' ? (
+                <Badge variant="outline" className="text-xs gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
+                  <Cog className="h-3 w-3" /> Pipeline
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-xs gap-1 border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/10">
+                  <Sparkles className="h-3 w-3" /> SDK
+                </Badge>
+              )}
               {agent.channel_name && <span className="text-xs text-muted-foreground">#{agent.channel_name}</span>}
               {agent.analyst_name && <span className="text-xs text-muted-foreground">by {agent.analyst_name}</span>}
                 </div>
@@ -1938,6 +2109,8 @@ export default function AgentDashboardPage() {
         <MetricCard title="Today P&L" value={`$${(agent.daily_pnl ?? 0).toLocaleString()}`} trend={(agent.daily_pnl ?? 0) >= 0 ? 'up' : 'down'} />
         <MetricCard title="Heartbeat" value={agent.last_signal_at ? `${Math.round((Date.now() - new Date(agent.last_signal_at).getTime()) / 60000)}m` : '—'} />
       </div>
+
+      {agent.engine_type === 'pipeline' && <PipelineStatsPanel agent={agent} />}
 
       {/* Top-level Live / Backtesting toggle */}
       <div className="flex items-center gap-1 border-b pb-0">

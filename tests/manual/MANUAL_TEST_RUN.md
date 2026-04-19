@@ -24,7 +24,6 @@
 | S04  | API health      | **FAIL** | `GET http://localhost:8011/health` — connection refused. |
 | S05  | Instances API   | **BLOCKED** | Requires API + auth. |
 | S06  | Dashboard nav   | **BLOCKED** | Requires successful login. |
-| S07  | OpenClaw connect| **BLOCKED** | Requires API + auth. |
 
 ---
 

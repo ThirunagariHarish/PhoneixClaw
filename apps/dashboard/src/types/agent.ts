@@ -17,14 +17,31 @@ export type AgentStatus =
   | 'PAUSED_OFFLINE'
   | 'ERROR'
 
+export type EngineType = 'sdk' | 'pipeline'
+
+export interface PipelineStats {
+  signals_processed: number
+  trades_executed: number
+  signals_skipped: number
+  last_heartbeat: string | null
+  uptime_seconds: number
+  circuit_state: 'open' | 'closed' | 'half_open'
+}
+
+export interface RuntimeInfo {
+  pipeline_stats?: PipelineStats
+}
+
 export interface Agent {
   id: string
   name: string
   type: AgentType
   status: AgentStatus
+  engine_type?: EngineType
   worker_status?: string
   user_id?: string
   config: Record<string, unknown>
+  runtime_info?: RuntimeInfo
   created_at: string
   updated_at: string
 }

@@ -18,12 +18,12 @@ groups:
           summary: "High error rate on {{ $labels.job }}"
 
       - alert: CircuitBreakerOpen
-        expr: phoenix_circuit_breaker_state == 1
-        for: 0m
+        expr: phoenix_circuit_breaker_state_by_name == 2
+        for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Circuit breaker is OPEN - trading halted"
+          summary: "Circuit breaker {{ $labels.name }} is OPEN - trading halted"
 
       - alert: HighMemoryUsage
         expr: process_resident_memory_bytes / 1024 / 1024 > 512
@@ -64,3 +64,19 @@ groups:
           severity: critical
         annotations:
           summary: "Daily loss exceeds $5000"
+
+      - alert: DLQBacklog
+        expr: phoenix_dlq_unresolved_total > 50
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ backlog > 50 unresolved messages for {{ $labels.connector_id }}"
+
+      - alert: StreamLagHigh
+        expr: phoenix_redis_stream_lag_seconds > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis stream {{ $labels.stream_key }} lag > 300s for 2 min"

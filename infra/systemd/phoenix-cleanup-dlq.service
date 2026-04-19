@@ -1,0 +1,17 @@
+[Unit]
+Description=Phoenix DLQ Cleanup Service
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=phoenix
+WorkingDirectory=/opt/phoenix
+Environment="PYTHONPATH=/opt/phoenix"
+Environment="DATABASE_URL=postgresql+asyncpg://phoenix:phoenix@localhost/phoenix"
+ExecStart=/opt/phoenix/venv/bin/python -m scripts.cleanup_dlq --days 30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=phoenix-cleanup-dlq
+
+[Install]
+WantedBy=multi-user.target

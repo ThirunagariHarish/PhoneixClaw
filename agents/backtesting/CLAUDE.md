@@ -17,9 +17,19 @@ Read `config.json` to get:
 Execute these steps in order. After each step, report progress to Phoenix using the curl commands below.
 
 ### Step 1: Transformation
-Run: `python tools/transform.py --config config.json --output output/transformed.parquet`
+Run: `python tools/transform.py --source postgres --db-url $DATABASE_URL --output output/transformed.parquet`
 
-This reads Discord history, parses trade signals, reconstructs partial exits, computes profit labels, and attaches sentiment scores.
+**IMPORTANT:** This pipeline ONLY supports `--source postgres` (reads from `channel_messages` table).
+The `--source discord` option is deprecated as of Phase C.4 (backtesting-db-robustness).
+
+To import historical Discord messages before running the backtest:
+```bash
+python -m tools.backfill --connector-id <uuid> --channel-id <snowflake> --from 2024-01-01
+```
+
+The transformation step reads from the database, parses trade signals, reconstructs partial exits, 
+computes profit labels, and attaches sentiment scores. This ensures reproducibility and eliminates 
+Discord API rate limits during backtesting.
 
 ### Step 1b: Multi-head label panel (T1)
 Run: `python tools/compute_labels.py --input output/transformed.parquet --output output/transformed.parquet`

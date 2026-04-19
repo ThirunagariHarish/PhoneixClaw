@@ -139,7 +139,6 @@ async def create_strategy(payload: StrategyCreate, session: DbSession):
     2. Merge template defaults with user overrides
     3. Create Agent in DB (type=strategy, status=BACKTESTING)
     4. Create Strategy in DB linked to that agent
-    5. TODO: Forward to Bridge Service to create OpenClaw workspace
     """
     template = STRATEGY_TEMPLATES_BY_ID.get(payload.template_id)
     if not template:
@@ -156,7 +155,7 @@ async def create_strategy(payload: StrategyCreate, session: DbSession):
     if not payload.instance_id:
         raise HTTPException(
             status_code=400,
-            detail="instance_id is required to create the OpenClaw agent",
+            detail="instance_id is required",
         )
 
     agent_name = payload.agent_name or f"{strategy_name} Agent"
@@ -196,11 +195,6 @@ async def create_strategy(payload: StrategyCreate, session: DbSession):
     session.add(strategy)
     await session.commit()
     await session.refresh(strategy)
-
-    # TODO: Forward to Bridge Service to spin up OpenClaw agent workspace
-    # bridge_url = f"http://{instance.host}:{instance.port}/agents"
-    # async with httpx.AsyncClient() as client:
-    #     await client.post(bridge_url, json={...})
 
     return StrategyResponse.from_model(strategy)
 

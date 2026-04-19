@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sys
-import types
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

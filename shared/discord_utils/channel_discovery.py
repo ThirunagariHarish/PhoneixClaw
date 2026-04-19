@@ -1,7 +1,10 @@
-"""Discover all text channels accessible to a Discord account.
+"""Discover all text channels accessible to a Discord Bot account.
 
-Connects with the provided token, enumerates guilds and their text channels,
+Connects with the provided bot token, enumerates guilds and their text channels,
 then disconnects. Used by the API to auto-populate Channel records.
+
+NOTE: Only official Discord Bot tokens are supported. User tokens (self-bots)
+are prohibited by Discord TOS and will trigger account restrictions.
 """
 
 import asyncio
@@ -19,7 +22,7 @@ DISCOVERY_TIMEOUT_SECONDS = 30
 
 async def discover_channels(
     token: str,
-    auth_type: str = "user_token",
+    auth_type: str = "bot",
 ) -> list[dict]:
     """Connect to Discord, list all text channels, and return them.
 
@@ -27,11 +30,19 @@ async def discover_channels(
         channel_id, channel_name, guild_id, guild_name, category
     """
     if discord is None:
-        raise ImportError("discord.py or discord.py-self is required")
+        raise ImportError("discord.py is required")
 
     channels: list[dict] = []
     ready_event = asyncio.Event()
     error_holder: list[Exception] = []
+
+    if auth_type == "bot":
+        intents = discord.Intents.default()
+        intents.guilds = True
+        intents.guild_messages = True
+        intents.message_content = True
+    else:
+        intents = discord.Intents.default()
 
     class DiscoveryClient(discord.Client):
         async def on_ready(self) -> None:
@@ -57,11 +68,11 @@ async def discover_channels(
                 ready_event.set()
                 await self.close()
 
-    client = DiscoveryClient()
+    client = DiscoveryClient(intents=intents)
 
     async def _run() -> None:
         try:
-            await client.start(token)
+            await client.start(token, bot=(auth_type == "bot"))
         except TypeError:
             await client.start(token)
         except Exception as exc:
@@ -93,7 +104,7 @@ async def discover_channels(
 
 async def discover_servers(
     token: str,
-    auth_type: str = "user_token",
+    auth_type: str = "bot",
 ) -> list[dict]:
     """Return deduplicated list of guilds the token has access to.
 

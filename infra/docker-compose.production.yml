@@ -43,21 +43,6 @@ services:
           memory: 128M
     restart: unless-stopped
 
-  phoenix-bridge:
-    build:
-      context: ..
-      dockerfile: openclaw/bridge/Dockerfile
-    ports:
-      - "18800:18800"
-    environment:
-      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    restart: unless-stopped
-
   phoenix-ws-gateway:
     build:
       context: ..
@@ -148,25 +133,6 @@ services:
       resources:
         limits:
           memory: 1G
-    restart: unless-stopped
-
-  phoenix-skill-sync:
-    build:
-      context: ..
-      dockerfile: services/skill-sync/Dockerfile
-    environment:
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - BRIDGE_URL=http://phoenix-bridge:18800
-      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
-    depends_on:
-      minio:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          memory: 128M
     restart: unless-stopped
 
   phoenix-agent-comm:

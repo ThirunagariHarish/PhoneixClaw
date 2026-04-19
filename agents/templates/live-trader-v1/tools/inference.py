@@ -3,11 +3,21 @@
 import argparse
 import json
 import logging
+import os
+import sys
+import time
 from pathlib import Path
 
 import joblib
 import pandas as pd
 
+from shared.observability.metrics import tool_latency_histogram
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [inference] %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
 log = logging.getLogger(__name__)
 
 # Reliable sklearn/lgbm fallback model names (in preference order)
@@ -118,13 +128,20 @@ def predict(features_path: str, models_dir: str = "models") -> dict:
             except Exception:
                 pass
 
-    return {
+    result = {
         "prediction": "TRADE" if prediction == 1 else "SKIP",
         "confidence": round(confidence, 4),
         "model": used_model_name,
         "pattern_matches": len(patterns),
         "patterns": patterns[:10],
     }
+
+    correlation_id = raw_features.get("correlation_id") or os.getenv("CORRELATION_ID")
+    if correlation_id:
+        result["correlation_id"] = correlation_id
+        log.info("Inference complete: %s", result["prediction"], extra={"correlation_id": correlation_id})
+
+    return result
 
 
 def _eval_condition(condition: str, features: dict) -> bool:
@@ -141,16 +158,57 @@ def _eval_condition(condition: str, features: dict) -> bool:
     return False
 
 
+async def _write_dlq(connector_id: str, payload: dict, error: str) -> None:
+    """Write failed signal to dead_letter_messages table."""
+    try:
+        from sqlalchemy import text
+
+        from shared.db.engine import get_session
+        async for session in get_session():
+            await session.execute(
+                text("INSERT INTO dead_letter_messages (connector_id, payload, error) VALUES (:cid, :payload, :error)"),
+                {"cid": connector_id, "payload": json.dumps(payload), "error": error[:500]},
+            )
+            await session.commit()
+            log.warning("DLQ write succeeded for connector %s", connector_id, extra={"correlation_id": payload.get("correlation_id")})
+    except Exception as dlq_exc:
+        log.error("DLQ write failed: %s", dlq_exc)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=True)
     parser.add_argument("--models", default="models")
     parser.add_argument("--output", default="prediction.json")
+    parser.add_argument("--config", help="Path to config.json for connector_id")
     args = parser.parse_args()
 
-    result = predict(args.features, args.models)
-    with open(args.output, "w") as f:
-        json.dump(result, f, indent=2)
+    start_time = time.monotonic()
+    try:
+        result = predict(args.features, args.models)
+        with open(args.output, "w") as f:
+            json.dump(result, f, indent=2)
+        tool_latency_histogram.labels(tool="inference").observe(time.monotonic() - start_time)
+        print(json.dumps({"status": "ok", "prediction": result["prediction"]}))
+    except Exception as exc:
+        log.error("inference failed: %s", exc, exc_info=True)
+        connector_id = "unknown"
+        features_dict = {}
+        if args.config and Path(args.config).exists():
+            try:
+                cfg = json.loads(Path(args.config).read_text())
+                connector_id = cfg.get("connector_id", "unknown")
+            except Exception:
+                pass
+        if Path(args.features).exists():
+            try:
+                with open(args.features) as f:
+                    features_dict = json.load(f)
+            except Exception:
+                pass
+        import asyncio
+        asyncio.run(_write_dlq(connector_id, features_dict, str(exc)))
+        sys.exit(1)
 
     print(
         f"Prediction: {result['prediction']} "

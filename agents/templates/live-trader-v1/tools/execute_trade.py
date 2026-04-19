@@ -9,15 +9,25 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from robinhood_mcp_client import RobinhoodMCPClient  # noqa: E402
+
+from shared.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from shared.observability.metrics import (
+    circuit_breaker_gauge,
+    subagent_spawn_counter,
+    tool_latency_histogram,
+    trade_success_counter,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,8 +38,11 @@ log = logging.getLogger(__name__)
 
 TOOLS_DIR = Path(__file__).resolve().parent
 
+robinhood_breaker = CircuitBreaker("robinhood", failure_threshold=3, cooldown_seconds=300)
+phoenix_api_breaker = CircuitBreaker("phoenix_api", failure_threshold=3, cooldown_seconds=120)
 
-def _report_trade_to_phoenix(config: dict, trade_data: dict):
+
+async def _report_trade_to_phoenix_async(config: dict, trade_data: dict):
     """POST the trade to Phoenix API so it appears in the dashboard."""
     import httpx
     agent_id = config.get("agent_id", "")
@@ -41,14 +54,27 @@ def _report_trade_to_phoenix(config: dict, trade_data: dict):
     url = f"{api_url}/api/v2/agents/{agent_id}/live-trades"
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
-        resp = httpx.post(url, json=trade_data, headers=headers, timeout=15)
-        log.info("Trade recorded in Phoenix: status=%d", resp.status_code)
+        async with phoenix_api_breaker:
+            resp = httpx.post(url, json=trade_data, headers=headers, timeout=15)
+            log.info("Trade recorded in Phoenix: status=%d", resp.status_code)
+    except CircuitBreakerOpen as cbe:
+        log.error("Phoenix API circuit breaker open: %s", cbe)
     except Exception as e:
         log.error("Failed to record trade: %s", e)
 
 
-def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: float, quantity: float) -> dict:
-    """Ask Phoenix API to spawn a position monitor sub-agent."""
+def _report_trade_to_phoenix(config: dict, trade_data: dict):
+    """Sync wrapper for async Phoenix API call."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    loop.run_until_complete(_report_trade_to_phoenix_async(config, trade_data))
+
+
+async def _spawn_position_agent_async(config: dict, ticker: str, side: str, entry_price: float, quantity: float) -> dict:
+    """Ask Phoenix API to spawn a position monitor sub-agent with retry logic."""
     import httpx
     agent_id = config.get("agent_id", "")
     api_url = config.get("phoenix_api_url", "")
@@ -57,18 +83,41 @@ def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: flo
         return {}
     url = f"{api_url}/api/v2/agents/{agent_id}/spawn-position-agent"
     headers = {"Authorization": f"Bearer {api_key}"}
+
+    for attempt in range(3):
+        try:
+            backoff_delay = 2 ** attempt
+            if attempt > 0:
+                log.info("Retry %d/3 after %ds backoff", attempt + 1, backoff_delay)
+                await asyncio.sleep(backoff_delay)
+
+            async with phoenix_api_breaker:
+                resp = httpx.post(url, json={
+                    "ticker": ticker,
+                    "side": side,
+                    "entry_price": entry_price,
+                    "quantity": quantity,
+                }, headers=headers, timeout=30)
+                log.info("Position agent spawn request: status=%d", resp.status_code)
+                return resp.json() if resp.status_code < 400 else {}
+        except CircuitBreakerOpen as cbe:
+            log.error("Phoenix API circuit breaker open on spawn: %s", cbe)
+            return {}
+        except Exception as e:
+            log.error("Failed to spawn position agent (attempt %d/3): %s", attempt + 1, e)
+            if attempt == 2:
+                return {}
+    return {}
+
+
+def _spawn_position_agent(config: dict, ticker: str, side: str, entry_price: float, quantity: float) -> dict:
+    """Sync wrapper for async spawn call."""
     try:
-        resp = httpx.post(url, json={
-            "ticker": ticker,
-            "side": side,
-            "entry_price": entry_price,
-            "quantity": quantity,
-        }, headers=headers, timeout=30)
-        log.info("Position agent spawn request: status=%d", resp.status_code)
-        return resp.json() if resp.status_code < 400 else {}
-    except Exception as e:
-        log.error("Failed to spawn position agent: %s", e)
-        return {}
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(_spawn_position_agent_async(config, ticker, side, entry_price, quantity))
 
 
 def _register_position(ticker: str, side: str, entry_price: float, quantity: float,
@@ -93,6 +142,7 @@ def _register_position(ticker: str, side: str, entry_price: float, quantity: flo
 
 
 def execute(decision_path: str, config_path: str):
+    start_time = time.monotonic()
     if isinstance(decision_path, dict):
         decision = decision_path
     else:
@@ -169,16 +219,38 @@ def execute(decision_path: str, config_path: str):
     mcp = RobinhoodMCPClient(config)
     mcp.start()
 
+    correlation_id = decision.get("correlation_id") or signal.get("correlation_id") or os.getenv("CORRELATION_ID")
+
     try:
-        # Login
-        login_result = mcp.call("robinhood_login", {})
-        log.info("Login: %s", json.dumps(login_result)[:200])
+        # Login with circuit breaker
+        async def _login_with_breaker():
+            async with robinhood_breaker:
+                return mcp.call("robinhood_login", {})
+
+        async def _get_account_with_breaker():
+            async with robinhood_breaker:
+                return mcp.call("get_account", {})
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        login_result = loop.run_until_complete(_login_with_breaker())
+        if correlation_id:
+            log.info("Login: %s", json.dumps(login_result)[:200], extra={"correlation_id": correlation_id})
+        else:
+            log.info("Login: %s", json.dumps(login_result)[:200])
 
         # Check buying power before placing order
-        account = mcp.call("get_account", {})
+        account = loop.run_until_complete(_get_account_with_breaker())
         buying_power = float(account.get("buying_power", 0))
         notional = quantity * price if price > 0 else 0
-        log.info("Account: buying_power=$%.2f, notional=$%.2f", buying_power, notional)
+        if correlation_id:
+            log.info("Account: buying_power=$%.2f, notional=$%.2f", buying_power, notional, extra={"correlation_id": correlation_id})
+        else:
+            log.info("Account: buying_power=$%.2f, notional=$%.2f", buying_power, notional)
 
         # Build reasoning and signal_raw from the decision structure
         reasoning_list = decision.get("reasoning", [])
@@ -214,25 +286,32 @@ def execute(decision_path: str, config_path: str):
             return {"status": "rejected", "reason": "insufficient_buying_power"}
 
         # Place order via smart_limit_order (has NBBO pegging + buying power check)
-        if trade_type == "option" and execution.get("strike") and execution.get("expiry"):
-            order_result = mcp.call("place_option_order", {
-                "ticker": ticker,
-                "quantity": int(quantity),
-                "side": side,
-                "price": price,
-                "expiry": execution["expiry"],
-                "strike": float(execution["strike"]),
-                "option_type": execution.get("option_type", "call"),
-            })
-        else:
-            order_result = mcp.call("smart_limit_order", {
-                "ticker": ticker,
-                "quantity": quantity,
-                "side": side,
-                "buffer_bps": 5.0,
-            })
+        async def _place_order_with_breaker():
+            async with robinhood_breaker:
+                if trade_type == "option" and execution.get("strike") and execution.get("expiry"):
+                    return mcp.call("place_option_order", {
+                        "ticker": ticker,
+                        "quantity": int(quantity),
+                        "side": side,
+                        "price": price,
+                        "expiry": execution["expiry"],
+                        "strike": float(execution["strike"]),
+                        "option_type": execution.get("option_type", "call"),
+                    })
+                else:
+                    return mcp.call("smart_limit_order", {
+                        "ticker": ticker,
+                        "quantity": quantity,
+                        "side": side,
+                        "buffer_bps": 5.0,
+                    })
 
-        log.info("Order result: %s", json.dumps(order_result)[:300])
+        order_result = loop.run_until_complete(_place_order_with_breaker())
+
+        if correlation_id:
+            log.info("Order result: %s", json.dumps(order_result)[:300], extra={"correlation_id": correlation_id})
+        else:
+            log.info("Order result: %s", json.dumps(order_result)[:300])
 
         order_id = order_result.get("order_id", "")
         fill_price = float(order_result.get("fill_price", price) or price)
@@ -252,6 +331,14 @@ def execute(decision_path: str, config_path: str):
                 "status": "rejected",
                 "decision_trail": decision_trail,
             })
+            trade_success_counter.labels(service="live-trader-tool", status="rejected").inc()
+            tool_latency_histogram.labels(tool="execute_trade").observe(time.monotonic() - start_time)
+            circuit_breaker_gauge.labels(name="robinhood").set(
+                2 if robinhood_breaker.state == "open" else 1 if robinhood_breaker.state == "half_open" else 0
+            )
+            circuit_breaker_gauge.labels(name="phoenix_api").set(
+                2 if phoenix_api_breaker.state == "open" else 1 if phoenix_api_breaker.state == "half_open" else 0
+            )
             return {"status": "rejected", "reason": order_result.get("reason", state)}
 
         # Record successful trade in Phoenix
@@ -272,6 +359,9 @@ def execute(decision_path: str, config_path: str):
             "status": "open",
             "decision_trail": decision_trail,
         }
+        if correlation_id:
+            trade_data["metadata"] = {"correlation_id": correlation_id}
+
         if trade_type == "option":
             trade_data["option_type"] = execution.get("option_type")
             trade_data["strike"] = execution.get("strike")
@@ -282,6 +372,8 @@ def execute(decision_path: str, config_path: str):
         # Spawn position monitor sub-agent for exit management
         if side == "buy":
             spawn_result = _spawn_position_agent(config, ticker, side, fill_price, quantity)
+            if spawn_result and spawn_result.get("session_id"):
+                subagent_spawn_counter.inc()
             _register_position(ticker, side, fill_price, quantity, order_id, spawn_result)
 
         # Write execution result for the agent to read
@@ -302,10 +394,35 @@ def execute(decision_path: str, config_path: str):
             result_path = Path("execution_result.json")
         result_path.write_text(json.dumps(result, indent=2))
         log.info("Trade executed: %s %s %.0f @ $%.2f", side, ticker, quantity, fill_price)
+        trade_success_counter.labels(service="live-trader-tool", status="success").inc()
+        tool_latency_histogram.labels(tool="execute_trade").observe(time.monotonic() - start_time)
+        circuit_breaker_gauge.labels(name="robinhood").set(
+            2 if robinhood_breaker.state == "open" else 1 if robinhood_breaker.state == "half_open" else 0
+        )
+        circuit_breaker_gauge.labels(name="phoenix_api").set(
+            2 if phoenix_api_breaker.state == "open" else 1 if phoenix_api_breaker.state == "half_open" else 0
+        )
         return result
 
     finally:
         mcp.stop()
+
+
+async def _write_dlq(connector_id: str, payload: dict, error: str) -> None:
+    """Write failed signal to dead_letter_messages table."""
+    try:
+        from sqlalchemy import text
+
+        from shared.db.engine import get_session
+        async for session in get_session():
+            await session.execute(
+                text("INSERT INTO dead_letter_messages (connector_id, payload, error) VALUES (:cid, :payload, :error)"),
+                {"cid": connector_id, "payload": json.dumps(payload), "error": error[:500]},
+            )
+            await session.commit()
+            log.warning("DLQ write succeeded for connector %s", connector_id, extra={"correlation_id": payload.get("correlation_id")})
+    except Exception as dlq_exc:
+        log.error("DLQ write failed: %s", dlq_exc)
 
 
 def main():
@@ -314,8 +431,26 @@ def main():
     parser.add_argument("--config", required=True, help="Path to config.json")
     args = parser.parse_args()
 
-    result = execute(args.decision, args.config)
-    print(json.dumps(result, indent=2, default=str))
+    try:
+        result = execute(args.decision, args.config)
+        print(json.dumps(result, indent=2, default=str))
+    except (CircuitBreakerOpen, Exception) as exc:
+        log.error("execute_trade failed: %s", exc, exc_info=True)
+        connector_id = "unknown"
+        decision_dict = {}
+        if Path(args.config).exists():
+            try:
+                cfg = json.loads(Path(args.config).read_text())
+                connector_id = cfg.get("connector_id", "unknown")
+            except Exception:
+                pass
+        if Path(args.decision).exists():
+            try:
+                decision_dict = json.loads(Path(args.decision).read_text())
+            except Exception:
+                pass
+        asyncio.run(_write_dlq(connector_id, decision_dict, str(exc)))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

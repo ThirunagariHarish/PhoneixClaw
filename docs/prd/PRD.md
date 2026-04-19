@@ -2,7 +2,9 @@
 
 **Version:** 2.1.0
 **Date:** March 3, 2026
-**Status:** Draft
+**Status:** SUPERSEDED (2026-04-18)
+
+**NOTE:** This PRD contains legacy OpenClaw-based architecture. As of Phase F (April 2026), Phoenix uses Claude Code SDK runtime. OpenClaw references in this document are historical. See `docs/prd/phase-f-openclaw-removal.md` and `docs/architecture/` for current architecture.
 
 ---
 
@@ -11,7 +13,7 @@
 1. [Executive Summary](#1-executive-summary)
 2. [System Architecture](#2-system-architecture)
 3. [Dashboard Tabs](#3-dashboard-tabs)
-4. [OpenClaw Integration](#4-openclaw-integration)
+4. [Agent Integration](#4-agent-integration) (formerly OpenClaw Integration — deprecated)
 5. [Agent Lifecycle](#5-agent-lifecycle)
 6. [Trading Agent Architecture](#6-trading-agent-architecture)
 7. [Strategy Agent Architecture](#7-strategy-agent-architecture)

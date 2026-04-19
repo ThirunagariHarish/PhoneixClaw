@@ -58,7 +58,7 @@ interface ChannelInfo {
 }
 
 type PlatformType =
-  | 'discord' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
+  | 'discord' | 'discord_webhook' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
   | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier' | 'robinhood'
   | 'yfinance' | 'polygon' | 'alphavantage'
   | 'whatsapp' | 'telegram'
@@ -76,7 +76,8 @@ interface PlatformMeta {
 }
 
 const PLATFORMS: PlatformMeta[] = [
-  { type: 'discord',         label: 'Discord',         description: 'Pull signals from Discord channels',     category: 'data',   icon: MessageSquare, color: 'text-indigo-500',  bgColor: 'bg-indigo-500/10' },
+  { type: 'discord',         label: 'Discord Bot',     description: 'Pull signals via official Discord Bot API', category: 'data',   icon: MessageSquare, color: 'text-indigo-500',  bgColor: 'bg-indigo-500/10' },
+  { type: 'discord_webhook', label: 'Discord Webhook',  description: 'Receive signals via webhook relay (no bot needed)', category: 'data', icon: Webhook, color: 'text-indigo-400', bgColor: 'bg-indigo-400/10' },
   { type: 'reddit',          label: 'Reddit',          description: 'Monitor subreddit discussions',           category: 'data',   icon: Globe,         color: 'text-orange-500',  bgColor: 'bg-orange-500/10' },
   { type: 'twitter',         label: 'Twitter / X',     description: 'Follow trader accounts',                  category: 'data',   icon: Radio,         color: 'text-sky-500',     bgColor: 'bg-sky-500/10' },
   { type: 'unusual_whales',  label: 'Unusual Whales',  description: 'Options flow and dark pool data',         category: 'data',   icon: Activity,      color: 'text-purple-500',  bgColor: 'bg-purple-500/10' },
@@ -166,9 +167,7 @@ function PlatformSelectStep({
 // ─── Discord Steps ──────────────────────────────────────────────────────────
 
 const AUTH_HELP: Record<string, string> = {
-  user_token:
-    'Use your personal Discord token. Open Discord in browser, press F12, go to Network tab, and copy the "Authorization" header value.',
-  bot: 'Create a bot at discord.com/developers, copy the bot token. Requires admin to invite the bot to the server.',
+  bot: 'Create a bot at discord.com/developers, copy the bot token, and invite it to your server. This is the only Discord-approved method for automated message reading.',
 }
 
 function DiscordCredentialsStep({
@@ -189,34 +188,25 @@ function DiscordCredentialsStep({
           placeholder="e.g. Trading Alerts Server"
         />
       </div>
-      <div className="space-y-2">
-        <Label>Authentication Method</Label>
-        <div className="flex gap-3">
-          {(['user_token', 'bot'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, auth_type: t }))}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                form.auth_type === t
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border text-muted-foreground hover:border-primary/50'
-              }`}
-            >
-              {t === 'user_token' ? 'User Token' : 'Bot Token'}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">{AUTH_HELP[form.auth_type]}</p>
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+        <p className="text-sm font-medium text-primary">Discord Bot Token (Required)</p>
+        <p className="text-xs text-muted-foreground">{AUTH_HELP.bot}</p>
+        <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-0.5">
+          <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="underline text-primary/80">discord.com/developers</a> and create a New Application</li>
+          <li>Go to <strong>Bot</strong> tab, click &quot;Reset Token&quot;, copy the token</li>
+          <li>Enable <strong>Message Content Intent</strong> under Privileged Gateway Intents</li>
+          <li>Go to <strong>OAuth2 &gt; URL Generator</strong>, select <code className="text-[10px] bg-muted px-1 rounded">bot</code> scope + &quot;Read Messages&quot; + &quot;Read Message History&quot;</li>
+          <li>Copy the invite URL and send it to the server admin</li>
+        </ol>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="ds-token">{form.auth_type === 'bot' ? 'Bot Token' : 'User Token'}</Label>
+        <Label htmlFor="ds-token">Bot Token</Label>
         <Input
           id="ds-token"
           type="password"
           value={form.token}
           onChange={(e) => setForm((f) => ({ ...f, token: e.target.value }))}
-          placeholder={form.auth_type === 'bot' ? 'Bot token from Developer Portal' : 'Your Discord user token'}
+          placeholder="Bot token from Developer Portal"
           className="font-mono"
         />
       </div>
@@ -367,7 +357,7 @@ function AddConnectorWizard({
 
   // Discord state
   const [discordForm, setDiscordForm] = useState({
-    display_name: '', auth_type: 'user_token', token: '',
+    display_name: '', auth_type: 'bot', token: '',
     server_id: '', server_name: '',
   })
   const [servers, setServers] = useState<GuildInfo[]>([])
@@ -397,6 +387,11 @@ function AddConnectorWizard({
   // Webhook
   const [webhookForm, setWebhookForm] = useState({
     display_name: '', secret_header: '', allowed_origins: '',
+  })
+
+  // Discord Webhook relay
+  const [discordWebhookForm, setDiscordWebhookForm] = useState({
+    display_name: '', channel_name: '',
   })
 
   // Alpaca
@@ -440,7 +435,7 @@ function AddConnectorWizard({
       setStep(0)
       setError(null)
       setBusy(false)
-      setDiscordForm({ display_name: '', auth_type: 'user_token', token: '', server_id: '', server_name: '' })
+      setDiscordForm({ display_name: '', auth_type: 'bot', token: '', server_id: '', server_name: '' })
       setServers([])
       setChannels([])
       setSelectedChannels(new Set())
@@ -451,6 +446,7 @@ function AddConnectorWizard({
       setWhatsappForm({ display_name: '', access_token: '', phone_number_id: '', verify_token: '', default_thread_id: '' })
       setTelegramForm({ display_name: '', bot_token: '', default_chat_id: '', base_group_chat_id: '' })
       setWebhookForm({ display_name: '', secret_header: '', allowed_origins: '' })
+      setDiscordWebhookForm({ display_name: '', channel_name: '' })
       setAlpacaForm({ display_name: '', api_key: '', api_secret: '', mode: 'paper' })
       setIbkrForm({ display_name: '', host: '127.0.0.1', port: '7497', client_id: '1' })
       setTradierForm({ display_name: '', api_key: '', sandbox: true })
@@ -465,14 +461,16 @@ function AddConnectorWizard({
   // Step counts per platform
   const totalSteps = (): number => {
     if (!platform) return 1
-    if (platform === 'discord') return 4 // select, creds, server, channels
-    if (platform === 'reddit' || platform === 'twitter') return 3 // select, creds, config
-    return 2 // select, single form
+    if (platform === 'discord') return 4
+    if (platform === 'discord_webhook') return 2
+    if (platform === 'reddit' || platform === 'twitter') return 3
+    return 2
   }
 
   const stepLabels = (): string[] => {
     if (!platform) return ['Platform']
     if (platform === 'discord') return ['Platform', 'Credentials', 'Server', 'Channels']
+    if (platform === 'discord_webhook') return ['Platform', 'Webhook Setup']
     if (platform === 'reddit') return ['Platform', 'Credentials', 'Subreddits']
     if (platform === 'twitter') return ['Platform', 'Credentials', 'Accounts']
     return ['Platform', 'Configuration']
@@ -553,12 +551,18 @@ function AddConnectorWizard({
       switch (platform) {
         case 'discord': {
           name = discordForm.display_name
-          if (discordForm.auth_type === 'bot') credentials.bot_token = discordForm.token
-          else credentials.user_token = discordForm.token
+          credentials.bot_token = discordForm.token
           const selected = channels
             .filter((c) => selectedChannels.has(c.channel_id))
             .map((c) => ({ channel_id: c.channel_id, channel_name: c.channel_name, guild_id: c.guild_id, guild_name: c.guild_name }))
           config = { server_id: discordForm.server_id, server_name: discordForm.server_name, auth_type: discordForm.auth_type, selected_channels: selected }
+          break
+        }
+        case 'discord_webhook': {
+          name = discordWebhookForm.display_name
+          type = 'discord'
+          const webhookSecret = crypto.randomUUID()
+          config = { auth_type: 'webhook', channel_name: discordWebhookForm.channel_name || name, webhook_secret: webhookSecret }
           break
         }
         case 'reddit': {
@@ -678,6 +682,8 @@ function AddConnectorWizard({
         if (step === 2) return !!discordForm.server_id
         if (step === 3) return selectedChannels.size > 0
         return false
+      case 'discord_webhook':
+        return !!discordWebhookForm.display_name
       case 'reddit':
         if (step === 1) return !!(redditForm.display_name && redditForm.client_id && redditForm.client_secret)
         if (step === 2) return !!redditForm.subreddits.trim()
@@ -1015,6 +1021,37 @@ function AddConnectorWizard({
             </div>
           )}
 
+          {/* Discord Webhook */}
+          {platform === 'discord_webhook' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input
+                  value={discordWebhookForm.display_name}
+                  onChange={(e) => setDiscordWebhookForm((f) => ({ ...f, display_name: e.target.value }))}
+                  placeholder="e.g. Trading Signals (Webhook)"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Channel Name (optional)</Label>
+                <Input
+                  value={discordWebhookForm.channel_name}
+                  onChange={(e) => setDiscordWebhookForm((f) => ({ ...f, channel_name: e.target.value }))}
+                  placeholder="e.g. #trading-alerts"
+                />
+              </div>
+              <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
+                <p className="text-sm font-medium text-indigo-400">No bot or token needed</p>
+                <p className="text-xs text-muted-foreground">
+                  After creation, you&apos;ll get a unique webhook URL. Have the Discord server admin set up a relay (e.g. via <strong>Zapier</strong>, <strong>Make</strong>, or a simple forwarding bot) that POSTs messages to this URL.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Messages arrive the same way as the Bot connector — via the channel_messages table and Redis streams. Zero direct Discord API calls from Phoenix.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Alpaca */}
           {platform === 'alpaca' && step === 1 && (
             <div className="space-y-4 py-2">
@@ -1274,6 +1311,7 @@ function connectorSummary(c: Connector): string {
   const cfg = c.config || {}
   switch (c.type) {
     case 'discord': {
+      if ((cfg.auth_type as string) === 'webhook') return 'Webhook relay'
       const chCount = Array.isArray(cfg.selected_channels) ? (cfg.selected_channels as unknown[]).length : 0
       return cfg.server_name ? `${cfg.server_name} · ${chCount} ch` : `${chCount} channels`
     }

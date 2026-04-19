@@ -44,6 +44,9 @@ class AgentCreate(BaseModel):
     """Agent creation wizard payload."""
     name: str = Field(..., min_length=1, max_length=100)
     type: str = Field(..., pattern="^(trading|trend|sentiment|analyst)$")
+    engine_type: str = Field(default="sdk", pattern="^(sdk|pipeline)$")
+    broker_type: str | None = Field(default=None, pattern="^(robinhood|ibkr|alpaca)?$")
+    broker_account_id: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     data_source: str = ""
@@ -71,6 +74,40 @@ def assert_trading_connector_when_discord_channel(payload: AgentCreate) -> None:
         )
 
 
+async def validate_broker_config(payload: AgentCreate, session, user_id: uuid.UUID) -> None:
+    """Validate broker config for pipeline agents."""
+    if payload.engine_type != "pipeline":
+        return
+
+    # Pipeline agents require broker_type
+    if not payload.broker_type:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline agents require broker_type (robinhood, ibkr, or alpaca)",
+        )
+
+    # If broker_account_id provided, validate it exists and belongs to user
+    if payload.broker_account_id:
+        from shared.db.models.trading_account import TradingAccount
+        result = await session.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == uuid.UUID(payload.broker_account_id),
+                TradingAccount.user_id == user_id,
+            )
+        )
+        account = result.scalar_one_or_none()
+        if not account:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"Trading account {payload.broker_account_id} not found or access denied",
+            )
+        if account.broker != payload.broker_type:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"Trading account broker type ({account.broker}) does not match requested broker_type ({payload.broker_type})",
+            )
+
+
 class AgentUpdate(BaseModel):
     name: str | None = None
     status: str | None = None
@@ -81,9 +118,12 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     type: str
+    engine_type: str = "sdk"
+    broker_type: str | None = None
     status: str
     worker_status: str = "STOPPED"
     runtime_status: str = "unknown"  # P4: derived from last_activity_at / heartbeat age
+    runtime_info: dict[str, Any] | None = None
     config: dict[str, Any]
     channel_name: str | None = None
     analyst_name: str | None = None
@@ -121,15 +161,25 @@ class AgentResponse(BaseModel):
             return "unknown"
 
     @classmethod
-    def from_model(cls, a: Agent) -> "AgentResponse":
+    def from_model(cls, a: Agent, pipeline_stats: dict | None = None) -> "AgentResponse":
+        config = a.config or {}
+        broker_type = config.get("broker_type")
+
+        runtime_info = None
+        if pipeline_stats:
+            runtime_info = {"pipeline_stats": pipeline_stats}
+
         return cls(
             id=str(a.id),
             name=a.name,
             type=a.type,
+            engine_type=getattr(a, "engine_type", None) if isinstance(getattr(a, "engine_type", None), str) else "sdk",
+            broker_type=broker_type,
             status=a.status,
             worker_status=a.worker_status or "STOPPED",
             runtime_status=cls._derive_runtime_status(a),
-            config=a.config or {},
+            runtime_info=runtime_info,
+            config=config,
             channel_name=a.channel_name,
             analyst_name=a.analyst_name,
             model_type=a.model_type,
@@ -153,6 +203,7 @@ async def list_agents(
     session: DbSession,
     agent_type: str | None = Query(None, alias="type"),
     status_filter: str | None = Query(None, alias="status"),
+    engine_type: str | None = Query(None, alias="engine_type"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -162,6 +213,8 @@ async def list_agents(
         query = query.where(Agent.type == agent_type)
     if status_filter:
         query = query.where(Agent.status == status_filter)
+    if engine_type:
+        query = query.where(Agent.engine_type == engine_type)
     # Enforce per-user isolation unless the caller is an admin
     caller_id = getattr(request.state, "user_id", None)
     is_admin = getattr(request.state, "is_admin", False)
@@ -210,6 +263,17 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
 
     assert_trading_connector_when_discord_channel(payload)
 
+    # Validate broker config for pipeline agents
+    caller_id = getattr(request.state, "user_id", None)
+    agent_user_id: uuid.UUID | None = None
+    if caller_id:
+        try:
+            agent_user_id = uuid.UUID(caller_id)
+        except (ValueError, AttributeError):
+            pass
+    if agent_user_id:
+        await validate_broker_config(payload, session, agent_user_id)
+
     agent_type = "trend" if payload.type == "sentiment" else payload.type
 
     channel_name = None
@@ -225,29 +289,33 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
     phoenix_api_url = os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
 
     agent_id = uuid.uuid4()
-    caller_id = getattr(request.state, "user_id", None)
-    agent_user_id: uuid.UUID | None = None
-    if caller_id:
-        try:
-            agent_user_id = uuid.UUID(caller_id)
-        except (ValueError, AttributeError):
-            pass
+
+    # Build agent config
+    agent_config = {
+        "description": payload.description,
+        "data_source": payload.data_source,
+        "skills": payload.skills,
+        "connector_ids": payload.connector_ids,
+        **payload.config,
+    }
+
+    # Add broker config for pipeline agents
+    if payload.engine_type == "pipeline" and payload.broker_type:
+        agent_config["broker_type"] = payload.broker_type
+        if payload.broker_account_id:
+            agent_config["broker_account_id"] = payload.broker_account_id
+
     agent = Agent(
         id=agent_id,
         user_id=agent_user_id,
         name=payload.name,
         type=agent_type,
+        engine_type=payload.engine_type,
         status="BACKTESTING",
         channel_name=channel_name,
         analyst_name=analyst_name,
         phoenix_api_key=agent_api_key,
-        config={
-            "description": payload.description,
-            "data_source": payload.data_source,
-            "skills": payload.skills,
-            "connector_ids": payload.connector_ids,
-            **payload.config,
-        },
+        config=agent_config,
     )
     session.add(agent)
 
@@ -371,13 +439,37 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
 @router.get("/{agent_id}", response_model=AgentResponse)
 async def get_agent(agent_id: str, session: DbSession):
     """Get agent details."""
+    from shared.db.models.agent import PipelineWorkerState
+
     result = await session.execute(
         select(Agent).where(Agent.id == uuid.UUID(agent_id))
     )
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    return AgentResponse.from_model(agent)
+
+    # Fetch pipeline stats if pipeline engine
+    pipeline_stats = None
+    if agent.engine_type == "pipeline":
+        pws_result = await session.execute(
+            select(PipelineWorkerState).where(PipelineWorkerState.agent_id == uuid.UUID(agent_id))
+        )
+        pws = pws_result.scalar_one_or_none()
+        if pws:
+            uptime_seconds = 0
+            if pws.started_at:
+                uptime_seconds = int((datetime.now(timezone.utc) - pws.started_at).total_seconds())
+
+            pipeline_stats = {
+                "signals_processed": pws.signals_processed,
+                "trades_executed": pws.trades_executed,
+                "signals_skipped": pws.signals_skipped,
+                "last_heartbeat": pws.last_heartbeat.isoformat() if pws.last_heartbeat else None,
+                "uptime_seconds": uptime_seconds,
+                "circuit_state": "closed",  # TODO: track circuit state in DB if needed
+            }
+
+    return AgentResponse.from_model(agent, pipeline_stats=pipeline_stats)
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
@@ -562,15 +654,36 @@ async def approve_agent(agent_id: str, session: DbSession, payload: AgentApprove
 
     await session.commit()
 
-    # Auto-spawn the live analyst session immediately after approval
+    # Auto-spawn session based on engine type
     auto_spawn_result = None
     try:
         from apps.api.src.services.agent_gateway import gateway
-        auto_spawn_result = await gateway.create_analyst(uuid.UUID(agent_id))
-        logger.info("Auto-spawned analyst session for %s after approval: %s",
-                    agent_id, auto_spawn_result)
+
+        if agent.engine_type == "pipeline":
+            # Start pipeline worker
+            worker_id = await gateway.start_pipeline_agent(
+                uuid.UUID(agent_id),
+                config=approval_config,
+            )
+            if worker_id:
+                agent.status = "RUNNING"
+                agent.worker_status = "RUNNING"
+                await session.commit()
+                await session.refresh(agent)
+                auto_spawn_result = {"worker_id": worker_id}
+            logger.info("Started pipeline worker for %s: %s", agent_id, worker_id)
+        else:
+            # Start Claude SDK analyst session
+            auto_spawn_result = await gateway.create_analyst(uuid.UUID(agent_id))
+            logger.info("Auto-spawned analyst session for %s after approval: %s",
+                        agent_id, auto_spawn_result)
+            if auto_spawn_result:
+                agent.status = "RUNNING"
+                agent.worker_status = "RUNNING"
+                await session.commit()
+                await session.refresh(agent)
     except Exception as exc:
-        logger.warning("Failed to auto-spawn analyst for %s: %s", agent_id, exc)
+        logger.warning("Failed to auto-spawn agent %s: %s", agent_id, exc)
 
     return {
         "id": agent_id,
@@ -1183,7 +1296,15 @@ async def process_live_message(agent_id: str, payload: LiveMessagePayload, sessi
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    if agent.status != "RUNNING":
+
+    if getattr(agent, "engine_type", "sdk") == "pipeline":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline agents process messages via Redis streams, not this endpoint. "
+                   "Messages are consumed automatically by the pipeline worker.",
+        )
+
+    if agent.status not in ("RUNNING", "PAPER", "APPROVED"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Agent is not running, current: {agent.status}")
 
     bt_result = await session.execute(
@@ -1935,7 +2056,11 @@ async def activate_agent(agent_id: str, session: DbSession):
     mgr_result = await gateway.create_analyst(uuid.UUID(agent_id))
     if not mgr_result:
         raise HTTPException(status_code=400, detail="Could not start agent")
-    return {"message": "Agent activated", "agent_id": agent_id, "status": "RUNNING", "worker": mgr_result}
+    agent.status = "RUNNING"
+    agent.worker_status = "RUNNING"
+    await session.commit()
+    await session.refresh(agent)
+    return {"message": "Agent activated", "agent_id": agent_id, "status": agent.status, "worker": mgr_result}
 
 
 @router.get("/{agent_id}/worker-status")

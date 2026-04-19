@@ -1,0 +1,204 @@
+{
+  "uid": "phoenix-agent-wake-flow",
+  "title": "Phoenix Agent Wake Flow - Phase B",
+  "tags": ["phoenix", "agents", "observability", "phase-b"],
+  "schemaVersion": 38,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Messages Ingested/s",
+      "type": "graph",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(phoenix_discord_messages_total[1m])",
+          "legendFormat": "Discord messages/s"
+        }
+      ],
+      "yaxes": [
+        { "label": "messages/s", "format": "short" },
+        { "show": false }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Redis Stream Lag",
+      "type": "graph",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "phoenix_redis_stream_lag_seconds",
+          "legendFormat": "{{stream_key}}"
+        }
+      ],
+      "yaxes": [
+        { "label": "seconds", "format": "s" },
+        { "show": false }
+      ],
+      "alert": {
+        "name": "High Redis Stream Lag",
+        "conditions": [
+          {
+            "evaluator": { "params": [300], "type": "gt" },
+            "operator": { "type": "and" },
+            "query": { "params": ["A", "2m", "now"] },
+            "reducer": { "params": [], "type": "avg" },
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "for": "2m",
+        "frequency": "1m",
+        "handler": 1,
+        "message": "Redis stream lag exceeded 300s for 2 minutes",
+        "name": "StreamLagHigh",
+        "noDataState": "no_data"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Agents Launched/min",
+      "type": "graph",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(phoenix_agent_sessions_created_total[1m]) * 60",
+          "legendFormat": "Agent sessions/min"
+        }
+      ],
+      "yaxes": [
+        { "label": "sessions/min", "format": "short" },
+        { "show": false }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tool-Call Latency p95",
+      "type": "graph",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(phoenix_tool_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{tool}} p95"
+        }
+      ],
+      "yaxes": [
+        { "label": "seconds", "format": "s" },
+        { "show": false }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Trade Success Rate",
+      "type": "graph",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "100 * rate(phoenix_trades_total{status=\"success\"}[5m]) / (rate(phoenix_trades_total[5m]) + 1e-9)",
+          "legendFormat": "Success %"
+        },
+        {
+          "expr": "rate(phoenix_trades_total{status=\"success\"}[5m])",
+          "legendFormat": "Successes/s"
+        },
+        {
+          "expr": "rate(phoenix_trades_total{status=\"rejected\"}[5m])",
+          "legendFormat": "Rejections/s"
+        }
+      ],
+      "yaxes": [
+        { "label": "rate or %", "format": "short" },
+        { "show": false }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Sub-Agent Spawn Rate",
+      "type": "graph",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(phoenix_subagent_spawned_total[1m]) * 60",
+          "legendFormat": "Sub-agents/min"
+        }
+      ],
+      "yaxes": [
+        { "label": "spawns/min", "format": "short" },
+        { "show": false }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Circuit Breaker State",
+      "type": "graph",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "phoenix_circuit_breaker_state_by_name",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "yaxes": [
+        { "label": "state (0=closed, 1=half_open, 2=open)", "format": "short", "min": 0, "max": 2 },
+        { "show": false }
+      ],
+      "alert": {
+        "name": "Circuit Breaker Open",
+        "conditions": [
+          {
+            "evaluator": { "params": [2], "type": "eq" },
+            "operator": { "type": "and" },
+            "query": { "params": ["A", "5m", "now"] },
+            "reducer": { "params": [], "type": "last" },
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "for": "5m",
+        "frequency": "1m",
+        "handler": 1,
+        "message": "Circuit breaker has been open for 5 minutes",
+        "name": "CircuitBreakerOpen",
+        "noDataState": "no_data"
+      }
+    },
+    {
+      "id": 8,
+      "title": "DLQ Size (Unresolved)",
+      "type": "graph",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "phoenix_dlq_unresolved_total",
+          "legendFormat": "{{connector_id}}"
+        }
+      ],
+      "yaxes": [
+        { "label": "unresolved messages", "format": "short" },
+        { "show": false }
+      ],
+      "alert": {
+        "name": "DLQ Backlog",
+        "conditions": [
+          {
+            "evaluator": { "params": [50], "type": "gt" },
+            "operator": { "type": "and" },
+            "query": { "params": ["A", "5m", "now"] },
+            "reducer": { "params": [], "type": "last" },
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "for": "0m",
+        "frequency": "1m",
+        "handler": 1,
+        "message": "DLQ backlog exceeded 50 unresolved messages",
+        "name": "DLQBacklog",
+        "noDataState": "no_data"
+      }
+    }
+  ]
+}

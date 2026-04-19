@@ -83,7 +83,6 @@ Every agent is a **Claude Code session** running in a sandboxed working director
 - `apps/dashboard/src/` — React 18 + Vite + Radix UI + Tailwind + TanStack Query
 - `shared/` — Importable libraries: DB models (28+ tables via SQLAlchemy), broker adapters, LLM client, NLP, crypto (Fernet)
 - `services/` — Microservices: orchestrator, execution, backtest-runner, llm-gateway, ws-gateway, etc. Hyphen-named dirs with import aliasing in `services/__init__.py`
-- `openclaw/bridge/` — Bridge Service for remote OpenClaw agent management
 - `agents/backtesting/` — Backtesting agent pipeline (12-step: transform → enrich → embed → preprocess → train models → evaluate → explain → patterns → LLM analysis → validate → create live agent)
 - `agents/templates/` — Agent templates: live-trader-v1, position-monitor-agent, supervisor, morning-briefing, etc.
 - `docs/` — All documentation (architecture, operations, development, specs, PRDs, releases)

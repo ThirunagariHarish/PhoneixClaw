@@ -56,7 +56,7 @@ class Automation(Base):
     agent_role: Mapped[str] = mapped_column(String(50), nullable=False)
     instance_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), nullable=True
-    )  # FK to openclaw_instances removed in V3 migration
+    )  # Legacy field; no longer used (OpenClaw deprecated)
     delivery_channel: Mapped[str] = mapped_column(String(30), nullable=False, default="dashboard")
     delivery_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     template_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

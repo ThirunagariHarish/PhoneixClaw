@@ -12,8 +12,6 @@ try:
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    from shared.db.models.wiki import AgentWikiEntry, AgentWikiEntryVersion
-    from apps.api.src.repositories.wiki import WikiRepository
 
     _SKIP = False
 except Exception as _e:

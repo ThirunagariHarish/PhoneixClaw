@@ -78,12 +78,12 @@ class ConnectorResponse(BaseModel):
 
 class DiscoverServersRequest(BaseModel):
     token: str
-    auth_type: str = "user_token"
+    auth_type: str = "bot"
 
 
 class DiscoverChannelsRequest(BaseModel):
     token: str
-    auth_type: str = "user_token"
+    auth_type: str = "bot"
     server_id: str | None = None
 
 
@@ -157,6 +157,15 @@ async def list_connectors(
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ConnectorResponse)
 async def create_connector(payload: ConnectorCreate, request: Request, session: DbSession):
     """Create a new connector with encrypted credentials."""
+    deprecation_warning = None
+    if payload.type == "discord" and payload.credentials:
+        if payload.credentials.get("user_token") and not payload.credentials.get("bot_token"):
+            deprecation_warning = (
+                "DEPRECATED: user_token auth violates Discord TOS and will be removed. "
+                "Please migrate to a Discord Bot token."
+            )
+            logger.warning("Connector creation with user_token for Discord: %s", payload.name)
+
     encrypted_creds = None
     if payload.credentials:
         from shared.crypto.credentials import encrypt_credentials
@@ -197,7 +206,16 @@ async def create_connector(payload: ConnectorCreate, request: Request, session: 
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Database constraint violation: {orig}",
         )
-    return ConnectorResponse.from_model(connector)
+    response = ConnectorResponse.from_model(connector)
+    if deprecation_warning:
+        from fastapi.responses import JSONResponse
+        data = response.model_dump() if hasattr(response, "model_dump") else response.dict()
+        data["deprecation_warning"] = deprecation_warning
+        return JSONResponse(
+            status_code=201, content=data,
+            headers={"X-Deprecation-Warning": deprecation_warning},
+        )
+    return response
 
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
@@ -248,6 +266,65 @@ async def update_connector(connector_id: str, payload: ConnectorUpdate, session:
     return ConnectorResponse.from_model(connector)
 
 
+@router.post("/{connector_id}/migrate-to-bot")
+async def migrate_connector_to_bot(
+    connector_id: str,
+    session: DbSession,
+    bot_token: str = Query(..., description="New Discord Bot token to replace user token"),
+):
+    """Migrate a Discord connector from deprecated user_token to an official Bot token.
+
+    Steps for the caller:
+    1. Create a bot at https://discord.com/developers/applications
+    2. Enable Message Content Intent under Privileged Gateway Intents
+    3. Invite the bot to the target server with Read Messages + Read Message History
+    4. Call this endpoint with the bot token
+    """
+    try:
+        cid = uuid.UUID(connector_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    result = await session.execute(select(Connector).where(Connector.id == cid))
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    if connector.type != "discord":
+        raise HTTPException(status_code=400, detail="Only Discord connectors can be migrated")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            "https://discord.com/api/v10/users/@me",
+            headers={"Authorization": f"Bot {bot_token}"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bot token validation failed (HTTP {resp.status_code}). "
+            "Ensure the token is correct and the bot has been created.",
+        )
+    bot_user = resp.json()
+
+    from shared.crypto.credentials import encrypt_credentials
+    connector.credentials_encrypted = encrypt_credentials({"bot_token": bot_token})
+    config = dict(connector.config or {})
+    config["auth_type"] = "bot"
+    connector.config = config
+    connector.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    logger.info(
+        "Connector %s migrated to bot token (bot user: %s)",
+        connector_id, bot_user.get("username"),
+    )
+    return {
+        "status": "migrated",
+        "bot_username": bot_user.get("username"),
+        "connector_id": connector_id,
+        "message": "Connector now uses official Discord Bot token. Restart discord-ingestion service to apply.",
+    }
+
+
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connector(connector_id: str, session: DbSession):
     """Delete a connector and its agent mappings."""
@@ -291,12 +368,16 @@ async def test_connector(connector_id: str, session: DbSession):
 
     try:
         if connector.type == "discord":
-            user_token = creds.get("user_token", "")
             bot_token = creds.get("bot_token", "")
-            if user_token:
-                auth_header = user_token
-            elif bot_token:
+            user_token = creds.get("user_token", "")
+            if bot_token:
                 auth_header = f"Bot {bot_token}" if not bot_token.startswith("Bot ") else bot_token
+            elif user_token:
+                logger.warning(
+                    "Connector %s uses deprecated user_token. Migrate to a Bot token.",
+                    connector_id,
+                )
+                auth_header = user_token
             else:
                 return {"connection_status": "ERROR", "detail": "No Discord token in stored credentials"}
             async with httpx.AsyncClient(timeout=10) as client:
@@ -576,6 +657,107 @@ async def pull_connector_history(connector_id: str, session: DbSession):
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(exc)[:200]}")
 
     return {"status": "complete", **summary}
+
+
+# ── Webhook relay ingestion ──────────────────────────────────────────────────
+
+class WebhookIngestPayload(BaseModel):
+    content: str
+    author: str = "webhook"
+    channel: str = "webhook"
+    timestamp: str | None = None
+    message_id: str | None = None
+
+
+@router.post("/{connector_id}/webhook-ingest", status_code=status.HTTP_201_CREATED)
+async def webhook_ingest(
+    connector_id: str,
+    payload: WebhookIngestPayload,
+    request: Request,
+    session: DbSession,
+):
+    """Ingest a message via webhook relay — TOS-compliant alternative to direct Discord API access.
+
+    Accepts messages forwarded by an external relay (Zapier, Make, a simple bot, etc.)
+    and feeds them into the same channel_messages + Redis stream pipeline.
+    Authenticates via X-Webhook-Secret header matching the connector's stored secret,
+    or via the standard JWT if the caller is the connector owner.
+    """
+    import json as _json
+
+    import redis.asyncio as aioredis
+
+    result = await session.execute(
+        select(Connector).where(Connector.id == uuid.UUID(connector_id))
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    webhook_secret = (connector.config or {}).get("webhook_secret", "")
+    header_secret = request.headers.get("x-webhook-secret", "")
+
+    user_id_str = getattr(request.state, "user_id", None)
+    owner_match = user_id_str and connector.user_id and str(connector.user_id) == user_id_str
+
+    if not owner_match and (not webhook_secret or header_secret != webhook_secret):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret")
+
+    from shared.db.models.channel_message import ChannelMessage
+
+    posted_at = datetime.now(timezone.utc)
+    if payload.timestamp:
+        try:
+            posted_at = datetime.fromisoformat(payload.timestamp).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            pass
+
+    platform_msg_id = payload.message_id or str(uuid.uuid4())
+
+    existing = await session.execute(
+        select(ChannelMessage).where(ChannelMessage.platform_message_id == platform_msg_id).limit(1)
+    )
+    if existing.scalar_one_or_none():
+        return {"status": "duplicate", "message_id": platform_msg_id}
+
+    import re
+    tickers = list(set(re.findall(r"\$([A-Z]{1,5})\b", payload.content)))
+
+    msg = ChannelMessage(
+        id=uuid.uuid4(),
+        connector_id=connector.id,
+        channel=payload.channel,
+        author=payload.author,
+        content=payload.content,
+        message_type="webhook",
+        tickers_mentioned=tickers,
+        raw_data={"source": "webhook_relay", "author": payload.author},
+        platform_message_id=platform_msg_id,
+        posted_at=posted_at,
+    )
+    session.add(msg)
+    await session.commit()
+
+    try:
+        redis_url = __import__("os").environ.get("REDIS_URL", "redis://localhost:6379")
+        redis_client = aioredis.from_url(redis_url, decode_responses=True)
+        stream_payload = {
+            "connector_id": str(connector.id),
+            "channel": payload.channel,
+            "author": payload.author,
+            "content": payload.content,
+            "tickers": _json.dumps(tickers),
+            "timestamp": posted_at.isoformat(),
+            "message_id": platform_msg_id,
+            "sentiment": "neutral",
+        }
+        await redis_client.xadd(f"stream:channel:{connector.id}", stream_payload, maxlen=5000)
+        await redis_client.xadd(f"stream:messages:{connector.id}", stream_payload, maxlen=5000)
+        await redis_client.aclose()
+    except Exception as exc:
+        logger.warning("Redis publish failed for webhook ingest: %s", exc)
+
+    return {"status": "ingested", "message_id": platform_msg_id, "tickers": tickers}
 
 
 # ── Agent linking ────────────────────────────────────────────────────────────

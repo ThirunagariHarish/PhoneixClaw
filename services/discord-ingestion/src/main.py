@@ -1,6 +1,6 @@
 """Discord Ingestion Service — standalone container for Discord message listening.
 
-Connects to Discord via self-bot tokens stored in the connectors table,
+Connects to Discord via official Bot tokens stored in the connectors table,
 persists messages to channel_messages, and publishes events to Redis streams.
 Runs independently of the API so Discord connections survive API restarts.
 """
@@ -22,6 +22,8 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from shared.observability.metrics import discord_messages_counter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("discord-ingestion")
@@ -46,10 +48,13 @@ class ConnectorState:
 
     __slots__ = (
         "connector_id", "channel_name", "connected", "messages_received",
-        "task", "poll_task", "channel_ids", "token",
+        "task", "poll_task", "channel_ids", "token", "auth_type",
     )
 
-    def __init__(self, connector_id: str, channel_name: str, channel_ids: list[str], token: str):
+    def __init__(
+        self, connector_id: str, channel_name: str, channel_ids: list[str],
+        token: str, auth_type: str = "bot",
+    ):
         self.connector_id = connector_id
         self.channel_name = channel_name
         self.connected = False
@@ -58,6 +63,7 @@ class ConnectorState:
         self.poll_task: asyncio.Task | None = None
         self.channel_ids = channel_ids
         self.token = token
+        self.auth_type = auth_type
 
 
 _engine = None
@@ -97,17 +103,31 @@ async def _get_redis() -> aioredis.Redis | None:
     return _redis
 
 
-def _decrypt_token(credentials_encrypted: str | None) -> str:
-    """Decrypt connector credentials and extract the Discord user token."""
+def _decrypt_token(credentials_encrypted: str | None) -> tuple[str, str]:
+    """Decrypt connector credentials and extract the Discord bot token.
+
+    Returns (token, auth_type) where auth_type is 'bot' or 'user_token'.
+    Prioritises bot_token for Discord TOS compliance.
+    """
     if not credentials_encrypted:
-        return ""
+        return "", "bot"
     try:
         from shared.crypto.credentials import decrypt_credentials
         creds = decrypt_credentials(credentials_encrypted)
-        return creds.get("user_token") or creds.get("bot_token") or ""
+        bot_token = creds.get("bot_token", "")
+        if bot_token:
+            return bot_token, "bot"
+        user_token = creds.get("user_token", "")
+        if user_token:
+            logger.warning(
+                "Connector uses deprecated user_token auth. "
+                "Migrate to a Discord Bot token for TOS compliance."
+            )
+            return user_token, "user_token"
+        return "", "bot"
     except Exception as exc:
         logger.error("Failed to decrypt credentials: %s", exc)
-        return ""
+        return "", "bot"
 
 
 def _extract_channel_ids(config: dict[str, Any] | None) -> list[str]:
@@ -159,11 +179,14 @@ async def _persist_message(
     raw_data: dict[str, Any],
     platform_message_id: str,
     posted_at: datetime,
+    channel_id_snowflake: str | None = None,
 ) -> None:
     """INSERT a message row into channel_messages and publish to Redis."""
     tickers = _extract_tickers(content)
     msg_id = uuid.uuid4()
     connector_uuid = uuid.UUID(state.connector_id)
+    correlation_id = str(uuid.uuid4())
+    raw_data["correlation_id"] = correlation_id
 
     async with session_factory() as session:
         exists = await session.execute(
@@ -177,16 +200,17 @@ async def _persist_message(
         await session.execute(
             text("""
                 INSERT INTO channel_messages
-                    (id, connector_id, channel, author, content, message_type, tickers_mentioned,
-                     raw_data, platform_message_id, posted_at, created_at)
+                    (id, connector_id, channel, channel_id_snowflake, author, content, message_type,
+                     tickers_mentioned, raw_data, platform_message_id, posted_at, created_at)
                 VALUES
-                    (:id, :connector_id, :channel, :author, :content, :message_type, :tickers,
-                     :raw_data, :platform_message_id, :posted_at, :created_at)
+                    (:id, :connector_id, :channel, :channel_id_snowflake, :author, :content, :message_type,
+                     :tickers, :raw_data, :platform_message_id, :posted_at, :created_at)
             """),
             {
                 "id": str(msg_id),
                 "connector_id": str(connector_uuid),
                 "channel": channel_name,
+                "channel_id_snowflake": channel_id_snowflake,
                 "author": author,
                 "content": content,
                 "message_type": "info",
@@ -198,6 +222,7 @@ async def _persist_message(
             },
         )
         await session.commit()
+        discord_messages_counter.inc()
 
     state.messages_received += 1
 
@@ -212,6 +237,7 @@ async def _persist_message(
             "timestamp": posted_at.isoformat(),
             "message_id": platform_message_id,
             "sentiment": _basic_sentiment(content),
+            "correlation_id": correlation_id,
         }
         try:
             stream_payload = {k: str(v) for k, v in payload.items()}
@@ -259,6 +285,11 @@ async def _http_poller(state: ConnectorState) -> None:
     last_message_ids: dict[str, str] = {}
     logger.info("HTTP poller started for connector %s", state.connector_id)
 
+    auth_value = (
+        f"Bot {state.token}" if state.auth_type == "bot" and not state.token.startswith("Bot ")
+        else state.token
+    )
+
     while _running:
         for channel_id in state.channel_ids:
             try:
@@ -268,7 +299,7 @@ async def _http_poller(state: ConnectorState) -> None:
                     url += f"&after={last_id}"
 
                 async with httpx.AsyncClient(timeout=15) as client:
-                    resp = await client.get(url, headers={"Authorization": state.token})
+                    resp = await client.get(url, headers={"Authorization": auth_value})
 
                 if resp.status_code == 200:
                     messages = resp.json()
@@ -308,6 +339,7 @@ async def _http_poller(state: ConnectorState) -> None:
                                 raw_data=raw,
                                 platform_message_id=mid,
                                 posted_at=posted_at,
+                                channel_id_snowflake=channel_id,
                             )
                         except Exception as exc:
                             logger.error("HTTP poller persist error for connector %s: %s", state.connector_id, exc)
@@ -357,7 +389,15 @@ async def _discord_listener(state: ConnectorState) -> None:
         try:
             import discord
 
-            client = discord.Client()
+            if state.auth_type == "bot":
+                intents = discord.Intents.default()
+                intents.guilds = True
+                intents.guild_messages = True
+                intents.message_content = True
+                client = discord.Client(intents=intents)
+            else:
+                client = discord.Client()
+
             channel_ids_set = {str(cid) for cid in state.channel_ids}
             ready_event = asyncio.Event()
 
@@ -399,11 +439,14 @@ async def _discord_listener(state: ConnectorState) -> None:
                             if message.created_at and message.created_at.tzinfo is None
                             else message.created_at or datetime.now(timezone.utc)
                         ),
+                        channel_id_snowflake=str(message.channel.id),
                     )
                 except Exception as exc:
                     logger.error("Error processing message on connector %s: %s", state.connector_id, exc)
 
-            client_task = asyncio.create_task(client.start(state.token))
+            client_task = asyncio.create_task(
+                client.start(state.token, bot=(state.auth_type == "bot"))
+            )
             attempt = 0
 
             try:
@@ -459,12 +502,16 @@ async def _load_and_start_connectors() -> None:
         config = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
         credentials_encrypted = row[3]
 
-        token = _decrypt_token(credentials_encrypted)
+        token, auth_type = _decrypt_token(credentials_encrypted)
         if not token:
             token = config.get("token", "")
         if not token:
             logger.warning("Connector %s (%s) has no token, skipping", connector_id, connector_name)
             continue
+
+        stored_auth_type = config.get("auth_type", "")
+        if stored_auth_type:
+            auth_type = stored_auth_type
 
         channel_ids = _extract_channel_ids(config)
         channel_name = config.get("channel_name", connector_name or "unknown")
@@ -474,6 +521,7 @@ async def _load_and_start_connectors() -> None:
             channel_name=channel_name,
             channel_ids=channel_ids,
             token=token,
+            auth_type=auth_type,
         )
         state.task = asyncio.create_task(_discord_listener(state))
         _connectors[connector_id] = state
@@ -573,12 +621,19 @@ async def token_health(connector_id: str):
     state = _connectors.get(connector_id)
     if not state:
         return {"status": "unknown", "detail": "connector not found"}
+    auth_value = (
+        f"Bot {state.token}" if state.auth_type == "bot" and not state.token.startswith("Bot ")
+        else state.token
+    )
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
             "https://discord.com/api/v10/users/@me",
-            headers={"Authorization": state.token},
+            headers={"Authorization": auth_value},
         )
     if resp.status_code == 200:
         user = resp.json()
-        return {"status": "valid", "username": user.get("username"), "connected": state.connected}
+        return {
+            "status": "valid", "username": user.get("username"),
+            "connected": state.connected, "auth_type": state.auth_type,
+        }
     return {"status": "invalid", "http_status": resp.status_code}
