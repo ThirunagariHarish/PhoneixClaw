@@ -22,13 +22,14 @@ make db-upgrade          # apply pending migrations when safe
 
 | Step | Command | Pass/Fail |
 |------|---------|-----------|
-| **Primary gate** | `make go-live-regression` | Runs `test` (repo unit + `apps/api/tests/unit`), `test-integration`, `test-bridge`, `test-dashboard` |
+| **Primary gate** | `make go-live-regression` | Runs `test` (repo unit + `apps/api/tests/unit`), `test-integration`, `test-dashboard` (NOTE: `test-bridge` removed in v2.0.0) |
 | Optional: ruff + mypy | `make go-live-regression-quality` | May fail until repo-wide lint/mypy cleanup |
 | API integration tests | `make test-api-all` | Includes `apps/api/tests/integration/` (route drift / DB) |
 | API unit only | `make test-api` | Subset of `make test` second leg |
 | Playwright E2E | `make test-e2e` | Requires API :8011 + dashboard :3000 |
-| Alembic head check | `make db-alembic-heads` | Expect `038_decision_trail (head)` |
+| Alembic head check | `make db-alembic-heads` | Expect `038_decision_trail (head)` or later (046-048 in v2.0.0) |
 | Script wrapper | `./scripts/go_live_regression.sh` | Same as `go-live-regression`; set `SKIP_E2E=0` to append E2E |
+| **NEW: Benchmark** | `make benchmark` | Signal-to-trade latency p95 < 2s |
 
 ## 3. Manual smoke (QA / PM spot-check)
 
@@ -59,18 +60,29 @@ export AGENT_ID=...
 | Position monitor + sell-signal routing (file-based) | | | |
 | Backtesting metrics / artifacts in UI | | | |
 | Robinhood connector path | | | |
+| **NEW v2.0:** Pipeline engine (`engine_type=pipeline`) | | | |
+| **NEW v2.0:** IBKR Gateway broker adapter | | | |
+| **NEW v2.0:** Observability dashboards (Grafana) | | | |
 
 ## 5. Go / no-go
 
-**Go:** All automated steps green on release candidate; manual smoke pass; DB migrated; no open P0/P1 on auth or execution.
+**Go:** All automated steps green on release candidate; manual smoke pass; DB migrated; no open P0/P1 on auth or execution; security audit complete; observability metrics instrumented; rollout plan reviewed.
 
-**No-go:** Failing `tests/integration/` or critical `tests/e2e/`; DB behind head; cannot list/post live trades.
+**No-go:** Failing `tests/integration/` or critical `tests/e2e/`; DB behind head; cannot list/post live trades; Sev-1 security finding unresolved; benchmark latency > 2s p95.
 
-| Role | Name | Signature / date |
+**Reference Documentation:**
+- [Staged Rollout Plan](../operations/go-live-rollout-plan.md) — 3-stage deployment with go/no-go criteria
+- [Observability Checklist](../operations/go-live-observability.md) — 8 metrics, thresholds, dashboards, runbooks
+- [Security Findings](security-findings-phase-e.md) — Audit template and checklist
+- [Release Notes v2.0.0](../releases/v2.0.0.md) — Breaking changes and migration steps
+
+| Role | Name | Signature / Date |
 |------|------|------------------|
-| QA | | |
-| PM | | |
-| Eng lead | | |
+| QA Lead | | |
+| PM / Product Manager | | |
+| Eng Lead / Engineering Lead | | |
+| Security Lead | | |
+| Release Manager | | |
 
 ## 6. Day-of cutover
 

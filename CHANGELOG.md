@@ -5,6 +5,83 @@ All notable changes to Phoenix Trade Bot are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-XX
+
+**MAJOR RELEASE** — Breaking changes require migration steps. See [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md) for full release notes and migration guide.
+
+### Added
+
+- **Phase A: Pipeline Engine**
+  - Pipeline-based execution engine with Redis Streams orchestration
+  - Robinhood MCP broker adapter with session persistence and zero-latency restore
+  - IBKR Gateway broker adapter with daily re-auth flow
+  - `engine_type` field on `agents` table (values: `pipeline`, `legacy`)
+  - Database migrations 046-048 for pipeline engine support
+  - Kill-switch endpoint `POST /api/v2/agents/kill-switch` for emergency agent shutdown
+
+- **Phase B: Observability**
+  - Grafana dashboard for agent wake-flow monitoring (`infra/observability/grafana/agent-wake-flow.json`)
+  - Prometheus metrics: agent lifecycle states, broker circuit breaker states, Redis stream lag
+  - Structured JSON logging with request IDs and trace context
+  - Heartbeat monitoring with `last_activity_at` tracking
+
+- **Phase C: Backtesting Database Persistence**
+  - `agent_backtest_artifacts` table for storing backtest metrics, model files, and evaluation reports
+  - Historical comparison UI for p50/p95 latency trends across backtest runs
+  - Reproducibility tags: git SHA, Python version, dependency snapshot
+
+- **Phase D: Dashboard UX**
+  - Redesigned agent detail page with 10-tab layout (Trades, Backtesting, Skills, Logs, Config, etc.)
+  - Decision trail visibility: eye icon expands full `decision_trail` JSON for every trade
+  - Real-time SSE streaming for agent logs and trade feed
+
+- **Phase E: Go-Live Hardening**
+  - Signal-to-trade latency benchmark (`tests/benchmark/test_signal_to_trade_latency.py`)
+  - Security findings template (`docs/dev/security-findings-phase-e.md`)
+  - Staged rollout plan (`docs/operations/go-live-rollout-plan.md`)
+  - Observability checklist (`docs/operations/go-live-observability.md`)
+  - 8 operational runbooks under `docs/runbooks/`
+
+### Changed
+
+- **BREAKING:** `POST /api/v2/agents` now requires `engine_type` field (`pipeline` or `legacy`)
+- **BREAKING:** `go-live-regression` Makefile target no longer includes `test-bridge`
+- Agent lifecycle state machine extended with `backtesting_approved` state
+- `agent_trades.decision_trail` now stored as JSONB (migration 038)
+- Go-live regression checklist updated with PM / QA / Eng Lead / Security Lead sign-off lines
+
+### Fixed
+
+- Backtester OOM crashes (memory limits raised from 512M to 2G, fail-fast on SIGKILL)
+- Robinhood suspicious-login loop (session pickle persistence instead of re-login on every trade)
+- Agent creation wizard connector validation for non-trading agent types
+- Paper-mode safety gaps (dedicated template, no credentials injected into paper agents)
+
+### Removed
+
+- **BREAKING:** OpenClaw Bridge Service (`openclaw/bridge/` directory deleted)
+  - All `/api/v2/bridge/*` endpoints removed
+  - Makefile targets `run-bridge` and `test-bridge` removed
+  - Environment variable `BRIDGE_TOKEN` no longer used
+- **BREAKING:** Alpaca broker adapter (`shared/broker_adapters/alpaca.py` removed)
+
+### Migration Steps
+
+See [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md) for detailed migration guide. Summary:
+
+1. Backup database: `pg_dump -U postgres phoenix_trade_bot > backup_v1.15.3.sql`
+2. Remove `BRIDGE_TOKEN` from `.env`
+3. Add `ROBINHOOD_MCP_URL` and `IB_GATEWAY_HOST` (if using pipeline engine)
+4. Run migrations: `make db-upgrade`
+5. Update existing agents: `UPDATE agents SET engine_type = 'legacy' WHERE engine_type IS NULL;`
+6. Rebuild: `docker compose up -d --build`
+
+### Rollback
+
+Full rollback instructions in [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md) §Rollback Plan.
+
+---
+
 ## [1.15.4] - 2026-04-12 — Fix Robinhood Suspicious-Login / Session Revocation Bug
 
 **Patch release.** Eliminates the "suspicious login detected" Robinhood push
