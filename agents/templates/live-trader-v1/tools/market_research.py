@@ -11,7 +11,6 @@ import json
 import logging
 import sys
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("market_research")
