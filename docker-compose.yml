@@ -401,6 +401,7 @@ services:
       - "3100:3100"
     volumes:
       - lokidata:/loki
+    command: -config.file=/etc/loki/local-config.yaml -table-manager.retention-deletes-enabled=true -table-manager.retention-period=720h
     restart: unless-stopped
 
   promtail:

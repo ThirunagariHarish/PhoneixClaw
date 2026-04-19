@@ -1,22 +1,34 @@
-"""Phase B.6 observability metrics — shared Prometheus registry and metric helpers.
+"""Phase B observability metrics — shared Prometheus registry and metric helpers.
 
 Provides:
 - tool_latency_histogram — phoenix_tool_duration_seconds{tool}
 - agent_session_counter — phoenix_agent_sessions_created_total
 - subagent_spawn_counter — phoenix_subagent_spawned_total
-- circuit_breaker_gauge_by_name — phoenix_circuit_breaker_state_by_name{name} (0=closed, 1=half_open, 2=open)
+- circuit_breaker_gauge — phoenix_circuit_breaker_state_by_name{name} (0=closed, 1=half_open, 2=open)
 - dlq_size_gauge — phoenix_dlq_unresolved_total{connector_id}
 - stream_lag_gauge — phoenix_redis_stream_lag_seconds{stream_key}
 - discord_messages_counter — phoenix_discord_messages_total
+
+Phase B wave 3 additions:
+- Background async refresher task that keeps dlq_size_gauge fresh without making the
+  `/metrics` scrape do a synchronous DB query (15s refresh interval).
 
 Note: phoenix_trades_total already exists in shared.metrics.TRADE_COUNTER with {service, status} labels.
 We reuse it for tool-side trade metrics.
 """
 
+import asyncio
+import logging
+from typing import Optional
+
 from prometheus_client import Counter, Gauge, Histogram
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.metrics import TRADE_COUNTER as trade_success_counter
 from shared.metrics import registry
+
+logger = logging.getLogger(__name__)
 
 # Tool latency across parse_signal, enrich_single, inference, risk_check, technical_analysis, execute_trade
 tool_latency_histogram = Histogram(
@@ -74,6 +86,88 @@ discord_messages_counter = Counter(
 )
 
 
+# --- DLQ gauge background refresher (Phase B wave 3) ----------------------
+# Keeps dlq_size_gauge fresh without a synchronous DB query on every /metrics scrape.
+
+_dlq_refresh_task: Optional[asyncio.Task] = None
+_dlq_refresh_running = False
+
+
+async def _refresh_dlq_gauge() -> None:
+    """Background task that refreshes the DLQ gauge every 15s.
+
+    Queries `dead_letter_messages` for unresolved counts per connector_id and updates
+    the Prometheus gauge. Runs until `stop_dlq_gauge_refresher()` is called.
+    """
+    global _dlq_refresh_running
+
+    try:
+        from shared.db.engine import get_async_session_maker
+        session_maker = get_async_session_maker()
+    except Exception as e:
+        logger.warning(f"DLQ gauge refresher disabled — cannot load DB session: {e}")
+        return
+
+    _dlq_refresh_running = True
+    logger.info("Starting DLQ gauge background refresher (15s interval)")
+
+    while _dlq_refresh_running:
+        try:
+            async with session_maker() as session:
+                session: AsyncSession
+                query = text(
+                    "SELECT connector_id, COUNT(*) as count "
+                    "FROM dead_letter_messages "
+                    "WHERE resolved = false "
+                    "GROUP BY connector_id"
+                )
+                result = await session.execute(query)
+                rows = result.fetchall()
+                dlq_size_gauge._metrics.clear()
+                for connector_id, count in rows:
+                    dlq_size_gauge.labels(connector_id=connector_id).set(count)
+                logger.debug(f"Refreshed DLQ gauge: {len(rows)} connector(s)")
+        except Exception as e:
+            logger.error(f"Failed to refresh DLQ gauge: {e}")
+
+        await asyncio.sleep(15)
+
+
+def start_dlq_gauge_refresher() -> None:
+    """Start the background DLQ gauge refresh task.
+
+    Safe to call multiple times — only starts once. Should be called on app startup
+    (e.g., FastAPI lifespan or startup event).
+    """
+    global _dlq_refresh_task
+
+    if _dlq_refresh_task is not None and not _dlq_refresh_task.done():
+        logger.debug("DLQ gauge refresher already running")
+        return
+
+    try:
+        _dlq_refresh_task = asyncio.create_task(_refresh_dlq_gauge())
+        logger.info("DLQ gauge refresher task started")
+    except RuntimeError:
+        logger.warning("DLQ gauge refresher not started — no running asyncio loop")
+
+
+def stop_dlq_gauge_refresher() -> None:
+    """Stop the background DLQ gauge refresh task.
+
+    Should be called on app shutdown.
+    """
+    global _dlq_refresh_running, _dlq_refresh_task
+
+    if _dlq_refresh_task is None or _dlq_refresh_task.done():
+        logger.debug("DLQ gauge refresher not running")
+        return
+
+    _dlq_refresh_running = False
+    _dlq_refresh_task.cancel()
+    logger.info("DLQ gauge refresher task stopped")
+
+
 __all__ = [
     "tool_latency_histogram",
     "trade_success_counter",
@@ -83,4 +177,6 @@ __all__ = [
     "dlq_size_gauge",
     "stream_lag_gauge",
     "discord_messages_counter",
+    "start_dlq_gauge_refresher",
+    "stop_dlq_gauge_refresher",
 ]
