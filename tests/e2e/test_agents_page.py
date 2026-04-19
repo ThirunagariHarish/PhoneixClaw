@@ -29,7 +29,7 @@ def test_wizard_has_instance_step(logged_in_page: Page, base_url: str):
     """Wizard has instance selection."""
     logged_in_page.goto(f"{base_url}/agents")
     logged_in_page.get_by_role("button", name="New Agent").click()
-    expect(logged_in_page.get_by_text("Instance").or_(logged_in_page.get_by_text("OpenClaw")).first).to_be_visible(timeout=3000)
+    expect(logged_in_page.get_by_text("Instance").first).to_be_visible(timeout=3000)
 
 
 def test_agent_card_actions_visible(logged_in_page: Page, base_url: str):
