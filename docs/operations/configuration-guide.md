@@ -1,6 +1,6 @@
 # Phoenix v2 Configuration Guide
 
-This guide covers environment variables, Docker Compose setup, WireGuard VPN, OpenClaw instances, and Coolify deployment for the Phoenix v2 trading bot.
+This guide covers environment variables, Docker Compose setup, and Coolify deployment for the Phoenix v2 trading bot.
 
 ---
 
@@ -58,14 +58,6 @@ This guide covers environment variables, Docker Compose setup, WireGuard VPN, Op
 | `ALPACA_BASE_URL` | API base URL | `https://paper-api.alpaca.markets` |
 | `ALPACA_PAPER` | Use paper trading | `true` |
 
-### OpenClaw / Bridge
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BRIDGE_TOKEN` | Token for bridge API auth | — |
-| `MINIO_ENDPOINT` | MinIO for skill sync | — |
-| `BRIDGE_URL` | Bridge service URL | `http://phoenix-bridge:18800` |
-
 ---
 
 ## Docker Compose Setup
@@ -90,54 +82,7 @@ cp .env.example .env
 docker compose -f docker-compose.production.yml up -d
 ```
 
-Services: `phoenix-api`, `phoenix-dashboard`, `phoenix-bridge`, `phoenix-ws-gateway`, `phoenix-execution`, `phoenix-automation`, `phoenix-connector-manager`, `phoenix-backtest-runner`, `phoenix-skill-sync`, `phoenix-agent-comm`, `phoenix-global-monitor`, plus PostgreSQL, Redis, MinIO, Nginx, Prometheus, Grafana, Loki, Promtail.
-
----
-
-## WireGuard VPN Configuration
-
-Phoenix uses WireGuard for secure communication between the control plane and remote OpenClaw nodes.
-
-1. **Install WireGuard** on control plane and node VPS:
-   - Ubuntu: `apt install wireguard`
-   - macOS: App Store or `brew install wireguard-tools`
-
-2. **Generate keys** on each peer:
-   ```bash
-   wg genkey | tee privatekey | wg pubkey > publickey
-   ```
-
-3. **Create `/etc/wireguard/wg0.conf`** on each host with `[Interface]` and `[Peer]` sections. Use a private subnet (e.g. `10.0.0.0/24`).
-
-4. **Start WireGuard**:
-   ```bash
-   sudo wg-quick up wg0
-   ```
-
-5. **Test connectivity**:
-   ```bash
-   ./infra/scripts/test_wireguard.sh
-   # Or: PEER_IPS=10.0.0.2,10.0.0.3 ./infra/scripts/test_wireguard.sh
-   ```
-
----
-
-## OpenClaw Instance Setup
-
-1. **Provision a node** (VPS or laptop):
-   ```bash
-   ./infra/scripts/provision-local-node.sh https://api.phoenix.example.com
-   ```
-
-2. **Configure instance** in `openclaw/configs/` (e.g. `openclaw-instance-d.json`):
-   - `instance_name`, `role`, `node_type`, `host`, `port`
-   - `bridge_token` (must match control plane)
-   - `agents` array with `id`, `path`, `type`, `auto_start`
-   - `capabilities` and `resource_limits`
-
-3. **Deploy Bridge** on the node to expose REST API on port 18800. The control plane registers instances and manages agents via the bridge.
-
-4. **Register node** with the control plane (done by `provision-local-node.sh` or manually via `POST /api/v1/nodes/register`).
+Services: `phoenix-api`, `phoenix-dashboard`, `phoenix-ws-gateway`, `phoenix-execution`, `phoenix-automation`, `phoenix-connector-manager`, `phoenix-backtest-runner`, `phoenix-agent-comm`, `phoenix-global-monitor`, plus PostgreSQL, Redis, MinIO, Nginx, Prometheus, Grafana, Loki, Promtail.
 
 ---
 
