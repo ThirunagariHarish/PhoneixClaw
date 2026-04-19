@@ -199,7 +199,6 @@ class RobinhoodBrokerAdapter:
 
         root, yymmdd, cp, strike_str = m.groups()
         yy, mm, dd = int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:6])
-        year = 2000 + yy if yy < 50 else 1900 + yy
 
         strike = int(strike_str) / 1000.0
         strike_int = int(strike) if strike == int(strike) else strike
@@ -224,4 +223,8 @@ class RobinhoodBrokerAdapter:
         strike = float(strike_str)
         strike_padded = f"{int(strike * 1000):08d}"
 
-        return f"{root}{yy}{mm:02d}{dd:02d}{cp}{strike_padded}"
+        # Convert strings to ints for formatting
+        mm_int = int(mm)
+        dd_int = int(dd)
+
+        return f"{root}{yy}{mm_int:02d}{dd_int:02d}{cp}{strike_padded}"
