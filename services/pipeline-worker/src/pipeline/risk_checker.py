@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,6 @@ async def check_risk(
     percentage-sell position lookup.
     """
     # Lazy imports to avoid model loading issues
-    from shared.db.models.agent_trade import AgentTrade
     from shared.db.models.trade import TradeIntent
 
     risk_params = config.get("risk_params", {})
@@ -51,7 +50,6 @@ async def check_risk(
     # Configuration
     max_positions = risk_params.get("max_concurrent_positions", 5)
     max_daily_loss_pct = risk_params.get("max_daily_loss_pct", 5.0)
-    max_position_size_pct = risk_params.get("max_position_size_pct", 10.0)
     max_position_size = risk_params.get("max_position_size", 10)
     max_total_contracts = risk_params.get("max_total_contracts", 50)
     confidence_threshold = risk_params.get("confidence_threshold", 0.6)
@@ -133,11 +131,12 @@ async def check_risk(
                 TradeIntent.status.notin_(["REJECTED", "FAILED", "CANCELLED"]),
             )
         )
-        open_positions = count_result.scalar_one()
+        open_positions = count_result.scalar_one() or 0
     except Exception as exc:
         logger.warning("Failed to query open positions: %s", exc)
         open_positions = 0
 
+    open_positions = open_positions if open_positions is not None else 0
     positions_ok = open_positions < max_positions
     checks.append(RiskCheck(
         name="max_concurrent_positions",
