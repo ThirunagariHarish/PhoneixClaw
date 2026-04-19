@@ -152,7 +152,10 @@ class DiscordBackfiller:
         if self.resume:
             cp = self.checkpoint.load()
             if cp:
-                logger.info(f"Resuming from checkpoint: run_id={cp['run_id']}, last_message_id={cp.get('last_message_id')}")
+                logger.info(
+                    f"Resuming from checkpoint: run_id={cp['run_id']}, "
+                    f"last_message_id={cp.get('last_message_id')}"
+                )
                 self.run_id = uuid.UUID(cp["run_id"])
                 self.last_message_id = cp.get("last_message_id")
                 self.messages_imported = cp.get("messages_imported", 0)
@@ -202,9 +205,16 @@ class DiscordBackfiller:
                 # Try to inspect if column exists via a simple query
                 session.execute(select(ChannelMessage.id).limit(0))
                 # Check if backfill_run_id is in the model's columns
-                if not hasattr(ChannelMessage, '__table__') or 'backfill_run_id' not in [c.name for c in ChannelMessage.__table__.columns]:
+                has_column = (
+                    hasattr(ChannelMessage, '__table__')
+                    and 'backfill_run_id' in [c.name for c in ChannelMessage.__table__.columns]
+                )
+                if not has_column:
                     has_backfill_column = False
-                    logger.warning("backfill_run_id column not found in channel_messages — skipping field (run migration 046)")
+                    logger.warning(
+                        "backfill_run_id column not found in channel_messages — "
+                        "skipping field (run migration 046)"
+                    )
             except Exception:
                 has_backfill_column = False
 

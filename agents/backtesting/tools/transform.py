@@ -6,8 +6,9 @@ Usage:
 
 import argparse
 import json
+import os as _os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -261,7 +262,6 @@ def _build_trade_row(trade_id: int, position: dict) -> Optional[dict]:
 
 _SEED_DB_URL = "postgresql://seeduser:seedpass@localhost:5434/phoenix_seed"
 # Override via env var: export SEED_DB_URL="postgresql://seeduser:<pw>@localhost:5434/phoenix_seed"
-import os as _os
 _SEED_DB_URL = _os.environ.get("SEED_DB_URL", _SEED_DB_URL)
 
 
