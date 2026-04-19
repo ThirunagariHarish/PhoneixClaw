@@ -100,7 +100,7 @@ async def create_error_log(
     body: dict,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Create an error log entry from frontend or OpenClaw agent activity (source=openclaw_agent)."""
+    """Create an error log entry from frontend (historical: openclaw_agent source deprecated)."""
     log_id = uuid.uuid4()
     now = _now_utc()
     ctx = _default_ctx(body)
@@ -129,7 +129,7 @@ async def ingest_agent_activity(
     body: dict,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Ingest logs from OpenClaw agents (bridge/cron). Creates error_log entries with source=openclaw_agent."""
+    """Ingest logs from agents (historical endpoint, deprecated). Creates error_log entries with source=openclaw_agent."""
     logs = body.get("logs", [])
     if not isinstance(logs, list):
         return {"ok": False, "detail": "logs must be an array"}

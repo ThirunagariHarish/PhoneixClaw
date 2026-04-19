@@ -81,7 +81,6 @@ from apps.api.src.routes import polymarket as polymarket_routes
 from apps.api.src.routes import positions as positions_routes
 from apps.api.src.routes import risk_compliance as risk_compliance_routes
 from apps.api.src.routes import scheduler_status as scheduler_status_routes
-from apps.api.src.routes import skills as skills_routes
 from apps.api.src.routes import strategies as strategies_routes
 from apps.api.src.routes import system_logs as system_logs_routes
 from apps.api.src.routes import tasks as tasks_routes
@@ -778,7 +777,6 @@ app.include_router(trades_routes.router)
 app.include_router(positions_routes.router)
 app.include_router(agents_routes.router)
 app.include_router(execution_routes.router)
-app.include_router(skills_routes.router)
 app.include_router(backtests_routes.router)
 app.include_router(strategies_routes.router)
 app.include_router(monitoring_routes.router)

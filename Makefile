@@ -4,7 +4,7 @@
        docker-build docker-up docker-down docker-logs clean benchmark \
        up down status logs setup local-up local-down \
        prod-build prod-up prod-down prod-logs prod-status \
-       run-api run-dashboard run-bridge \
+       run-api run-dashboard \
        run-orchestrator run-execution run-ws-gateway run-automation \
        run-connector-manager run-backtest-runner run-skill-sync \
        run-agent-comm run-comms run-code-executor run-global-monitor \
@@ -31,7 +31,6 @@ LOCAL_DB_URL ?= postgresql+asyncpg://phoenixtrader:localdev@localhost:5432/phoen
 LOCAL_REDIS    ?= redis://localhost:6379
 LOCAL_MINIO    ?= http://localhost:9002
 LOCAL_JWT      ?= dev-jwt-secret-change-me
-LOCAL_BRIDGE   ?= dev-bridge-token
 
 # Common env block for local service targets
 define LOCAL_ENV
@@ -42,8 +41,6 @@ JWT_SECRET_KEY=$(LOCAL_JWT) \
 MINIO_ENDPOINT=$(LOCAL_MINIO) \
 MINIO_ACCESS_KEY=minioadmin \
 MINIO_SECRET_KEY=minioadmin \
-BRIDGE_TOKEN=$(LOCAL_BRIDGE) \
-BRIDGE_URL=http://localhost:18800 \
 API_URL=http://localhost:8011 \
 OLLAMA_BASE_URL=http://localhost:11434 \
 OLLAMA_EXPAND_MODEL=llama3.2:1b \
@@ -124,9 +121,6 @@ test-api-all: ## All API tests including integration (may fail on route/DB drift
 test-dashboard: ## Run Phoenix v2 dashboard unit tests
 	cd apps/dashboard && npm run test
 
-test-bridge: ## Run OpenClaw Bridge Service tests (M1.7)
-	cd openclaw/bridge && PYTHONPATH=. $(PYTHON) -m pytest tests/ -v --tb=short
-
 test-integration: ## Run pytest integration tests (live pipeline mocks, etc.)
 	PYTHONPATH=. $(PYTHON) -m pytest tests/integration/ -v --tb=short
 
@@ -141,10 +135,9 @@ regression-yaml-parallel: ## Run tests/regression/user_journeys.yaml via 10 para
 	@if [ -z "$$PHOENIX_E2E_BASE_URL" ]; then echo "Set PHOENIX_E2E_BASE_URL"; exit 1; fi
 	$(PYTHON) scripts/regression/run_yaml_parallel.py
 
-go-live-regression: ## Automated go-live: test (unit + api unit), integration, bridge, dashboard
+go-live-regression: ## Automated go-live: test (unit + api unit), integration, dashboard
 	$(MAKE) test
 	$(MAKE) test-integration
-	$(MAKE) test-bridge
 	$(MAKE) test-dashboard
 
 go-live-regression-quality: ## Optional quality gate: ruff + mypy (may fail until repo-wide cleanup)
@@ -275,9 +268,6 @@ run-dashboard: ## Run Dashboard dev server on :3000
 
 run-dashboard-v2: run-dashboard ## Alias for run-dashboard
 
-run-bridge: ## Run OpenClaw Bridge on :18800
-	$(LOCAL_ENV) $(PYTHON) -m uvicorn openclaw.bridge.src.main:app --host 0.0.0.0 --port 18800 --reload
-
 # Microservices
 run-orchestrator: ## Run Orchestrator on :8040
 	$(LOCAL_ENV) $(PYTHON) -m uvicorn services.orchestrator.src.main:app --host 0.0.0.0 --port 8040 --reload
@@ -364,7 +354,6 @@ local-up: infra-up db-init ## Start infra (Kafka/PG/Redis) + init DB for local d
 	@echo "  \033[1mStart services in separate terminals:\033[0m"
 	@echo "      make run-api              API            http://localhost:8011"
 	@echo "      make run-dashboard        Dashboard      http://localhost:3000"
-	@echo "      make run-bridge           Bridge         http://localhost:18800"
 	@echo "      make run-orchestrator     Orchestrator   http://localhost:8040"
 	@echo "      make run-execution        Execution      http://localhost:8020"
 	@echo "      make run-ws-gateway       WS Gateway     ws://localhost:8031"
