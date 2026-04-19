@@ -1,0 +1,12 @@
+[Unit]
+Description=Phoenix DLQ Cleanup Timer (daily at 03:00)
+After=network.target
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+# Run at 03:00 local time
+OnCalendar=*-*-* 03:00:00
+
+[Install]
+WantedBy=timers.target
