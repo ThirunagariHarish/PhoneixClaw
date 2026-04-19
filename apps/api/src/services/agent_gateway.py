@@ -73,6 +73,7 @@ _running_tasks: dict[str, asyncio.Task] = {}
 
 # Track live PositionMicroAgent instances for sell signal routing
 _micro_agents: dict[str, Any] = {}  # key = "{agent_id}:{position_id}" -> PositionMicroAgent
+_micro_agents_lock = asyncio.Lock()  # B-R1: protect dict mutations
 
 
 def _analyst_profile_to_dict(prof: Any) -> dict:
@@ -1670,12 +1671,14 @@ class AgentGateway:
                     work_dir=work_dir,
                     analyst_patterns=analyst_patterns,
                 )
-                _micro_agents[task_key] = agent
+                async with _micro_agents_lock:
+                    _micro_agents[task_key] = agent
                 try:
                     result = await agent.run()
                     logger.info("PositionMicroAgent %s finished: %s", session_row_id, result.get("status"))
                 finally:
-                    _micro_agents.pop(task_key, None)
+                    async with _micro_agents_lock:
+                        _micro_agents.pop(task_key, None)
                     _running_tasks.pop(task_key, None)
                 return
             except Exception as e:
@@ -1750,7 +1753,8 @@ class AgentGateway:
             if task and not task.done():
                 task.cancel()
             _running_tasks.pop(task_key, None)
-            _micro_agents.pop(task_key, None)
+            async with _micro_agents_lock:
+                _micro_agents.pop(task_key, None)
 
             sess.status = "stopped"
             sess.stopped_at = datetime.now(timezone.utc)
@@ -1793,7 +1797,11 @@ class AgentGateway:
         routed_to: list[str] = []
         missed: list[str] = []
 
-        for key, micro in list(_micro_agents.items()):
+        async with _micro_agents_lock:
+            micro_items = list(_micro_agents.items())
+            total_monitors = len(_micro_agents)
+
+        for key, micro in micro_items:
             if not key.startswith(str(agent_id)):
                 continue
             if getattr(micro, "ticker", "").upper() == ticker.upper():
@@ -1812,7 +1820,7 @@ class AgentGateway:
             "ticker": ticker,
             "routed_to": routed_to,
             "missed": missed,
-            "total_monitors": len(_micro_agents),
+            "total_monitors": total_monitors,
         }
 
     # ------------------------------------------------------------------
