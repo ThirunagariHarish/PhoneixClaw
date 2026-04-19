@@ -164,6 +164,8 @@ async def _persist_message(
     tickers = _extract_tickers(content)
     msg_id = uuid.uuid4()
     connector_uuid = uuid.UUID(state.connector_id)
+    correlation_id = str(uuid.uuid4())
+    raw_data["correlation_id"] = correlation_id
 
     async with session_factory() as session:
         exists = await session.execute(
@@ -212,6 +214,7 @@ async def _persist_message(
             "timestamp": posted_at.isoformat(),
             "message_id": platform_message_id,
             "sentiment": _basic_sentiment(content),
+            "correlation_id": correlation_id,
         }
         try:
             stream_payload = {k: str(v) for k, v in payload.items()}

@@ -92,6 +92,7 @@ async def listen(config: dict, output_dir: Path) -> None:
                             "timestamp": data.get("timestamp", ""),
                             "message_id": data.get("message_id", msg_id),
                             "received_at": datetime.now(timezone.utc).isoformat(),
+                            "correlation_id": data.get("correlation_id", ""),
                         }
 
                         safe_id = msg_id.replace("-", "_").replace(":", "_")
