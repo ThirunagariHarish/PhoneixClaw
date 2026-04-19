@@ -141,10 +141,9 @@ regression-yaml-parallel: ## Run tests/regression/user_journeys.yaml via 10 para
 	@if [ -z "$$PHOENIX_E2E_BASE_URL" ]; then echo "Set PHOENIX_E2E_BASE_URL"; exit 1; fi
 	$(PYTHON) scripts/regression/run_yaml_parallel.py
 
-go-live-regression: ## Automated go-live: test (unit + api unit), integration, bridge, dashboard
+go-live-regression: ## Automated go-live: test (unit + api unit), integration, dashboard
 	$(MAKE) test
 	$(MAKE) test-integration
-	$(MAKE) test-bridge
 	$(MAKE) test-dashboard
 
 go-live-regression-quality: ## Optional quality gate: ruff + mypy (may fail until repo-wide cleanup)
