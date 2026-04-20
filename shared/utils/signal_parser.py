@@ -813,6 +813,7 @@ def parse_signal_compat(raw_signal: dict) -> dict:
         "timestamp": raw_signal.get("timestamp", datetime.now().isoformat()),
         "message_id": raw_signal.get("message_id"),
         "channel_id": raw_signal.get("channel_id"),
+        "channel": raw_signal.get("channel", ""),
     }
 
     if parsed.ticker:

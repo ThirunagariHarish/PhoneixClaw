@@ -24,7 +24,28 @@ log = logging.getLogger(__name__)
 _PKL_FALLBACK_NAMES = ["lightgbm", "lgbm", "xgboost", "rf", "random_forest", "logistic"]
 
 
+def _bypass_channels() -> set[str]:
+    raw = os.getenv("BYPASS_ML_CHANNELS", "text-trades")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
 def predict(features_path: str, models_dir: str = "models") -> dict:
+    with open(features_path) as f:
+        raw_features = json.load(f)
+
+    source_channel = str(raw_features.get("channel") or "").lower()
+    if source_channel and source_channel in _bypass_channels():
+        log.info("[inference] Bypassing ML: channel='%s' in BYPASS_ML_CHANNELS", source_channel)
+        return {
+            "prediction": "TRADE",
+            "confidence": 1.0,
+            "model": "bypass:test_channel",
+            "pattern_matches": 0,
+            "patterns": [],
+            "bypass": True,
+            "bypass_reason": f"source_channel={source_channel}",
+        }
+
     models = Path(models_dir)
 
     with open(models / "best_model.json") as f:
@@ -32,9 +53,6 @@ def predict(features_path: str, models_dir: str = "models") -> dict:
 
     with open(models / "meta.json") as f:
         meta = json.load(f)
-
-    with open(features_path) as f:
-        raw_features = json.load(f)
 
     feature_cols = meta["feature_columns"]
     row = {col: raw_features.get(col, 0.0) for col in feature_cols}

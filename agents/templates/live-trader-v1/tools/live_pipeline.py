@@ -34,6 +34,11 @@ log = logging.getLogger(__name__)
 
 MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 
+
+def _bypass_ml_channels() -> set[str]:
+    raw = os.getenv("BYPASS_ML_CHANNELS", "text-trades")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
 # Shared mutable state for the health status file
 _pipeline_state: dict = {
     "started_at": None,
@@ -207,29 +212,43 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
 
     # Step 3: Inference
     prediction = {"prediction": "SKIP", "confidence": 0.0, "pattern_matches": 0}
-    try:
-        from inference import predict
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, prefix="feat_") as f:
-            json.dump(_json_safe(enriched), f, default=str)
-            features_path = f.name
+    source_channel = str(raw_signal.get("channel") or "").lower()
+    ml_bypass = bool(source_channel and source_channel in _bypass_ml_channels())
+
+    if ml_bypass:
+        prediction = {
+            "prediction": "TRADE",
+            "confidence": 1.0,
+            "model": "bypass:test_channel",
+            "pattern_matches": 0,
+            "bypass": True,
+        }
+        steps.append({"step": "inference", "status": "bypassed", "channel": source_channel})
+        reasoning.append(f"Bypassed ML inference (channel='{source_channel}' is in BYPASS_ML_CHANNELS)")
+    else:
         try:
-            prediction = predict(features_path, str(Path(config.get("models_dir", "models"))))
-        finally:
-            Path(features_path).unlink(missing_ok=True)
-        steps.append({"step": "inference", "status": "ok",
-                       "prediction": prediction.get("prediction"),
-                       "confidence": prediction.get("confidence")})
-        reasoning.append(f"Model: {prediction.get('prediction')} "
-                         f"(confidence={prediction.get('confidence', 0):.3f})")
-    except Exception as e:
-        steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
-        reasoning.append(f"Inference failed: {e}")
+            from inference import predict
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, prefix="feat_") as f:
+                json.dump(_json_safe(enriched), f, default=str)
+                features_path = f.name
+            try:
+                prediction = predict(features_path, str(Path(config.get("models_dir", "models"))))
+            finally:
+                Path(features_path).unlink(missing_ok=True)
+            steps.append({"step": "inference", "status": "ok",
+                           "prediction": prediction.get("prediction"),
+                           "confidence": prediction.get("confidence")})
+            reasoning.append(f"Model: {prediction.get('prediction')} "
+                             f"(confidence={prediction.get('confidence', 0):.3f})")
+        except Exception as e:
+            steps.append({"step": "inference", "status": "failed", "error": str(e)[:200]})
+            reasoning.append(f"Inference failed: {e}")
 
     # No-models gate: if no trained models exist, route to watchlist for observation
     models_dir = Path(config.get("models_dir", "models"))
     has_models = models_dir.exists() and any(models_dir.glob("*_model.pkl"))
 
-    if not has_models:
+    if not has_models and not ml_bypass:
         reasoning.append("No trained models available — adding to watchlist for observation")
         try:
             from robinhood_mcp_client import add_to_watchlist
