@@ -77,6 +77,56 @@ PYTHONPATH=/app python3 scripts/init_db.py || {
   echo "[entrypoint] WARNING: init_db.py failed — continuing anyway"
 }
 
+# Idempotent schema guards — run BEFORE alembic so critical columns exist
+# even when the DB is sitting on a divergent migration branch that silently
+# fails `alembic upgrade head`. Each statement is IF NOT EXISTS so re-runs
+# are safe.
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "[entrypoint] Running pre-migration schema guards..."
+  PYTHONPATH=/app python3 - <<'PYGUARD' || echo "[entrypoint] WARNING: schema guard failed"
+import asyncio, os, sys
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
+
+STATEMENTS = [
+    # Pipeline engine (migration 045) — production DB sitting on the divergent
+    # `09b0dd176f5d_sync_agent_model_schema` branch never received this column.
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS engine_type VARCHAR(20) NOT NULL DEFAULT 'sdk'",
+    # Pipeline worker state table (migration 045). Unique on agent_id.
+    """CREATE TABLE IF NOT EXISTS pipeline_worker_state (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id UUID NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
+        stream_key VARCHAR(200) NOT NULL,
+        last_cursor VARCHAR(50) NOT NULL DEFAULT '0-0',
+        signals_processed INTEGER NOT NULL DEFAULT 0,
+        trades_executed INTEGER NOT NULL DEFAULT 0,
+        signals_skipped INTEGER NOT NULL DEFAULT 0,
+        portfolio_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+        last_heartbeat TIMESTAMPTZ,
+        started_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_pws_agent_id ON pipeline_worker_state(agent_id)",
+]
+
+async def run():
+    url = os.environ["DATABASE_URL"]
+    engine = create_async_engine(url, pool_pre_ping=True)
+    async with engine.begin() as conn:
+        for stmt in STATEMENTS:
+            try:
+                await conn.execute(text(stmt))
+                print(f"  OK: {stmt.split(chr(10))[0][:80]}")
+            except Exception as exc:
+                print(f"  WARN: {type(exc).__name__}: {str(exc)[:160]}", file=sys.stderr)
+    await engine.dispose()
+
+asyncio.run(run())
+PYGUARD
+  echo "[entrypoint] Schema guards applied."
+fi
+
 # Apply Alembic migrations.
 # Strategy:
 #   1. Try "upgrade head" — idempotent, safe for all revision ID formats (e.g. "041_invitations").
