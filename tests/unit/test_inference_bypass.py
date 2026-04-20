@@ -96,3 +96,73 @@ def test_signal_parser_propagates_channel():
     }
     parsed = parse_signal_compat(raw)
     assert parsed["channel"] == "text-trades"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_routes_bypass_to_watchlist(tmp_path, monkeypatch):
+    """End-to-end: a text-trades signal flows through process_signal and
+    comes out as decision=WATCHLIST (not EXECUTE), even when models exist."""
+    import live_pipeline
+
+    monkeypatch.delenv("BYPASS_ML_CHANNELS", raising=False)
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "dummy_model.pkl").write_bytes(b"\x00")
+
+    monkeypatch.setattr(
+        live_pipeline, "_log_to_phoenix", lambda *args, **kwargs: None, raising=True,
+    )
+
+    import market_session_gate
+    monkeypatch.setattr(
+        market_session_gate, "outside_rth_watchlist_payload",
+        lambda *args, **kwargs: None, raising=True,
+    )
+
+    import enrich_single
+    monkeypatch.setattr(
+        enrich_single, "enrich_signal", lambda sig: {**sig, "last_close": 185.0}, raising=True,
+    )
+
+    import risk_check
+    monkeypatch.setattr(
+        risk_check, "check_risk",
+        lambda *args, **kwargs: {"approved": True, "position_size": 1},
+        raising=True,
+    )
+
+    watchlist_calls: list[tuple[str, str, str]] = []
+    import add_to_watchlist as wl_module
+    monkeypatch.setattr(
+        wl_module, "add_to_watchlist",
+        lambda ticker, watchlist_name, broker_url: (
+            watchlist_calls.append((ticker, watchlist_name, broker_url))
+            or {"status": "added", "ticker": ticker, "watchlist_name": watchlist_name}
+        ),
+        raising=True,
+    )
+
+    raw_signal = {
+        "content": "BTO $AAPL 185c 4/18 @ 3.50",
+        "author": "vinod",
+        "channel": "text-trades",
+        "message_id": "abc123",
+    }
+    config = {
+        "models_dir": str(models_dir),
+        "risk_params": {},
+        "broker_url": "http://broker-gateway-test:8040",
+        "watchlist_name": "Test Watchlist",
+    }
+
+    result = await live_pipeline.process_signal(raw_signal, config)
+
+    assert result["decision"] == "WATCHLIST"
+    assert result["reason"] == "ml_bypass_test_channel"
+    assert watchlist_calls == [("AAPL", "Test Watchlist", "http://broker-gateway-test:8040")]
+    inference_step = next(s for s in result["steps"] if s["step"] == "inference")
+    assert inference_step["status"] == "bypassed"
+    wl_step = next(s for s in result["steps"] if s["step"] == "watchlist_add")
+    assert wl_step["status"] == "ok"
+    assert wl_step["ticker"] == "AAPL"

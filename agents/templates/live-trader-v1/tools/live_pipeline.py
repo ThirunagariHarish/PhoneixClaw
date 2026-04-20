@@ -248,7 +248,7 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
     models_dir = Path(config.get("models_dir", "models"))
     has_models = models_dir.exists() and any(models_dir.glob("*_model.pkl"))
 
-    if not has_models and not ml_bypass:
+    if not has_models:
         reasoning.append("No trained models available — adding to watchlist for observation")
         try:
             from robinhood_mcp_client import add_to_watchlist
@@ -312,6 +312,24 @@ async def process_signal(raw_signal: dict, config: dict) -> dict:
         reasoning.append(f"Model says SKIP (confidence={prediction.get('confidence', 0):.3f})")
         return _build_result("REJECT", "model_skip", steps, reasoning, parsed, prediction, risk_result,
                              source_message_id=raw_signal.get("message_id"))
+
+    # Test-channel bypass: skip execution, add to watchlist only (end-to-end smoke)
+    if ml_bypass:
+        reasoning.append(f"Test bypass: routing {direction.upper()} {ticker} to watchlist (not executing)")
+        broker_url = config.get("broker_url") or os.getenv("BROKER_GATEWAY_URL", "http://phoenix-broker-gateway:8040")
+        watchlist_name = config.get("watchlist_name") or os.getenv("AUTO_WATCHLIST_NAME", "Phoenix Paper")
+        try:
+            from add_to_watchlist import add_to_watchlist as _wl_add
+            wl_result = _wl_add(ticker, watchlist_name, broker_url)
+            status = "ok" if wl_result.get("status") not in ("error",) else "error"
+            steps.append({"step": "watchlist_add", "status": status, "ticker": ticker, "result": wl_result})
+        except Exception as exc:
+            steps.append({"step": "watchlist_add", "status": "skipped", "error": str(exc)[:120]})
+        return _build_result(
+            "WATCHLIST", "ml_bypass_test_channel", steps, reasoning, parsed,
+            prediction, risk_result,
+            source_message_id=raw_signal.get("message_id"),
+        )
 
     # Step 7: Build execution params and approve
     exec_params = _build_execution_params(parsed, enriched, prediction, risk_params, ta_result)
