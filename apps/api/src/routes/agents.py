@@ -257,6 +257,19 @@ async def agent_stats(session: DbSession):
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=AgentResponse)
 async def create_agent(request: Request, payload: AgentCreate, session: DbSession):
     """Create a new agent and kick off backtesting locally."""
+    try:
+        return await _create_agent_impl(request, payload, session)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("POST /agents crashed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Create agent failed: {type(exc).__name__}: {str(exc)[:400]}",
+        ) from exc
+
+
+async def _create_agent_impl(request: Request, payload: AgentCreate, session: DbSession):
     import os
     import re
     import secrets
