@@ -8,10 +8,38 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from apps.api.src.deps import DbSession
+from shared.db.models.connector import Connector
 from shared.db.models.trading_account import TradingAccount
 
 router = APIRouter(prefix="/api/v2/trading-accounts", tags=["trading-accounts"])
 logger = logging.getLogger(__name__)
+
+BROKER_CONNECTOR_TYPES = {"robinhood", "alpaca", "ibkr", "tradier"}
+
+
+async def _backfill_trading_accounts_from_connectors(session, user_id: uuid.UUID) -> int:
+    """Create TradingAccount rows for active broker-type connectors that
+    don't yet have a linked account. Idempotent; returns the number created.
+    """
+    from apps.api.src.routes.connectors import _ensure_trading_account_for_connector
+
+    result = await session.execute(
+        select(Connector).where(
+            Connector.user_id == user_id,
+            Connector.is_active == True,  # noqa: E712
+            Connector.type.in_(BROKER_CONNECTOR_TYPES),
+        )
+    )
+    connectors = result.scalars().all()
+    created = 0
+    for connector in connectors:
+        _, was_created = await _ensure_trading_account_for_connector(session, connector)
+        if was_created:
+            created += 1
+    if created:
+        await session.commit()
+        logger.info("Backfilled %d trading account(s) from connectors for user %s", created, user_id)
+    return created
 
 
 class TradingAccountResponse(BaseModel):
@@ -42,15 +70,22 @@ async def list_trading_accounts(
     except (ValueError, AttributeError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid user_id")
 
+    # Ensure any broker-type connectors without a linked TradingAccount have one.
+    # Fixes historical connectors created before trading_account auto-link existed.
+    if category == "broker":
+        try:
+            await _backfill_trading_accounts_from_connectors(session, user_id)
+        except Exception as exc:
+            logger.warning("Trading-account backfill failed for user %s: %s", user_id, exc)
+
     query = select(TradingAccount).where(
         TradingAccount.user_id == user_id,
         TradingAccount.is_active == True,  # noqa: E712
     )
 
-    # Filter by category=broker for Phase A
     if category == "broker":
         query = query.where(
-            TradingAccount.broker.in_(["robinhood", "ibkr", "alpaca"])
+            TradingAccount.broker.in_(list(BROKER_CONNECTOR_TYPES))
         )
 
     result = await session.execute(query)

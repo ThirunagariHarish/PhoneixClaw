@@ -19,10 +19,64 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.api.src.deps import DbSession
 from shared.db.models.connector import Connector, ConnectorAgent
+from shared.db.models.trading_account import TradingAccount
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/connectors", tags=["connectors"])
+
+BROKER_CONNECTOR_TYPES = {"robinhood", "alpaca", "ibkr", "tradier"}
+
+
+def _account_type_from_config(config: dict[str, Any]) -> str:
+    """Derive trading_accounts.account_type from connector config.
+    Defaults to 'paper' unless explicitly set to live mode.
+    """
+    if config.get("paper_mode") is False:
+        return "live"
+    mode = str(config.get("mode", "")).lower()
+    if mode in ("live", "real", "production"):
+        return "live"
+    return "paper"
+
+
+async def _ensure_trading_account_for_connector(
+    session, connector: Connector
+) -> tuple[TradingAccount | None, bool]:
+    """Idempotently create a TradingAccount row linked to a broker connector.
+
+    Uses trading_accounts.config['connector_id'] as the link. Returns
+    (row, was_created). (None, False) if the connector type is not a broker.
+    """
+    if connector.type not in BROKER_CONNECTOR_TYPES:
+        return None, False
+
+    # Match on connector_id stored in config JSON; iterate in Python so the
+    # lookup works on both Postgres (JSONB) and SQLite (JSON) test backends.
+    existing = await session.execute(
+        select(TradingAccount).where(
+            TradingAccount.user_id == connector.user_id,
+            TradingAccount.broker == connector.type,
+        )
+    )
+    target = str(connector.id)
+    for row in existing.scalars():
+        if (row.config or {}).get("connector_id") == target:
+            return row, False
+
+    account = TradingAccount(
+        id=uuid.uuid4(),
+        user_id=connector.user_id,
+        name=connector.name,
+        broker=connector.type,
+        account_type=_account_type_from_config(connector.config or {}),
+        credentials_encrypted=connector.credentials_encrypted,
+        is_active=True,
+        config={"connector_id": str(connector.id)},
+    )
+    session.add(account)
+    await session.flush()
+    return account, True
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -186,6 +240,8 @@ async def create_connector(payload: ConnectorCreate, request: Request, session: 
     )
     try:
         session.add(connector)
+        await session.flush()
+        await _ensure_trading_account_for_connector(session, connector)
         await session.commit()
         await session.refresh(connector)
     except IntegrityError as exc:
