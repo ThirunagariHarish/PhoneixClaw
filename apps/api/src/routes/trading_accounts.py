@@ -46,6 +46,7 @@ class TradingAccountResponse(BaseModel):
     id: str
     name: str
     broker: str
+    broker_type: str  # alias of broker — the wizard reads this name
     account_type: str
     is_active: bool
 
@@ -96,6 +97,7 @@ async def list_trading_accounts(
             id=str(acc.id),
             name=acc.name,
             broker=acc.broker,
+            broker_type=acc.broker,
             account_type=acc.account_type,
             is_active=acc.is_active,
         )

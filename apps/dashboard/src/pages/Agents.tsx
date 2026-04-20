@@ -1642,6 +1642,15 @@ export default function AgentsPage() {
       invalidateAgents()
       setCreateOpen(false)
       resetWizard()
+      toast.success('Agent created — backtesting started')
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err as { message?: string })?.message ||
+        'Failed to create agent'
+      toast.error(`Create agent failed: ${detail}`)
+      console.error('[create-agent]', err)
     },
   })
 
