@@ -28,6 +28,7 @@ import {
   Download, FlaskConical, Zap, Database, Columns3, BarChart3,
   FileJson, FileSpreadsheet, FileDown, Brain, Terminal, Server, Cpu, Clock, Wrench,
   Loader2, CheckCircle2, XCircle, Sparkles, Cog,
+  AlertCircle, Radio, StopCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
