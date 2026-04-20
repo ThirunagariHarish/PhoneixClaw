@@ -4,6 +4,7 @@ The live-trader's decision_engine.py logs every decision (executed, rejected,
 watchlist, paper) here with a feature snapshot. At EOD, the scheduler enriches
 these rows with actual outcome prices and feeds them back into training.
 """
+from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 

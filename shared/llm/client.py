@@ -1,6 +1,7 @@
 """
 Async client for Ollama LLM service with retry logic and graceful fallback.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

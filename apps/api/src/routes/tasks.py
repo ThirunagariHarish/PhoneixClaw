@@ -4,6 +4,7 @@ Task Board API — kanban tasks, agent roles, task management.
 M3.4: Task Board and Agent Roles.
 Reference: PRD Section 10.
 """
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone

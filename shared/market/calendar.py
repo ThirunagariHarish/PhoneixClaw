@@ -3,6 +3,7 @@ Market hours utilities for US equity and options markets.
 
 Uses exchange_calendars when available, falls back to simple rules otherwise.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, time, timedelta, timezone

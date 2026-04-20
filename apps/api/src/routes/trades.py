@@ -4,6 +4,7 @@ Trades API routes: list trades, get trade detail, trade stats, portfolio summary
 M1.10: Trades Tab backend.
 Reference: PRD Section 3.1.
 """
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, time, timezone

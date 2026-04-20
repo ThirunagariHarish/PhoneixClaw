@@ -4,6 +4,7 @@ Walk-forward backtesting — rolling train/test evaluation with optimization.
 M3.11: Walk-forward and strategy optimizer.
 Reference: PRD Section 11.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone

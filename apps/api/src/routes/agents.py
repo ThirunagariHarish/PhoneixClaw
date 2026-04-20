@@ -5,6 +5,7 @@ Agents are created via the wizard, backtested locally (or via Claude Code
 Cloud Tasks), and promoted to Docker-managed trading workers.  All state
 lives in PostgreSQL; no SSH or VPS management.
 """
+from __future__ import annotations
 
 import asyncio
 import json

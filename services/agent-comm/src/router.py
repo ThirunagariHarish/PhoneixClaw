@@ -4,6 +4,7 @@ Inter-agent communication router — supports 5 messaging patterns.
 M2.10: Agent-to-agent communication.
 Reference: PRD Section 13, ArchitecturePlan §5.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

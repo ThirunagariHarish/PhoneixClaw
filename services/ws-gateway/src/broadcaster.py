@@ -4,6 +4,7 @@ forwards messages to WebSocket clients via ChannelManager.
 
 M2.11: Real-time WebSocket gateway.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

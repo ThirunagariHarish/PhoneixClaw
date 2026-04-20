@@ -3,6 +3,7 @@
 V3: Removed SSH/SCP shipping. The builder now only handles:
   template defaults + backtest output + user config → manifest → render locally
 """
+from __future__ import annotations
 
 import copy
 import json

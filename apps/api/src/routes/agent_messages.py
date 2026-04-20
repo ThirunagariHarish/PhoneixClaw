@@ -3,6 +3,7 @@ Agent Messages API — inter-agent communication log and messaging.
 
 Reference: PRD Section 8 (Agent Communication), ArchitecturePlan §6.
 """
+from __future__ import annotations
 
 import uuid
 

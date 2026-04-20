@@ -4,6 +4,7 @@ Base connector abstract class — all connectors implement this interface.
 M1.9: Connector Framework Core.
 Reference: PRD Section 3.6 (Connectors Tab), ArchitecturePlan §3.
 """
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime

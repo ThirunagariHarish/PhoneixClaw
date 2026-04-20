@@ -5,6 +5,7 @@ Provides 5-class sentiment: Very Bullish, Bullish, Neutral, Bearish, Very Bearis
 FinBERT natively outputs 3 classes (positive, neutral, negative) -- we map to 5
 classes using confidence thresholds.
 """
+from __future__ import annotations
 
 import logging
 import os

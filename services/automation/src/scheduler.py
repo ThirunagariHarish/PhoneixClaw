@@ -4,6 +4,7 @@ Automation Scheduler Service — cron-based task scheduling with NL-to-cron conv
 M3.5: Automations.
 Reference: PRD Section 3.10, ImplementationPlan Section 10.5.
 """
+from __future__ import annotations
 
 import asyncio
 import hashlib

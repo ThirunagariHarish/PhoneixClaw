@@ -4,6 +4,7 @@ Kill Switch — emergency position liquidation trigger.
 When activated, publishes to Redis ``stream:kill-switch`` so every
 downstream service can halt trading immediately.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone

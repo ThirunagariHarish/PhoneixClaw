@@ -4,6 +4,7 @@ Message router — routes normalized messages from connectors to target agents.
 M1.9: Central routing logic for connector messages.
 Reference: PRD Section 4 (Signal Flow), ArchitecturePlan §5.
 """
+from __future__ import annotations
 
 import logging
 from typing import Any

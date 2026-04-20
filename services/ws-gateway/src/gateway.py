@@ -4,6 +4,7 @@ WebSocket Gateway — dedicated WebSocket server for real-time dashboard updates
 M1.10: Trades/Positions real-time, M1.11: Agent heartbeats, M2.5: Trade intents.
 Reference: ArchitecturePlan Section 3, ImplementationPlan Section 5.10.
 """
+from __future__ import annotations
 
 import asyncio
 import json

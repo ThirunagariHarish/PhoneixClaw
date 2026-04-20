@@ -2,6 +2,7 @@
 Notifications API — unread count, list (filterable), mark read, mark single read, delete old.
 Supports the Notification Center bell popover and full /notifications page.
 """
+from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Optional

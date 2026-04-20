@@ -12,6 +12,7 @@ Cortex review fixes:
 - M4: change `pm_orders.pm_market_id` and `pm_orders.pm_strategy_id` FKs
   CASCADE -> RESTRICT.
 """
+from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa

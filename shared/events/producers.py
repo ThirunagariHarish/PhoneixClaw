@@ -1,4 +1,5 @@
 """Redis Stream producers for Phoenix v2 event bus."""
+from __future__ import annotations
 
 import os
 

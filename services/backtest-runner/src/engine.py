@@ -4,6 +4,7 @@ Backtesting engine — runs signal-driven and heartbeat-driven backtests.
 M2.3: Sandboxed backtesting for agents and strategies.
 Reference: PRD Section 11, ArchitecturePlan §3.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone

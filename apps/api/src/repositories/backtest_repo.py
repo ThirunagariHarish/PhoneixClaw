@@ -1,6 +1,7 @@
 """
 AgentBacktest repository with agent and status filters.
 """
+from __future__ import annotations
 
 from typing import Any
 from uuid import UUID

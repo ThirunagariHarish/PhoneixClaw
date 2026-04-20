@@ -3,6 +3,7 @@ Async HTTP client for the Unusual Whales API.
 
 Handles authentication, rate limiting, caching, and response parsing.
 """
+from __future__ import annotations
 
 import logging
 import os

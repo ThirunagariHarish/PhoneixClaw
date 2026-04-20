@@ -1,6 +1,7 @@
 """
 Error logs API — create, list, update, stats. For Dev Sprint Board and error logging framework.
 """
+from __future__ import annotations
 
 import json
 import uuid

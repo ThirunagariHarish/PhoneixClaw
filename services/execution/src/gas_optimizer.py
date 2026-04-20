@@ -2,6 +2,7 @@
 Dynamic Gas/Fee Optimizer — calculates optimal limit order price
 based on spread, L2 depth, and time urgency.
 """
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

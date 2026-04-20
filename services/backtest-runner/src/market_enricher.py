@@ -5,6 +5,7 @@ to each reconstructed backtest trade.
 Uses yfinance as the primary free data source. Falls back to Polygon or
 Alpha Vantage when connectors are configured.
 """
+from __future__ import annotations
 
 import logging
 from datetime import timedelta

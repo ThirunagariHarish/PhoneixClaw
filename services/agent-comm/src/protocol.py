@@ -5,6 +5,7 @@ and handler methods for each communication pattern.
 M2.10: Agent communication protocol.
 Reference: ArchitecturePlan §5.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

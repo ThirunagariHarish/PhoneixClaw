@@ -1,6 +1,7 @@
 """
 Task repository with status, creator, and move operations.
 """
+from __future__ import annotations
 
 from uuid import UUID
 

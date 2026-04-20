@@ -1,6 +1,7 @@
 """
 Base repository with common CRUD operations for Phoenix v2 API.
 """
+from __future__ import annotations
 
 from typing import Any, TypeVar
 from uuid import UUID

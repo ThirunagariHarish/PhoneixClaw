@@ -4,6 +4,7 @@ Automations API — cron-scheduled tasks and NL task input.
 M3.5: Automation scheduler.
 Reference: PRD Section 10.2.
 """
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone

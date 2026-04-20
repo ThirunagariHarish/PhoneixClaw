@@ -4,6 +4,7 @@ Dev Agent API — incident tracking, auto-repair logs, RL metrics.
 M3.1: Dev Agent monitoring.
 Reference: PRD Section 9.
 """
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from typing import Any

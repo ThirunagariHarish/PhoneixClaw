@@ -4,6 +4,7 @@ this module referenced. Kept for reference only. Do not use in new code.
 
 Original purpose: Data retention policy — archive and purge old records.
 """
+from __future__ import annotations
 
 import logging
 import warnings

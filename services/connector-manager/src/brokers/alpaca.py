@@ -4,6 +4,7 @@ Alpaca broker connector — paper and live trading via Alpaca API.
 M1.9: Primary broker integration.
 Reference: PRD Section 10, existing v1 shared/broker/alpaca_adapter.py.
 """
+from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum

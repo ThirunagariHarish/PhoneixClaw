@@ -2,6 +2,7 @@
 Simple in-memory TTL cache for Unusual Whales API responses.
 Falls back to in-memory if Redis is unavailable.
 """
+from __future__ import annotations
 
 import asyncio
 import json

@@ -8,6 +8,7 @@ This module converts unsupported index options to their ETF equivalents
 The mapping is keyed by broker_type, making it easy to add or remove
 conversions when new brokers are integrated.
 """
+from __future__ import annotations
 
 import logging
 

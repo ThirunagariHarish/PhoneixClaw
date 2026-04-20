@@ -4,6 +4,7 @@ Sandboxed Python code executor for agent-generated code.
 M3.9: Agent code generation and predictive models.
 Reference: PRD Section 9.4.
 """
+from __future__ import annotations
 
 import logging
 import subprocess

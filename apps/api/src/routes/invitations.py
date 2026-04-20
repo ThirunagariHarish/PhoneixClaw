@@ -1,6 +1,7 @@
 """
 Admin-only invitation CRUD for invitation-only account creation.
 """
+from __future__ import annotations
 
 import secrets
 import uuid

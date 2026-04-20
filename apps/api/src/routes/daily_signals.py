@@ -3,6 +3,7 @@ Daily Signals API routes: list signals, pipeline status, signal detail, analytic
 
 Phoenix v3 — Queries agent_trades + trade_signals + agents tables for real signal data.
 """
+from __future__ import annotations
 
 import json
 import uuid

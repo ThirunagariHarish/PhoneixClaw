@@ -3,6 +3,7 @@ On-Chain/Flow API routes: whale alerts, Mag 7, meme stocks, sectors, indices.
 
 Phoenix v3 — Live options flow data from Unusual Whales API.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

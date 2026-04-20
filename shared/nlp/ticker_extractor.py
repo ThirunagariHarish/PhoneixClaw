@@ -4,6 +4,7 @@ Ticker symbol extraction from unstructured text.
 Uses regex patterns and a known-ticker lookup against shared/data/tickers.json
 to identify stock/ETF symbols in messages.
 """
+from __future__ import annotations
 
 import json
 import logging

@@ -1,4 +1,5 @@
 """Token usage monitoring API routes."""
+from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta

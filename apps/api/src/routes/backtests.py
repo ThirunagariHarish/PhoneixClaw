@@ -4,6 +4,7 @@ Backtest API — run, list, and view backtest results.
 M2.3: Backtesting pipeline API.
 Reference: PRD Section 11.
 """
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone

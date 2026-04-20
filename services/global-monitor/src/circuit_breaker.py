@@ -2,6 +2,7 @@
 Circuit Breaker — kills all active trades if system loses X% in a session
 or if AI Confidence Score drops below threshold.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

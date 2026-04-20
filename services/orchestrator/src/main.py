@@ -14,6 +14,7 @@ Phase 15.8 additions
 - Registers the runtime with ``register_pm_runtime`` so the existing
   kill-switch fan-out handler can trip/rearm the agent.
 """
+from __future__ import annotations
 
 import asyncio
 import logging

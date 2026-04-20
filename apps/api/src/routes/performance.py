@@ -3,6 +3,7 @@ Performance API routes: portfolio, agents, instruments, risk.
 
 Aggregates real data from AgentTrade, AgentMetric, and Position tables.
 """
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 

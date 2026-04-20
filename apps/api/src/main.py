@@ -4,6 +4,7 @@ Phoenix v2 Backend API — FastAPI application entrypoint.
 M1.1: Minimal app with health endpoint. M1.3: Auth routes and JWT middleware.
 Reference: ImplementationPlan.md Section 2, Section 5 M1.1, M1.3.
 """
+from __future__ import annotations
 
 import json
 import os

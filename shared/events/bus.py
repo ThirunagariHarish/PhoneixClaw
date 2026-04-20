@@ -3,6 +3,7 @@ Redis Streams event bus client for Phoenix v2.
 
 M2.10: Agent-to-agent communication, event-driven flows.
 """
+from __future__ import annotations
 
 from typing import Any, AsyncIterator
 

@@ -5,6 +5,7 @@ M1.9: Connector management, credential encryption, test connection.
 Discord discovery endpoints ported from v1 sources.py.
 Reference: PRD Section 3.6, ArchitecturePlan §3.
 """
+from __future__ import annotations
 
 import logging
 import uuid

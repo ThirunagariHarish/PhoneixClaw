@@ -3,6 +3,7 @@ Pre-built automation templates.
 
 M3.5: Automations.
 """
+from __future__ import annotations
 
 from services.automation.src.scheduler import AUTOMATION_TEMPLATES
 

@@ -4,6 +4,7 @@ Monitoring API routes — monitored positions and monitoring service status.
 M2.13: Position monitoring endpoints.
 Reference: PRD Section 8.
 """
+from __future__ import annotations
 
 import uuid
 

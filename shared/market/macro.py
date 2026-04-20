@@ -4,6 +4,7 @@ Macro economic data fetcher using yfinance.
 Provides market regime classification, economic indicators, and calendar events.
 Caching via Redis (5-minute TTL) to avoid redundant API calls.
 """
+from __future__ import annotations
 
 import json
 import logging

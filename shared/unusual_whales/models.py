@@ -1,6 +1,7 @@
 """
 Pydantic models for Unusual Whales API responses.
 """
+from __future__ import annotations
 
 from datetime import datetime
 

@@ -1,4 +1,5 @@
 """Token usage tracking and budget monitoring service."""
+from __future__ import annotations
 
 from datetime import date, timedelta
 from uuid import UUID

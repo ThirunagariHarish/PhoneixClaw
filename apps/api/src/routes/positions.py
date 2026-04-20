@@ -4,6 +4,7 @@ Positions API routes: list open/closed positions, position summary.
 M1.10: Positions Tab backend.
 Reference: PRD Section 3.2.
 """
+from __future__ import annotations
 
 import uuid
 

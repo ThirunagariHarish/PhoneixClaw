@@ -3,6 +3,7 @@ DEPRECATED — V3 uses AgentMetric/AgentTrade models instead of DailyMetrics/Tra
 This aggregator references V1 models that no longer exist. Do not use in new code.
 See shared/db/models/agent_metric.py and shared/db/models/agent_trade.py for V3 equivalents.
 """
+from __future__ import annotations
 
 import logging
 from datetime import date

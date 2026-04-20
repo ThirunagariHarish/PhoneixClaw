@@ -3,6 +3,7 @@ Role-Based Access Control (RBAC) — 5 roles with 20 granular permissions.
 
 Reference: ImplementationPlan.md M1.3 (Security), PRD Section 14 (Admin).
 """
+from __future__ import annotations
 
 from enum import Enum
 from functools import wraps

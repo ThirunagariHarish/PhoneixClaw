@@ -3,6 +3,7 @@ Execution API: submit trade intents, check status, kill switch.
 
 M1.12: Execution pipeline API.
 """
+from __future__ import annotations
 
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field

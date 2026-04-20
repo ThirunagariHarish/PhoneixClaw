@@ -13,6 +13,7 @@ Channels:
   metrics          → stream:agent-messages  (metric snapshots)
   dev-incidents    → stream:dev-agent-events
 """
+from __future__ import annotations
 
 import asyncio
 import json

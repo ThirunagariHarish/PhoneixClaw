@@ -5,6 +5,7 @@ Provides endpoints to immediately pause all running agents, cancel pending
 orders, and optionally mark open positions for closing.  Every activation
 is written to the system_logs table as an audit record.
 """
+from __future__ import annotations
 
 import logging
 import uuid

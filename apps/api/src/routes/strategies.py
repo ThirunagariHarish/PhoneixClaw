@@ -4,6 +4,7 @@ Strategy CRUD API — 50 strategy templates, DB persistence, agent auto-creation
 M2.6: Strategy agent management.
 Reference: PRD Section 3.5, strategy_wizard_redesign plan.
 """
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone

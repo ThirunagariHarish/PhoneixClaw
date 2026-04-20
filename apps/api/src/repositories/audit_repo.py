@@ -1,6 +1,7 @@
 """
 AuditLog repository — append-only log with user and action filters.
 """
+from __future__ import annotations
 
 from typing import Any
 from uuid import UUID

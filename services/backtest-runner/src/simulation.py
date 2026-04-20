@@ -4,6 +4,7 @@ and calculates PnL.
 
 M2.7: Core simulation loop.
 """
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

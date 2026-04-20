@@ -4,6 +4,7 @@ in an isolated subprocess with resource limits.
 
 M2.7: Backtest runner sandbox.
 """
+from __future__ import annotations
 
 import json
 import logging

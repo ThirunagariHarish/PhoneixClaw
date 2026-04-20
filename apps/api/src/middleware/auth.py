@@ -2,6 +2,7 @@
 JWT auth middleware: validate Bearer token and set request.state.user_id.
 M1.3. Reference: ImplementationPlan.md M1.3.
 """
+from __future__ import annotations
 
 from typing import Callable
 

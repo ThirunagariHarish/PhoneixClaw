@@ -1,6 +1,7 @@
 """
 Auth request/response schemas. M1.3.
 """
+from __future__ import annotations
 
 from pydantic import BaseModel, EmailStr
 

@@ -4,6 +4,7 @@ with a synthetic-data fallback for testing.
 
 M2.7: Backtest data pipeline.
 """
+from __future__ import annotations
 
 import logging
 import os

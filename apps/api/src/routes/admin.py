@@ -3,6 +3,7 @@ Admin API routes: users CRUD, roles, API keys, audit log.
 
 M3.7: Admin & User Management Tab.
 """
+from __future__ import annotations
 
 import secrets
 import uuid

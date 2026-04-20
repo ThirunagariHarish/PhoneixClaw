@@ -3,6 +3,7 @@ Risk Compliance API routes: status, position-limits, checks, compliance, hedging
 
 Phoenix v3 — Live risk data from DB positions, agent metrics, and circuit breaker state.
 """
+from __future__ import annotations
 
 import logging
 from collections import defaultdict

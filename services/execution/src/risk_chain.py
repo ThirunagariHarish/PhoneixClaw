@@ -4,6 +4,7 @@
 M1.12: Risk management before trade execution.
 Reference: PRD Section 8.
 """
+from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
