@@ -2026,7 +2026,10 @@ export default function AgentDashboardPage() {
       catch { return { id: id ?? '', name: 'Unknown Agent', type: 'trading', status: 'CREATED', config: {}, created_at: new Date().toISOString() } }
     },
     enabled: !!id,
-    refetchInterval: agent?.engine_type === 'pipeline' ? 5000 : 30000,
+    refetchInterval: (query) => {
+      const latest = query.state.data as AgentData | undefined
+      return latest?.engine_type === 'pipeline' ? 5000 : 30000
+    },
     staleTime: 0,
   })
 
