@@ -415,7 +415,14 @@ async def create_agent(request: Request, payload: AgentCreate, session: DbSessio
     }
 
     from apps.api.src.services.agent_gateway import gateway
-    await gateway.create_backtester(agent_id, backtest.id, backtest_config)
+    try:
+        await gateway.create_backtester(agent_id, backtest.id, backtest_config)
+    except Exception as exc:
+        logger.exception("create_backtester failed for agent %s: %s", agent_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backtest spawn failed: {type(exc).__name__}: {str(exc)[:300]}",
+        ) from exc
 
     # For analyst agents, also spawn the persona-driven analyst session immediately
     if payload.type == "analyst":
