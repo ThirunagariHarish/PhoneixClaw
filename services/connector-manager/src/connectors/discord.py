@@ -38,7 +38,7 @@ class DiscordConnector(BaseConnector):
         self._message_queue: asyncio.Queue[ConnectorMessage] = asyncio.Queue()
 
     async def connect(self) -> None:
-        """Initialize Discord connection using discord.py-self."""
+        """Initialize Discord connection using official discord.py (bot token)."""
         if not self.token:
             self.status = ConnectorStatus.ERROR
             raise ValueError("Discord token is required")
@@ -46,13 +46,16 @@ class DiscordConnector(BaseConnector):
         self.status = ConnectorStatus.CONNECTING
 
         try:
-            import discord  # discord.py-self
+            import discord
         except ImportError:
             self.status = ConnectorStatus.ERROR
-            raise ValueError("discord.py-self not installed")
+            raise ValueError("discord.py not installed")
 
-        # Create the client. discord.py-self uses a user token by default (no intents).
-        self._client = discord.Client()
+        intents = discord.Intents.default()
+        intents.guilds = True
+        intents.guild_messages = True
+        intents.message_content = True
+        self._client = discord.Client(intents=intents)
         self._channel_ids_set = {str(cid) for cid in self.channel_ids}
 
         @self._client.event
