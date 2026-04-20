@@ -187,9 +187,19 @@ interface WizardFormData {
   selected_channel: SelectedChannel | null
   broker_account_id?: string
   skills: string[]
+  // Core exits
   max_daily_loss_pct: number
   max_position_pct: number
   stop_loss_pct: number
+  take_profit_pct: number
+  trailing_stop_enabled: boolean
+  trailing_stop_pct: number
+  // Portfolio-level
+  max_concurrent_positions: number
+  max_ticker_exposure_pct: number
+  // Behaviour gates
+  min_confidence_threshold: number
+  max_consecutive_losses: number
   smart_hold_enabled: boolean
   smart_hold_buffer_pct: number
   source_config: Record<string, unknown>
@@ -312,6 +322,13 @@ const DEFAULT_FORM: WizardFormData = {
   max_daily_loss_pct: 5,
   max_position_pct: 10,
   stop_loss_pct: 2,
+  take_profit_pct: 8,
+  trailing_stop_enabled: false,
+  trailing_stop_pct: 1.5,
+  max_concurrent_positions: 3,
+  max_ticker_exposure_pct: 25,
+  min_confidence_threshold: 0.65,
+  max_consecutive_losses: 3,
   smart_hold_enabled: false,
   smart_hold_buffer_pct: 10,
   source_config: {},
@@ -1108,19 +1125,51 @@ function StepReview({ form, connectors }: {
         </div>
         <div className="p-3">
           <p className="text-xs text-muted-foreground">Risk Configuration</p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-1.5">
             <div>
-              <p className="text-xs text-muted-foreground">Max Daily Loss</p>
-              <p className="font-mono font-medium">{form.max_daily_loss_pct}%</p>
+              <p className="text-[11px] text-muted-foreground">Max Daily Loss</p>
+              <p className="font-mono text-sm font-medium">{form.max_daily_loss_pct}%</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Max Position</p>
-              <p className="font-mono font-medium">{form.max_position_pct}%</p>
+              <p className="text-[11px] text-muted-foreground">Max Position</p>
+              <p className="font-mono text-sm font-medium">{form.max_position_pct}%</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Stop Loss</p>
-              <p className="font-mono font-medium">{form.stop_loss_pct}%</p>
+              <p className="text-[11px] text-muted-foreground">Stop Loss</p>
+              <p className="font-mono text-sm font-medium">{form.stop_loss_pct}%</p>
             </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Take Profit</p>
+              <p className="font-mono text-sm font-medium">{form.take_profit_pct}%</p>
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Max Positions</p>
+              <p className="font-mono text-sm font-medium">{form.max_concurrent_positions}</p>
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Per-Ticker Cap</p>
+              <p className="font-mono text-sm font-medium">{form.max_ticker_exposure_pct}%</p>
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Min Confidence</p>
+              <p className="font-mono text-sm font-medium">{form.min_confidence_threshold.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Loss Cooldown</p>
+              <p className="font-mono text-sm font-medium">{form.max_consecutive_losses}</p>
+            </div>
+            {form.trailing_stop_enabled && (
+              <div>
+                <p className="text-[11px] text-muted-foreground">Trailing Stop</p>
+                <p className="font-mono text-sm font-medium">{form.trailing_stop_pct}%</p>
+              </div>
+            )}
+            {form.smart_hold_enabled && (
+              <div>
+                <p className="text-[11px] text-muted-foreground">Smart Hold</p>
+                <p className="font-mono text-sm font-medium">+{form.smart_hold_buffer_pct}%</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1174,69 +1223,173 @@ function SliderInput({ label, value, onChange, min, max, step, unit }: {
   )
 }
 
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      {subtitle && <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>}
+    </div>
+  )
+}
+
+function ToggleRow({ label, description, checked, onToggle }: {
+  label: string
+  description?: string
+  checked: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={onToggle}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-muted'}`}
+      >
+        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+      </button>
+    </div>
+  )
+}
+
 function StepRiskConfig({ form, onChange }: { form: WizardFormData; onChange: (f: Partial<WizardFormData>) => void }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
         <p className="text-xs text-blue-400">
-          <strong>Tip:</strong> These defaults are a starting point. When backtesting completes, the agent&apos;s risk parameters will be automatically tuned based on historical performance (optimal stop-loss, position sizing, max drawdown). You can override them anytime from the agent&apos;s Rules tab.
+          <strong>Tip:</strong> These defaults are a starting point. When backtesting completes, the agent&apos;s risk parameters will be automatically tuned based on historical performance. You can override them anytime from the agent&apos;s Rules tab.
         </p>
       </div>
-      <SliderInput
-        label="Max Daily Loss"
-        value={form.max_daily_loss_pct}
-        onChange={(v) => onChange({ max_daily_loss_pct: v })}
-        min={0.5}
-        max={20}
-        step={0.5}
-        unit="%"
-      />
-      <SliderInput
-        label="Max Position Size"
-        value={form.max_position_pct}
-        onChange={(v) => onChange({ max_position_pct: v })}
-        min={1}
-        max={50}
-        step={1}
-        unit="%"
-      />
-      <SliderInput
-        label="Stop Loss"
-        value={form.stop_loss_pct}
-        onChange={(v) => onChange({ stop_loss_pct: v })}
-        min={0.25}
-        max={10}
-        step={0.25}
-        unit="%"
-      />
 
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Smart Hold</p>
-            <p className="text-xs text-muted-foreground">Allow agent to hold beyond target if trade shows continued strength</p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={form.smart_hold_enabled}
-            onClick={() => onChange({ smart_hold_enabled: !form.smart_hold_enabled })}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.smart_hold_enabled ? 'bg-primary' : 'bg-muted'}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.smart_hold_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
-        </div>
-        {form.smart_hold_enabled && (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
+        {/* ─── LEFT COLUMN: Exits & stops ─── */}
+        <div className="space-y-5">
+          <SectionHeader title="Exits & Stops" subtitle="When the agent closes a position" />
+
           <SliderInput
-            label="Hold Buffer"
-            value={form.smart_hold_buffer_pct}
-            onChange={(v) => onChange({ smart_hold_buffer_pct: v })}
-            min={5}
-            max={30}
+            label="Max Daily Loss"
+            value={form.max_daily_loss_pct}
+            onChange={(v) => onChange({ max_daily_loss_pct: v })}
+            min={0.5}
+            max={20}
+            step={0.5}
+            unit="%"
+          />
+          <SliderInput
+            label="Stop Loss"
+            value={form.stop_loss_pct}
+            onChange={(v) => onChange({ stop_loss_pct: v })}
+            min={0.25}
+            max={10}
+            step={0.25}
+            unit="%"
+          />
+          <SliderInput
+            label="Take Profit Target"
+            value={form.take_profit_pct}
+            onChange={(v) => onChange({ take_profit_pct: v })}
+            min={1}
+            max={50}
+            step={0.5}
+            unit="%"
+          />
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <ToggleRow
+              label="Trailing Stop"
+              description="Stop follows price upward, locking gains"
+              checked={form.trailing_stop_enabled}
+              onToggle={() => onChange({ trailing_stop_enabled: !form.trailing_stop_enabled })}
+            />
+            {form.trailing_stop_enabled && (
+              <SliderInput
+                label="Trail Distance"
+                value={form.trailing_stop_pct}
+                onChange={(v) => onChange({ trailing_stop_pct: v })}
+                min={0.5}
+                max={10}
+                step={0.25}
+                unit="%"
+              />
+            )}
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <ToggleRow
+              label="Smart Hold"
+              description="Hold beyond target if momentum continues"
+              checked={form.smart_hold_enabled}
+              onToggle={() => onChange({ smart_hold_enabled: !form.smart_hold_enabled })}
+            />
+            {form.smart_hold_enabled && (
+              <SliderInput
+                label="Hold Buffer"
+                value={form.smart_hold_buffer_pct}
+                onChange={(v) => onChange({ smart_hold_buffer_pct: v })}
+                min={5}
+                max={30}
+                step={1}
+                unit="%"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* ─── RIGHT COLUMN: Sizing & gates ─── */}
+        <div className="space-y-5">
+          <SectionHeader title="Sizing & Gates" subtitle="How much and when the agent trades" />
+
+          <SliderInput
+            label="Max Position Size"
+            value={form.max_position_pct}
+            onChange={(v) => onChange({ max_position_pct: v })}
+            min={1}
+            max={50}
             step={1}
             unit="%"
           />
-        )}
+          <SliderInput
+            label="Per-Ticker Exposure Cap"
+            value={form.max_ticker_exposure_pct}
+            onChange={(v) => onChange({ max_ticker_exposure_pct: v })}
+            min={5}
+            max={100}
+            step={5}
+            unit="%"
+          />
+          <SliderInput
+            label="Max Concurrent Positions"
+            value={form.max_concurrent_positions}
+            onChange={(v) => onChange({ max_concurrent_positions: v })}
+            min={1}
+            max={20}
+            step={1}
+            unit=""
+          />
+          <SliderInput
+            label="Min Confidence to Trade"
+            value={form.min_confidence_threshold}
+            onChange={(v) => onChange({ min_confidence_threshold: v })}
+            min={0.3}
+            max={0.95}
+            step={0.05}
+            unit=""
+          />
+          <SliderInput
+            label="Cooldown After N Losses"
+            value={form.max_consecutive_losses}
+            onChange={(v) => onChange({ max_consecutive_losses: v })}
+            min={1}
+            max={10}
+            step={1}
+            unit=""
+          />
+        </div>
       </div>
     </div>
   )
@@ -1604,6 +1757,13 @@ export default function AgentsPage() {
         max_daily_loss_pct: form.max_daily_loss_pct,
         max_position_pct: form.max_position_pct,
         stop_loss_pct: form.stop_loss_pct,
+        take_profit_pct: form.take_profit_pct,
+        trailing_stop_enabled: form.trailing_stop_enabled,
+        trailing_stop_pct: form.trailing_stop_pct,
+        max_concurrent_positions: form.max_concurrent_positions,
+        max_ticker_exposure_pct: form.max_ticker_exposure_pct,
+        min_confidence_threshold: form.min_confidence_threshold,
+        max_consecutive_losses: form.max_consecutive_losses,
         smart_hold_enabled: form.smart_hold_enabled,
         smart_hold_buffer_pct: form.smart_hold_buffer_pct,
         source_config: form.source_config,

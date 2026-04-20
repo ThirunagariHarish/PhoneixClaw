@@ -11,10 +11,27 @@ from shared.observability.metrics import tool_latency_histogram
 def check_risk(signal: dict, prediction: dict, portfolio: dict, config: dict) -> dict:
     risk = config.get("risk_params", {})
 
+    # Accept either name (wizard calls it min_confidence_threshold;
+    # older configs use confidence_threshold).
+    confidence_floor = risk.get(
+        "min_confidence_threshold",
+        risk.get("confidence_threshold", 0.65),
+    )
+
+    ticker = (signal.get("ticker") or "").upper()
+    ticker_exposure = portfolio.get("ticker_exposure", {}) or {}
+    current_ticker_pct = float(ticker_exposure.get(ticker, 0) or 0)
+    max_ticker_pct = float(risk.get("max_ticker_exposure_pct", 100))
+
+    consecutive_losses = int(portfolio.get("consecutive_losses", 0) or 0)
+    max_consecutive = int(risk.get("max_consecutive_losses", 999))
+
     checks = {
-        "confidence_ok": prediction.get("confidence", 0) >= risk.get("confidence_threshold", 0.65),
+        "confidence_ok": prediction.get("confidence", 0) >= confidence_floor,
         "max_positions_ok": portfolio.get("open_positions", 0) < risk.get("max_concurrent_positions", 3),
         "daily_loss_ok": portfolio.get("daily_pnl_pct", 0) > -risk.get("max_daily_loss_pct", 3.0),
+        "ticker_exposure_ok": current_ticker_pct < max_ticker_pct,
+        "consecutive_losses_ok": consecutive_losses < max_consecutive,
         "pattern_match_ok": (
             prediction.get("pattern_matches", 0) >= risk.get("min_pattern_matches", 1)
             if risk.get("require_pattern_match", False)
