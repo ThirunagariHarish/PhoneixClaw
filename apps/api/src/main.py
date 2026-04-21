@@ -307,6 +307,11 @@ async def _ensure_prod_schema() -> None:
         # pm_chat_messages safety (Phase 15.6 — SSE partial flag)
         ("pm_chat_messages.is_partial",
          "ALTER TABLE pm_chat_messages ADD COLUMN IF NOT EXISTS is_partial BOOLEAN DEFAULT false"),
+        # channel_messages: columns added in model but not original migration
+        ("channel_messages.channel_id_snowflake",
+         "ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS channel_id_snowflake VARCHAR(20)"),
+        ("channel_messages.backfill_run_id",
+         "ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS backfill_run_id UUID"),
         # Phase 3 safety net: consolidation_runs table (migration 036)
         ("table consolidation_runs",
          "CREATE TABLE IF NOT EXISTS consolidation_runs ("

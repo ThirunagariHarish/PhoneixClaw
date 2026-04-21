@@ -18,11 +18,31 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+def _safe_python_executable() -> str:
+    """Return a subprocess-safe Python path.
+
+    On macOS, sys.executable may point to the Framework GUI binary
+    (Python.app/Contents/MacOS/Python) which can fail to initialise
+    sys.stdin/stdout/stderr when spawned without a TTY.  The non-GUI
+    binary lives in the Framework's bin/ directory and is always safe.
+    """
+    exe = sys.executable
+    if "Python.app/Contents/MacOS/Python" in exe:
+        candidate = exe.replace(
+            "Resources/Python.app/Contents/MacOS/Python",
+            "bin/python3.13",
+        )
+        if Path(candidate).exists():
+            return candidate
+    return exe
 
 logger = logging.getLogger(__name__)
 
@@ -241,13 +261,27 @@ class BacktestOrchestrator:
                         "message_id": row.platform_message_id,
                     })
 
+            # Always write the file (even empty) so _build_pipeline can pass
+            # --messages-file unconditionally and transform.py never falls back
+            # to the seed DB at port 5434.
+            messages_path.write_text(json.dumps(messages, indent=2, default=str))
             if messages:
-                messages_path.write_text(json.dumps(messages, indent=2, default=str))
                 logger.info("Exported %d DB messages to %s", len(messages), messages_path)
             else:
-                logger.warning("No messages found in DB for agent %s connectors", self.agent_id)
+                logger.warning(
+                    "No messages found in DB for agent %s connectors — wrote empty messages.json "
+                    "(transform.py will produce an empty dataset; backtest will complete with no trades)",
+                    self.agent_id,
+                )
         except Exception as e:
             logger.warning("DB message export failed (non-fatal): %s", e)
+            # Write empty file so _build_pipeline always passes --messages-file
+            # and transform.py never tries to hit the wrong seed DB.
+            try:
+                messages_path.write_text("[]")
+                logger.info("Wrote empty messages.json as fallback after export error")
+            except Exception:
+                pass
 
     def _build_pipeline(self) -> list[tuple[str, str, str, list[str]]]:
         """Build the ordered pipeline of (script, description, type, args) tuples."""
@@ -367,12 +401,14 @@ class BacktestOrchestrator:
             return {"success": False, "script": script, "error": f"Script not found: {script_path}"}
 
         try:
-            cmd = [sys.executable, str(script_path)] + (args or [])
+            cmd = [_safe_python_executable(), str(script_path)] + (args or [])
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
                 cwd=str(self.work_dir),
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=STEP_TIMEOUT,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -580,7 +581,63 @@ async def retry_backtest(agent_id: str, request: Request, session: DbSession):
     return {"id": agent_id, "status": "CREATED"}
 
 
-class AgentApprovePayload(BaseModel):
+@router.post("/{agent_id}/start-backtest")
+async def start_backtest(agent_id: str, request: Request, session: DbSession):
+    """Kick off a backtest for an agent in CREATED (or ERROR) state.
+
+    Transitions the agent to BACKTESTING, creates a new AgentBacktest row,
+    and calls gateway.create_backtester() to spawn the orchestrator task.
+    """
+    from apps.api.src.services.agent_gateway import gateway
+
+    agent_uuid = uuid.UUID(agent_id)
+    agent_result = await session.execute(select(Agent).where(Agent.id == agent_uuid))
+    agent = agent_result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    caller_id = getattr(request.state, "user_id", None)
+    is_admin = getattr(request.state, "is_admin", False)
+    if str(agent.user_id) != str(caller_id) and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if agent.status not in ("CREATED", "ERROR"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Agent must be in CREATED or ERROR state. Current status: {agent.status}",
+        )
+
+    # Create a new backtest row
+    backtest = AgentBacktest(
+        id=uuid.uuid4(),
+        agent_id=agent_uuid,
+        status="RUNNING",
+    )
+    session.add(backtest)
+    agent.status = "BACKTESTING"
+    agent.error_message = None
+    await session.commit()
+    await session.refresh(backtest)
+
+    backtest_config = {
+        **(agent.config or {}),
+        "backtest_id": str(backtest.id),
+        "phoenix_api_url": os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", f"http://localhost:{os.getenv('API_PORT', '8011')}")),
+    }
+
+    try:
+        await gateway.create_backtester(agent_uuid, backtest.id, backtest_config)
+    except Exception as exc:
+        logger.exception("start-backtest: create_backtester failed for agent %s: %s", agent_id, exc)
+        agent.status = "ERROR"
+        agent.error_message = str(exc)
+        backtest.status = "FAILED"
+        await session.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to start backtest: {exc}")
+
+    return {"id": agent_id, "backtest_id": str(backtest.id), "status": "BACKTESTING"}
+
+
     trading_mode: str = "paper"
     account_id: str | None = None
     stop_loss_pct: float = 2.0

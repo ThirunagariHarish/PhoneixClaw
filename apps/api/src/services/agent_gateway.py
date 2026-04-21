@@ -103,9 +103,10 @@ def _get_api_url() -> str:
     Priority:
       1. PHOENIX_API_URL env var (explicit override)
       2. PUBLIC_API_URL env var (legacy alias)
-      3. http://localhost:8011 (safe local default — never the production domain)
+      3. http://localhost:{API_PORT} (defaults to 8011, but honours API_PORT env var)
     """
-    return os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", "http://localhost:8011"))
+    default_port = os.getenv("API_PORT", "8011")
+    return os.getenv("PHOENIX_API_URL", os.getenv("PUBLIC_API_URL", f"http://localhost:{default_port}"))
 _session_ids: dict[str, str] = {}
 _chat_session_ids: dict[str, str] = {}
 

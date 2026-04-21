@@ -340,8 +340,30 @@ def main():
         except Exception:
             pass
 
+    # ── Source: Pre-fetched messages JSON (preferred — avoids seed DB) ────────
+    if args.messages_file:
+        channel_name = "phoenix-db"
+        msgs_path = Path(args.messages_file)
+        if not msgs_path.exists():
+            print(f"WARNING: --messages-file {msgs_path} not found, falling back to --source postgres")
+            raw_messages = _load_messages_from_postgres(args.db_url)
+        else:
+            data = json.loads(msgs_path.read_text())
+            raw_messages = []
+            for item in data:
+                ts = item.get("timestamp") or item.get("posted_at")
+                if isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts)
+                raw_messages.append({
+                    "content": item.get("content", ""),
+                    "author": item.get("author", "unknown"),
+                    "timestamp": ts,
+                    "message_id": str(item.get("message_id", "")),
+                })
+            print(f"Loaded {len(raw_messages)} messages from {msgs_path}")
+
     # ── Source: PostgreSQL raw_messages table ──────────────────────────────
-    if args.source == "postgres":
+    elif args.source == "postgres":
         channel_name = "postgres-seed"
         raw_messages = _load_messages_from_postgres(args.db_url)
         print(f"Loaded {len(raw_messages)} messages from PostgreSQL")
