@@ -23,6 +23,7 @@ class ConnectorType(str, Enum):
     NEWS_API = "news_api"
     CUSTOM_WEBHOOK = "custom_webhook"
     TELEGRAM = "telegram"
+    ANTHROPIC = "anthropic"
 
 
 class ConnectorStatus(str, Enum):

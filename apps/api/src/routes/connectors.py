@@ -663,6 +663,26 @@ async def test_connector(connector_id: str, session: DbSession):
                 else:
                     detail = f"Alpha Vantage returned {resp.status_code}"
 
+        elif connector.type == "anthropic":
+            api_key = creds.get("api_key", "")
+            if not api_key:
+                return {"connection_status": "ERROR", "detail": "Missing Anthropic API key"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                )
+                if resp.status_code == 200:
+                    conn_status = "connected"
+                    detail = "Anthropic API key valid"
+                    # Inject into process env so agent gateway picks it up immediately
+                    import os as _os
+                    _os.environ["ANTHROPIC_API_KEY"] = api_key
+                elif resp.status_code == 401:
+                    detail = "Invalid Anthropic API key"
+                else:
+                    detail = f"Anthropic API returned {resp.status_code}"
+
         else:
             conn_status = "connected"
             detail = f"No specific test for {connector.type}"

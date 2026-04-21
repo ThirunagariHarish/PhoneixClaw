@@ -596,7 +596,37 @@ async def lifespan(app: FastAPI):
     if _key:
         _log.info("[startup] ANTHROPIC_API_KEY set (len=%d)", len(_key))
     else:
-        _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+        # Try to load from the active anthropic connector in the DB
+        try:
+            from shared.db.engine import async_session as _make_session
+            from shared.db.models.connector import Connector as _Connector
+            from shared.crypto.credentials import decrypt_credentials as _decrypt
+            from sqlalchemy import select as _select
+            _s = _make_session()
+            try:
+                _res = await _s.execute(
+                    _select(_Connector).where(
+                        _Connector.type == "anthropic",
+                        _Connector.is_active.is_(True),
+                        _Connector.status == "connected",
+                    ).limit(1)
+                )
+                _conn = _res.scalar_one_or_none()
+                if _conn and _conn.credentials_encrypted:
+                    _creds = _decrypt(_conn.credentials_encrypted)
+                    _loaded_key = _creds.get("api_key", "")
+                    if _loaded_key:
+                        os.environ["ANTHROPIC_API_KEY"] = _loaded_key
+                        _log.info("[startup] ANTHROPIC_API_KEY loaded from anthropic connector (len=%d)", len(_loaded_key))
+                    else:
+                        _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+                else:
+                    _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
+            finally:
+                await _s.close()
+        except Exception as _exc:
+            _log.warning("[startup] Could not load ANTHROPIC_API_KEY from connector: %s", _exc)
+            _log.warning("[startup] ANTHROPIC_API_KEY not set — Claude SDK will fail")
 
     # Validate Fernet encryption key at startup
     _enc_key = os.getenv("CREDENTIAL_ENCRYPTION_KEY") or os.getenv("FERNET_KEY")

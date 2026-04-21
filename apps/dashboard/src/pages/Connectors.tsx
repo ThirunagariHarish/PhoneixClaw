@@ -20,7 +20,7 @@ import {
   Plug, Plus, Loader2, Server, Hash, Trash2, MoreVertical,
   CheckSquare, Square as SquareIcon, ChevronRight, ChevronLeft, Wifi, X,
   MessageSquare, Newspaper, Globe, Webhook, TrendingUp, Landmark, BarChart3,
-  Activity, Radio,
+  Activity, Radio, Brain,
 } from 'lucide-react'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -61,7 +61,7 @@ type PlatformType =
   | 'discord' | 'discord_webhook' | 'reddit' | 'twitter' | 'unusual_whales' | 'news_api'
   | 'custom_webhook' | 'alpaca' | 'ibkr' | 'tradier' | 'robinhood'
   | 'yfinance' | 'polygon' | 'alphavantage'
-  | 'whatsapp' | 'telegram'
+  | 'whatsapp' | 'telegram' | 'anthropic'
 
 // ─── Platform Metadata ──────────────────────────────────────────────────────
 
@@ -92,6 +92,7 @@ const PLATFORMS: PlatformMeta[] = [
   { type: 'alphavantage',    label: 'Alpha Vantage',   description: 'Free stock API with technical indicators', category: 'data',   icon: Activity,      color: 'text-lime-500',    bgColor: 'bg-lime-500/10' },
   { type: 'whatsapp',        label: 'WhatsApp',        description: 'Per-agent tagged threads via Meta Cloud API', category: 'data', icon: MessageSquare, color: 'text-green-400',   bgColor: 'bg-green-500/10' },
   { type: 'telegram',        label: 'Telegram Bot',    description: 'Per-agent groups via Telegram Bot API',      category: 'data', icon: MessageSquare, color: 'text-sky-400',     bgColor: 'bg-sky-500/10' },
+  { type: 'anthropic',       label: 'Anthropic (Claude)', description: 'Connect your Anthropic API key to power AI agents', category: 'data', icon: Brain, color: 'text-violet-400', bgColor: 'bg-violet-500/10' },
 ]
 
 function platformMeta(type: string): PlatformMeta {
@@ -426,6 +427,11 @@ function AddConnectorWizard({
     display_name: '', bot_token: '', default_chat_id: '', base_group_chat_id: ''
   })
 
+  // Anthropic
+  const [anthropicForm, setAnthropicForm] = useState({
+    display_name: 'Anthropic Claude', api_key: '',
+  })
+
   // Tags (shared across all connectors)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
 
@@ -445,6 +451,7 @@ function AddConnectorWizard({
       setNewsForm({ display_name: '', api_key: '', sources: '', symbols: '' })
       setWhatsappForm({ display_name: '', access_token: '', phone_number_id: '', verify_token: '', default_thread_id: '' })
       setTelegramForm({ display_name: '', bot_token: '', default_chat_id: '', base_group_chat_id: '' })
+      setAnthropicForm({ display_name: 'Anthropic Claude', api_key: '' })
       setWebhookForm({ display_name: '', secret_header: '', allowed_origins: '' })
       setDiscordWebhookForm({ display_name: '', channel_name: '' })
       setAlpacaForm({ display_name: '', api_key: '', api_secret: '', mode: 'paper' })
@@ -661,6 +668,12 @@ function AddConnectorWizard({
           }
           break
         }
+        case 'anthropic': {
+          name = anthropicForm.display_name
+          credentials = { api_key: anthropicForm.api_key }
+          config = { provider: 'anthropic' }
+          break
+        }
         default: break
       }
 
@@ -716,6 +729,8 @@ function AddConnectorWizard({
         return !!(whatsappForm.display_name && whatsappForm.access_token && whatsappForm.phone_number_id)
       case 'telegram':
         return !!(telegramForm.display_name && telegramForm.bot_token)
+      case 'anthropic':
+        return !!(anthropicForm.display_name && anthropicForm.api_key)
       default:
         return false
     }
@@ -994,6 +1009,29 @@ function AddConnectorWizard({
               </div>
               <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-400">
                 Telegram supports auto-generated per-agent invite links via `createChatInviteLink`. Set the base group above and Phoenix will mint one link per new agent.
+              </div>
+            </div>
+          )}
+
+          {/* Anthropic */}
+          {platform === 'anthropic' && step === 1 && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 flex items-start gap-2">
+                <Brain className="h-4 w-4 text-violet-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-violet-300">
+                  Your Anthropic API key powers all Claude AI agents — backtesting, live trading, chat, and analysis. The key is stored encrypted and injected at runtime.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Display Name</Label>
+                <Input value={anthropicForm.display_name} onChange={(e) => setAnthropicForm((f) => ({ ...f, display_name: e.target.value }))} placeholder="Anthropic Claude" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>API Key</Label>
+                <Input type="password" value={anthropicForm.api_key} onChange={(e) => setAnthropicForm((f) => ({ ...f, api_key: e.target.value }))} placeholder="sk-ant-api03-..." className="font-mono" />
+                <p className="text-xs text-muted-foreground">
+                  Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className="underline text-primary/80">console.anthropic.com</a>. After saving, click <strong>Test Connection</strong> to activate.
+                </p>
               </div>
             </div>
           )}
