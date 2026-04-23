@@ -527,6 +527,36 @@ class TestEnsureLogin:
         with pytest.raises(ValueError, match="credentials missing"):
             gw._ensure_login(s)
 
+    def test_do_login_uses_persistent_session_pickle(self, monkeypatch, tmp_path):
+        import services.broker_gateway.src.main as gw
+
+        session = gw.RobinhoodSession(
+            account_id="acct-1",
+            username="user@example.com",
+            password="secret",
+            paper_mode=False,
+        )
+
+        login_calls = []
+
+        class FakeRH:
+            def login(self, username, password, **kwargs):
+                login_calls.append({"username": username, "password": password, **kwargs})
+                return {"access_token": "token"}
+
+        monkeypatch.setattr(gw, "_rh_module", FakeRH())
+        monkeypatch.setattr(gw, "TOKEN_DIR", tmp_path / ".tokens")
+
+        gw._do_login(session)
+
+        assert session.logged_in is True
+        assert login_calls
+        call = login_calls[0]
+        assert call["store_session"] is True
+        assert call["expiresIn"] == 86400
+        assert call["pickle_name"].startswith("phoenix_acct-1_user")
+        assert (tmp_path / ".tokens").exists()
+
 
 # ===================================================================
 # Retry helper

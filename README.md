@@ -104,6 +104,23 @@ make logs   # Watch logs
 - [Deployment Guide](docs/operations/deployment-guide.md) — VPS setup with Coolify
 - [Go-Live Checklist](docs/dev/go-live-regression-checklist.md) — regression and sign-off
 
+## Robinhood session persistence
+
+Robinhood auth persistence is handled by `services/broker-gateway`. The gateway logs in with cached Robinhood sessions, stores token pickle files in `TOKEN_DIR` (default `/app/data/.tokens`), and refreshes live sessions before they age out.
+
+For Docker and Coolify deployments, mount `TOKEN_DIR` to a persistent volume so device approval survives container restarts. The compose files now mount `rh_tokens` into the broker gateway for exactly that reason.
+
+Legacy single-account env vars:
+
+```bash
+RH_USERNAME=your_robinhood_email
+RH_PASSWORD=your_robinhood_password
+RH_TOTP_SECRET=
+TOKEN_DIR=/app/data/.tokens
+```
+
+If your Robinhood account only supports device approval and not authenticator-app 2FA, leave `RH_TOTP_SECRET` blank. Approve the deployment once in the Robinhood app, then let the persisted token cache handle reuse until Robinhood invalidates the session.
+
 ## License
 
 Private — All rights reserved.

@@ -340,6 +340,12 @@ services:
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-}
       - FERNET_KEY=${FERNET_KEY:-${CREDENTIAL_ENCRYPTION_KEY:-}}
       - DRY_RUN_MODE=${DRY_RUN_MODE:-true}
+      - RH_USERNAME=${RH_USERNAME:-}
+      - RH_PASSWORD=${RH_PASSWORD:-}
+      - RH_TOTP_SECRET=${RH_TOTP_SECRET:-}
+      - TOKEN_DIR=${TOKEN_DIR:-/app/data/.tokens}
+    volumes:
+      - rh_tokens:${TOKEN_DIR:-/app/data/.tokens}
     depends_on:
       postgres:
         condition: service_healthy
@@ -452,4 +458,5 @@ services:
 volumes:
   pgdata:
   miniodata:
+  rh_tokens:
   # ollama_data:  # re-enable when Ollama service is re-enabled
