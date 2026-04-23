@@ -13,6 +13,7 @@ Tests cover:
 - --is-shared flag overrides category default
 - write_wiki_entry() async helper builds correct payload and uses Bearer auth
 """
+
 from __future__ import annotations
 
 import json
