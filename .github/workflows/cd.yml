@@ -23,7 +23,9 @@ jobs:
       - name: Build and push all v2 services
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
+          IMAGE_REPO="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           SERVICES=(
             "phoenix-api:apps/api/Dockerfile"
             "phoenix-dashboard:apps/dashboard/Dockerfile"
@@ -39,35 +41,30 @@ jobs:
             IFS=":" read -r svc dockerfile <<< "$entry"
             if [ -f "$dockerfile" ]; then
               echo "Building $svc ($TAG)..."
-              docker build -t ghcr.io/${{ github.repository }}/$svc:$TAG -t ghcr.io/${{ github.repository }}/$svc:latest -f $dockerfile . || echo "WARN: $svc build failed, skipping"
-              docker push ghcr.io/${{ github.repository }}/$svc:$TAG || true
-              docker push ghcr.io/${{ github.repository }}/$svc:latest || true
+              docker build -t "$IMAGE_REPO/$svc:$TAG" -t "$IMAGE_REPO/$svc:latest" -f "$dockerfile" .
+              docker push "$IMAGE_REPO/$svc:$TAG"
+              docker push "$IMAGE_REPO/$svc:latest"
             else
               echo "SKIP: $dockerfile not found"
             fi
           done
 
-      - name: Deploy to Coolify via webhook
+      - name: Deploy to Coolify
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SSH_KEY: ${{ secrets.COOLIFY_SSH_KEY }}
+          COOLIFY_HOST: ${{ secrets.COOLIFY_HOST }}
         run: |
-          if [ -n "$COOLIFY_WEBHOOK_URL" ]; then
+          set -euo pipefail
+          if [ -n "${COOLIFY_WEBHOOK_URL:-}" ] && [ -n "${COOLIFY_TOKEN:-}" ]; then
             echo "Triggering Coolify deployment..."
             curl -fsSL -X POST "$COOLIFY_WEBHOOK_URL" \
               -H "Authorization: Bearer $COOLIFY_TOKEN" \
               -H "Content-Type: application/json" \
-              --max-time 30 || echo "Webhook failed — falling back to SSH deploy"
-          fi
-
-      - name: Deploy via SSH (fallback)
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          COOLIFY_SSH_KEY: ${{ secrets.COOLIFY_SSH_KEY }}
-          COOLIFY_HOST: ${{ secrets.COOLIFY_HOST }}
-        run: |
-          if [ -n "$COOLIFY_SSH_KEY" ] && [ -n "$COOLIFY_HOST" ]; then
+              --max-time 30
+          elif [ -n "${COOLIFY_SSH_KEY:-}" ] && [ -n "${COOLIFY_HOST:-}" ]; then
             echo "Deploying via SSH..."
             mkdir -p ~/.ssh
             echo "$COOLIFY_SSH_KEY" > ~/.ssh/deploy_key
@@ -76,5 +73,6 @@ jobs:
               "cd /data/coolify/applications/tsogksw8kg0kgkgoow048cgk && docker compose pull && docker compose up -d --remove-orphans"
             rm -f ~/.ssh/deploy_key
           else
-            echo "No SSH credentials configured — skipping SSH deploy"
+            echo "Missing Coolify deployment credentials. Configure webhook or SSH secrets."
+            exit 1
           fi
