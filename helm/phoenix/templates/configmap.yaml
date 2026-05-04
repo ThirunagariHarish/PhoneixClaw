@@ -4,8 +4,12 @@ metadata:
   name: phoenix-config
   labels:
     {{- include "phoenix.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
 data:
-  DATABASE_URL: "postgresql://{{ .Values.postgres.user }}@postgres:5432/{{ .Values.postgres.database }}"
+  DATABASE_URL: "postgresql+asyncpg://{{ .Values.postgres.user }}@postgres:5432/{{ .Values.postgres.database }}"
   REDIS_URL: "redis://redis:6379/0"
   MINIO_ENDPOINT: "http://minio:9000"
   MODEL_BUCKET: "{{ .Values.appConfig.modelBucket }}"
