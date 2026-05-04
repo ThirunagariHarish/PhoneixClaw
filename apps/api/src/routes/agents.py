@@ -2065,35 +2065,35 @@ async def report_backtest_progress(agent_id: str, payload: BacktestProgressPaylo
         bt.max_drawdown = m.get("max_drawdown")
         bt.total_return = m.get("total_return")
 
-    agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
-    agent = agent_result.scalar_one_or_none()
-    if agent:
-        agent.status = "BACKTEST_COMPLETE"
-        agent.updated_at = datetime.now(timezone.utc)
-        agent.model_type = m.get("best_model") or m.get("model")
-        agent.model_accuracy = m.get("accuracy")
-        agent.total_trades = bt.total_trades
-        agent.win_rate = bt.win_rate or 0.0
+        agent_result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+        agent = agent_result.scalar_one_or_none()
+        if agent:
+            agent.status = "BACKTEST_COMPLETE"
+            agent.updated_at = datetime.now(timezone.utc)
+            agent.model_type = m.get("best_model") or m.get("model")
+            agent.model_accuracy = m.get("accuracy")
+            agent.total_trades = bt.total_trades
+            agent.win_rate = bt.win_rate or 0.0
 
-        if m.get("auto_create_analyst"):
-            try:
-                # Look up the latest backtest version dir from latest.json
-                from pathlib import Path
+            if m.get("auto_create_analyst"):
+                try:
+                    # Look up the latest backtest version dir from latest.json
+                    from pathlib import Path
 
-                from apps.api.src.services.agent_gateway import DATA_DIR, gateway
-                latest_pointer = DATA_DIR / f"backtest_{agent_id}" / "latest.json"
-                bt_dir = None
-                if latest_pointer.exists():
-                    try:
-                        latest = json.loads(latest_pointer.read_text())
-                        bt_dir = Path(latest.get("output_dir", ""))
-                    except Exception:
-                        pass
-                if bt_dir is None:
-                    bt_dir = DATA_DIR / f"backtest_{agent_id}" / "output"
-                await gateway._auto_create_analyst(uuid.UUID(agent_id), {}, bt_dir)
-            except Exception as exc:
-                logger.warning("Auto-create analyst failed for %s: %s", agent_id, exc)
+                    from apps.api.src.services.agent_gateway import DATA_DIR, gateway
+                    latest_pointer = DATA_DIR / f"backtest_{agent_id}" / "latest.json"
+                    bt_dir = None
+                    if latest_pointer.exists():
+                        try:
+                            latest = json.loads(latest_pointer.read_text())
+                            bt_dir = Path(latest.get("output_dir", ""))
+                        except Exception:
+                            pass
+                    if bt_dir is None:
+                        bt_dir = DATA_DIR / f"backtest_{agent_id}" / "output"
+                    await gateway._auto_create_analyst(uuid.UUID(agent_id), {}, bt_dir)
+                except Exception as exc:
+                    logger.warning("Auto-create analyst failed for %s: %s", agent_id, exc)
 
     # Phase 3.1: Notification dispatch for trade events
     try:
