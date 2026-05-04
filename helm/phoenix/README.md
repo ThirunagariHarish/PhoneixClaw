@@ -98,9 +98,19 @@ Key configuration options:
 
 ## Architecture
 
-15 Phoenix services + 3 infrastructure services (Postgres, Redis, MinIO) + edge-nginx reverse proxy + Traefik IngressRoute.
+15 Phoenix services + 3 infrastructure services (Postgres, Redis, MinIO) + edge-nginx reverse proxy + k8s `Ingress` (Traefik class) with cert-manager TLS.
 
 See `ADR.md` for architecture decision records.
+
+## GitOps via argocd
+
+`argocd-application.yaml` (at chart root) registers Phoenix as an argocd `Application` pointing at this repo's `main` branch, `helm/phoenix` path, with `values.prod.yaml`. Apply once with:
+
+```bash
+kubectl apply -f helm/phoenix/argocd-application.yaml
+```
+
+argocd will then sync any changes pushed to `main` automatically (selfHeal=true, prune=false).
 
 ## Uninstalling
 

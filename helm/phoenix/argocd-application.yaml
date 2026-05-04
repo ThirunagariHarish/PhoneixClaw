@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: phoenix
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: phoenix
+    app.kubernetes.io/part-of: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ThirunagariHarish/PhoneixClaw.git
+    targetRevision: main
+    path: helm/phoenix
+    helm:
+      valueFiles:
+      - values.prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: phoenix
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    retry:
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+      limit: 5
+    syncOptions:
+    - CreateNamespace=true
+    - ApplyOutOfSyncOnly=true
+    - ServerSideApply=true
+  revisionHistoryLimit: 10
