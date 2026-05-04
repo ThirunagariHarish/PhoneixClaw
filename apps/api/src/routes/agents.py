@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import traceback
 import uuid
@@ -18,6 +19,23 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_float(value: Any) -> float | None:
+    """Return None for NaN / inf so JSON serialization (strict) doesn't crash.
+
+    Postgres stores NaN for double precision when an aggregate over zero rows
+    runs (e.g. win_rate over 0 trades). FastAPI's default encoder rejects NaN.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -638,6 +656,8 @@ async def start_backtest(agent_id: str, request: Request, session: DbSession):
     return {"id": agent_id, "backtest_id": str(backtest.id), "status": "BACKTESTING"}
 
 
+class AgentApprovePayload(BaseModel):
+    """Body for POST /agents/{id}/approve."""
     trading_mode: str = "paper"
     account_id: str | None = None
     stop_loss_pct: float = 2.0
@@ -1435,10 +1455,10 @@ async def get_agent_backtest(agent_id: str, session: DbSession):
         "metrics": bt.metrics,
         "equity_curve": bt.equity_curve,
         "total_trades": bt.total_trades,
-        "win_rate": bt.win_rate,
-        "sharpe_ratio": bt.sharpe_ratio,
-        "max_drawdown": bt.max_drawdown,
-        "total_return": bt.total_return,
+        "win_rate": _safe_float(bt.win_rate),
+        "sharpe_ratio": _safe_float(bt.sharpe_ratio),
+        "max_drawdown": _safe_float(bt.max_drawdown),
+        "total_return": _safe_float(bt.total_return),
         "error_message": bt.error_message,
         "completed_at": bt.completed_at.isoformat() if bt.completed_at else None,
         "created_at": bt.created_at.isoformat() if bt.created_at else None,
@@ -2452,10 +2472,10 @@ async def get_backtest_artifacts(agent_id: str, session: DbSession):
         "progress_pct": bt.progress_pct or 0,
         "current_step": bt.current_step,
         "total_trades": computed_total_trades,
-        "win_rate": computed_win_rate,
-        "sharpe_ratio": computed_sharpe,
-        "max_drawdown": computed_drawdown,
-        "total_return": computed_total_return,
+        "win_rate": _safe_float(computed_win_rate),
+        "sharpe_ratio": _safe_float(computed_sharpe),
+        "max_drawdown": _safe_float(computed_drawdown),
+        "total_return": _safe_float(computed_total_return),
         "feature_names": feature_names,
         "feature_count": len(feature_names),
         "all_model_results": all_model_results,
