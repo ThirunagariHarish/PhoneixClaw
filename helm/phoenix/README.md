@@ -36,18 +36,15 @@ echo -n "$VALUE" | kubeseal --raw \
 # The command outputs a sealed ciphertext - copy it into the template
 ```
 
-The 9 secret keys required:
+The 6 secret keys required:
 - `POSTGRES_PASSWORD`
 - `JWT_SECRET_KEY`
 - `CREDENTIAL_ENCRYPTION_KEY`
 - `ANTHROPIC_API_KEY`
 - `MINIO_ROOT_USER`
 - `MINIO_ROOT_PASSWORD`
-- `RH_USERNAME`
-- `RH_PASSWORD`
-- `RH_TOTP_SECRET`
 
-Discord bot tokens are managed at runtime via the dashboard's Connectors panel and stored encrypted in the `connectors` table — they are not chart-level secrets.
+Broker credentials (Robinhood, IB, Alpaca) and Discord bot tokens are managed at runtime via the dashboard's Connectors panel and stored encrypted in the `connectors` table — they are not chart-level secrets.
 
 Edit `templates/sealedsecret.yaml.template`, replace each `<SEALED_*>` placeholder with the corresponding ciphertext, and save the file as `templates/sealedsecret.yaml`.
 

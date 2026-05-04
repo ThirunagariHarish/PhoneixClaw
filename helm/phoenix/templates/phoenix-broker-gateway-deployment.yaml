@@ -45,21 +45,6 @@ spec:
             secretKeyRef:
               name: phoenix-secrets
               key: CREDENTIAL_ENCRYPTION_KEY
-        - name: RH_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: phoenix-secrets
-              key: RH_USERNAME
-        - name: RH_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: phoenix-secrets
-              key: RH_PASSWORD
-        - name: RH_TOTP_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: phoenix-secrets
-              key: RH_TOTP_SECRET
         volumeMounts:
         - name: rh-tokens
           mountPath: /app/data/.tokens

@@ -5,6 +5,6 @@ image:
 
 appConfig:
   corsOrigins: "https://cashflowus.com,https://www.cashflowus.com"
-  enableTrading: "false"
-  dryRunMode: "true"
+  enableTrading: "true"
+  dryRunMode: "false"
   logLevel: "INFO"
