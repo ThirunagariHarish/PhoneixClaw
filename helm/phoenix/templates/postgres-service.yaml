@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  clusterIP: None
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    {{- include "phoenix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres

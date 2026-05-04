@@ -1,0 +1,69 @@
+image:
+  repository: phoenix
+  tag: local
+  pullPolicy: IfNotPresent
+
+postgres:
+  image: timescale/timescaledb:latest-pg16
+  user: phoenixtrader
+  database: phoenixtrader
+  storageSize: 10Gi
+
+redis:
+  image: redis:7-alpine
+  maxmemory: 256mb
+
+minio:
+  image: minio/minio:latest
+  storageSize: 5Gi
+
+appConfig:
+  corsOrigins: "http://localhost:3000"
+  enableTrading: "false"
+  dryRunMode: "true"
+  logLevel: "INFO"
+  monitorPollIntervalSeconds: "300"
+  defaultProfitTarget: "0.05"
+  defaultStopLoss: "0.03"
+  bufferPercentage: "0.02"
+  maxPositionSize: "1000"
+  maxDailyLoss: "500"
+  approvalMode: "auto"
+  ollamaBaseUrl: "http://ollama:11434"
+  ollamaExpandModel: "llama3.2:1b"
+  modelBucket: "phoenix-models"
+  tokenDir: "/app/data/.tokens"
+
+resources:
+  api:
+    memory: 2Gi
+  dashboard:
+    memory: 128Mi
+  wsGateway:
+    memory: 256Mi
+  llmGateway:
+    memory: 256Mi
+  brokerGateway:
+    memory: 512Mi
+  execution:
+    memory: 256Mi
+  automation:
+    memory: 256Mi
+  discordIngestion:
+    memory: 512Mi
+  featurePipeline:
+    memory: 512Mi
+  inferenceService:
+    memory: 1Gi
+  agentOrchestrator:
+    memory: 1Gi
+  predictionMonitor:
+    memory: 256Mi
+  backtesting:
+    memory: 1Gi
+  postgres:
+    memory: 1Gi
+  redis:
+    memory: 256Mi
+  minio:
+    memory: 512Mi

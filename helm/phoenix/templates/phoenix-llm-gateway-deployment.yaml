@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-llm-gateway
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-llm-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-llm-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-llm-gateway
+    spec:
+      containers:
+      - name: llm-gateway
+        image: {{ .Values.image.repository }}/phoenix-llm-gateway:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8050
+          name: http
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: ANTHROPIC_API_KEY
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8050
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8050
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          limits:
+            memory: {{ .Values.resources.llmGateway.memory }}

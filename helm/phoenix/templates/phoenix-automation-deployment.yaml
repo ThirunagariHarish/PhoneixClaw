@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-automation
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-automation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-automation
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-automation
+    spec:
+      containers:
+      - name: automation
+        image: {{ .Values.image.repository }}/phoenix-automation:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+        resources:
+          limits:
+            memory: {{ .Values.resources.automation.memory }}

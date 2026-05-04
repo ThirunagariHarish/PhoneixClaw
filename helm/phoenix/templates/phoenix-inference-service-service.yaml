@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-inference-service
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-inference-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8045
+    targetPort: 8045
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "phoenix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-inference-service

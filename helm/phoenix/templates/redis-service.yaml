@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    {{- include "phoenix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis

@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-db-migrate
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: db-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: {{ .Values.image.repository }}/phoenix-api:{{ .Values.image.tag }}
+        command:
+        - python
+        - scripts/docker_migrate.py
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"

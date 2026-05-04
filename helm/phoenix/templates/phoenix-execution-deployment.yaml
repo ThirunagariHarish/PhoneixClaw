@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-execution
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-execution
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-execution
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-execution
+    spec:
+      containers:
+      - name: execution
+        image: {{ .Values.image.repository }}/phoenix-execution:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8020
+          name: http
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8020
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8020
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: {{ .Values.resources.execution.memory }}

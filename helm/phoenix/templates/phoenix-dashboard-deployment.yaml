@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-dashboard
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-dashboard
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: {{ .Values.image.repository }}/phoenix-dashboard:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          limits:
+            memory: {{ .Values.resources.dashboard.memory }}

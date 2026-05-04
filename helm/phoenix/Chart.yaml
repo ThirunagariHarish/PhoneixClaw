@@ -1,0 +1,6 @@
+apiVersion: v2
+name: phoenix
+description: Phoenix Trade Bot - Agent-first AI trading platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

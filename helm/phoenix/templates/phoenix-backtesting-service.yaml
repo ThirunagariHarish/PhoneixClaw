@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-backtesting
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-backtesting
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8085
+    targetPort: 8085
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "phoenix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-backtesting

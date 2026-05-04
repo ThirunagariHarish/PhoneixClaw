@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-backtesting
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-backtesting
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-backtesting
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-backtesting
+    spec:
+      containers:
+      - name: backtesting
+        image: {{ .Values.image.repository }}/phoenix-backtesting:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8085
+          name: http
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: MINIO_ROOT_USER
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: MINIO_ROOT_PASSWORD
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8085
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8085
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: {{ .Values.resources.backtesting.memory }}

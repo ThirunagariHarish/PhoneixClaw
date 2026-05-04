@@ -1,0 +1,17 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: phoenix
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: Host(`cashflowus.com`) || Host(`www.cashflowus.com`)
+    kind: Rule
+    services:
+    - name: edge-nginx
+      port: 80
+  tls:
+    secretName: phoenix-tls

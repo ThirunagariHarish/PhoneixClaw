@@ -1,0 +1,10 @@
+image:
+  repository: ghcr.io/thirunagariharish/phoneixclaw
+  tag: latest
+  pullPolicy: Always
+
+appConfig:
+  corsOrigins: "https://cashflowus.com,https://www.cashflowus.com"
+  enableTrading: "false"
+  dryRunMode: "true"
+  logLevel: "INFO"

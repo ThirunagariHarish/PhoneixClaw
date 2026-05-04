@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phoenix-config
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+data:
+  DATABASE_URL: "postgresql://{{ .Values.postgres.user }}@postgres:5432/{{ .Values.postgres.database }}"
+  REDIS_URL: "redis://redis:6379/0"
+  MINIO_ENDPOINT: "http://minio:9000"
+  MODEL_BUCKET: "{{ .Values.appConfig.modelBucket }}"
+  TOKEN_DIR: "{{ .Values.appConfig.tokenDir }}"
+  CORS_ORIGINS: "{{ .Values.appConfig.corsOrigins }}"
+  ENABLE_TRADING: "{{ .Values.appConfig.enableTrading }}"
+  DRY_RUN_MODE: "{{ .Values.appConfig.dryRunMode }}"
+  LOG_LEVEL: "{{ .Values.appConfig.logLevel }}"
+  MONITOR_POLL_INTERVAL_SECONDS: "{{ .Values.appConfig.monitorPollIntervalSeconds }}"
+  DEFAULT_PROFIT_TARGET: "{{ .Values.appConfig.defaultProfitTarget }}"
+  DEFAULT_STOP_LOSS: "{{ .Values.appConfig.defaultStopLoss }}"
+  BUFFER_PERCENTAGE: "{{ .Values.appConfig.bufferPercentage }}"
+  MAX_POSITION_SIZE: "{{ .Values.appConfig.maxPositionSize }}"
+  MAX_DAILY_LOSS: "{{ .Values.appConfig.maxDailyLoss }}"
+  APPROVAL_MODE: "{{ .Values.appConfig.approvalMode }}"
+  OLLAMA_BASE_URL: "{{ .Values.appConfig.ollamaBaseUrl }}"
+  OLLAMA_EXPAND_MODEL: "{{ .Values.appConfig.ollamaExpandModel }}"
+  OLLAMA_DEFAULT_MODEL: "{{ .Values.appConfig.ollamaExpandModel }}"
+  PHOENIX_API_URL: "http://phoenix-api:8011"
+  LLM_GATEWAY_URL: "http://phoenix-llm-gateway:8050"
+  BROKER_GATEWAY_URL: "http://phoenix-broker-gateway:8040"
+  INFERENCE_SERVICE_URL: "http://phoenix-inference-service:8045"
+  API_URL: "http://phoenix-api:8011"
+  WEB_CONCURRENCY: "1"

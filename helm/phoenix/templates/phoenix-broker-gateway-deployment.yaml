@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-broker-gateway
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-broker-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-broker-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-broker-gateway
+    spec:
+      containers:
+      - name: broker-gateway
+        image: {{ .Values.image.repository }}/phoenix-broker-gateway:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8040
+          name: http
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+        - name: CREDENTIAL_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: CREDENTIAL_ENCRYPTION_KEY
+        - name: FERNET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: CREDENTIAL_ENCRYPTION_KEY
+        - name: RH_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: RH_USERNAME
+        - name: RH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: RH_PASSWORD
+        - name: RH_TOTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: RH_TOTP_SECRET
+        volumeMounts:
+        - name: rh-tokens
+          mountPath: /app/data/.tokens
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8040
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8040
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: {{ .Values.resources.brokerGateway.memory }}
+      volumes:
+      - name: rh-tokens
+        persistentVolumeClaim:
+          claimName: rh-tokens

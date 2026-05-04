@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-ws-gateway
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-ws-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-ws-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-ws-gateway
+    spec:
+      containers:
+      - name: ws-gateway
+        image: {{ .Values.image.repository }}/phoenix-ws-gateway:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8031
+          name: http
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        livenessProbe:
+          tcpSocket:
+            port: 8031
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 8031
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          limits:
+            memory: {{ .Values.resources.wsGateway.memory }}
