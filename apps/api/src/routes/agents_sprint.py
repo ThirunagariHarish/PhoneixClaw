@@ -106,7 +106,19 @@ async def get_channel_messages(
             "ingestion": None,
         }
 
-    # Resolve the effective floor: max(today midnight UTC, agent.created_at, caller `since`)
+    selected_channel_name: str | None = None
+    selected_channel_id: str | None = None
+    try:
+        agent_cfg = (await session.execute(
+            select(Agent.config).where(Agent.id == agent_id)
+        )).scalar_one_or_none() or {}
+        sel = (agent_cfg or {}).get("selected_channel") or {}
+        if isinstance(sel, dict):
+            selected_channel_name = (sel.get("channel_name") or "").lstrip("#") or None
+            selected_channel_id = sel.get("channel_id") or None
+    except Exception:
+        pass
+
     now_utc = datetime.now(timezone.utc)
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     effective_since = today_start
@@ -138,6 +150,8 @@ async def get_channel_messages(
             .order_by(ChannelMessage.posted_at.desc())
             .limit(limit)
         )
+        if selected_channel_name:
+            q = q.where(ChannelMessage.channel == selected_channel_name)
         rows = (await session.execute(q)).scalars().all()
     except Exception as exc:
         logger.exception("[channel-messages] Query failed (table may not exist): %s", exc)
