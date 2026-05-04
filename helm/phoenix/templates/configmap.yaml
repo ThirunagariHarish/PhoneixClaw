@@ -32,5 +32,6 @@ data:
   LLM_GATEWAY_URL: "http://phoenix-llm-gateway:8050"
   BROKER_GATEWAY_URL: "http://phoenix-broker-gateway:8040"
   INFERENCE_SERVICE_URL: "http://phoenix-inference-service:8045"
+  PIPELINE_WORKER_URL: "http://phoenix-pipeline-worker:8055"
   API_URL: "http://phoenix-api:8011"
   WEB_CONCURRENCY: "1"

@@ -53,6 +53,8 @@ resources:
     memory: 512Mi
   featurePipeline:
     memory: 512Mi
+  pipelineWorker:
+    memory: 512Mi
   inferenceService:
     memory: 1Gi
   agentOrchestrator:
