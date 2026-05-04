@@ -6,10 +6,11 @@ metadata:
     {{- include "phoenix.labels" . | nindent 4 }}
     app.kubernetes.io/component: db-migrate
   annotations:
-    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "0"
-    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
+  backoffLimit: 6
   template:
     metadata:
       labels:
@@ -17,6 +18,25 @@ spec:
         app.kubernetes.io/component: db-migrate
     spec:
       restartPolicy: Never
+      initContainers:
+      - name: wait-for-postgres
+        image: {{ .Values.image.repository }}/phoenix-api:{{ .Values.image.tag }}
+        command:
+        - python
+        - -c
+        - |
+          import socket, time, sys
+          for i in range(120):
+              try:
+                  s = socket.create_connection(('postgres', 5432), timeout=3)
+                  s.close()
+                  print(f'postgres reachable after {i*2}s')
+                  sys.exit(0)
+              except Exception as e:
+                  print(f'waiting for postgres ({i}/120): {e}')
+                  time.sleep(2)
+          print('postgres did not become reachable in 240s')
+          sys.exit(1)
       containers:
       - name: migrate
         image: {{ .Values.image.repository }}/phoenix-api:{{ .Values.image.tag }}
