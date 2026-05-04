@@ -9,3 +9,6 @@ pandas>=2.0.0
 numpy>=1.26.0
 pydantic-settings>=2.0.0
 ib_insync>=0.9.86
+alpaca-py>=0.30.0
+cryptography>=42.0.0
+prometheus_client>=0.19.0
