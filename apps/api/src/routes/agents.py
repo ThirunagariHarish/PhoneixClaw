@@ -557,7 +557,7 @@ async def pause_agent(agent_id: str, session: DbSession):
     from apps.api.src.services.agent_gateway import gateway
     result = await gateway.pause_agent(uuid.UUID(agent_id))
     if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result.get("message") or "Failed to pause agent")
     return {"id": agent_id, "status": "PAUSED"}
 
 
@@ -567,7 +567,7 @@ async def resume_agent(agent_id: str, session: DbSession):
     from apps.api.src.services.agent_gateway import gateway
     result = await gateway.resume_agent(uuid.UUID(agent_id))
     if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result["message"])
+        raise HTTPException(status_code=400, detail=result.get("message") or "Failed to resume agent")
     return {"id": agent_id, "status": "RUNNING"}
 
 

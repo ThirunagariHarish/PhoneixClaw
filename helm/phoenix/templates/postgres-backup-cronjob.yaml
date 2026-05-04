@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 1800
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "phoenix.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: backup
+            image: timescale/timescaledb:latest-pg16
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              ts=$(date -u +%Y%m%dT%H%M%SZ)
+              dump=/tmp/phoenix-${ts}.dump
+              echo "Dumping postgres → ${dump}"
+              PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+                -h postgres -U {{ .Values.postgres.user }} \
+                -d {{ .Values.postgres.database }} \
+                --format=custom --compress=9 \
+                --file="${dump}"
+              size=$(stat -c%s "${dump}")
+              echo "Dump size: ${size} bytes"
+              echo "Uploading to MinIO..."
+              apt-get update -qq && apt-get install -qq -y curl >/dev/null
+              curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+              chmod +x /usr/local/bin/mc
+              mc alias set local http://minio:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
+              mc mb -p local/postgres-backups >/dev/null 2>&1 || true
+              mc cp "${dump}" "local/postgres-backups/phoenix-${ts}.dump"
+              echo "Pruning backups older than 30 days..."
+              mc rm --recursive --force --older-than 30d local/postgres-backups/ || true
+              rm -f "${dump}"
+              echo "Backup complete."
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secrets
+                  key: POSTGRES_PASSWORD
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secrets
+                  key: MINIO_ROOT_PASSWORD
+            resources:
+              limits:
+                memory: 256Mi

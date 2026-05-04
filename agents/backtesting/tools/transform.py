@@ -400,12 +400,22 @@ def main():
     df.to_parquet(output_path, index=False)
     print(f"Saved {len(df)} trades to {output_path}")
 
-    # Summary stats
+    # Summary stats — use median + clipped mean to ignore parse-error outliers
+    # (sub-penny entry_price from misparsed messages produces astronomical pnl_pct)
     if len(df) > 0 and "is_profitable" in df.columns:
         win_rate = df["is_profitable"].mean()
-        avg_pnl = df["pnl_pct"].mean() if "pnl_pct" in df.columns else 0
+        if "pnl_pct" in df.columns:
+            pnl_series = df["pnl_pct"].dropna()
+            clipped = pnl_series.clip(lower=-1.0, upper=10.0) if len(pnl_series) else pnl_series
+            avg_pnl = clipped.mean() if len(clipped) else 0
+            median_pnl = pnl_series.median() if len(pnl_series) else 0
+            outliers = int((pnl_series.abs() > 10.0).sum()) if len(pnl_series) else 0
+        else:
+            avg_pnl = 0
+            median_pnl = 0
+            outliers = 0
         print(f"Transformed {len(df)} complete trades from {len(raw_messages)} messages ({win_rate:.1%} win rate)")
-        print(f"Avg P&L: {avg_pnl:.2%}")
+        print(f"Avg P&L (clipped ±1000%): {avg_pnl:.2%}  Median: {median_pnl:.2%}  Outliers dropped: {outliers}")
     else:
         print(f"Saved {len(df)} trades to {output_path}")
 

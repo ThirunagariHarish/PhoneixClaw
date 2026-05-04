@@ -1,0 +1,10 @@
+image:
+  repository: phoenix
+  tag: local
+  pullPolicy: IfNotPresent
+
+appConfig:
+  corsOrigins: "https://cashflowus.com,https://www.cashflowus.com"
+  enableTrading: "true"
+  dryRunMode: "false"
+  logLevel: "INFO"
