@@ -1,6 +1,6 @@
 """Production DB initializer — creates all tables via SQLAlchemy metadata.
 
-Used by the phoenix-db-migrate service in docker-compose.coolify.yml.
+Used by the phoenix-db-migrate Helm hook Job (helm/phoenix/templates/db-migrate-job.yaml).
 After create_all, applies V3 cleanup (drop VPS columns/tables).
 """
 import asyncio

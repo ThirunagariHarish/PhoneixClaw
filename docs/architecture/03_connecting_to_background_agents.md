@@ -30,7 +30,7 @@ ps aux | grep claude
 
 ## Understanding Where Agents Live
 
-### Production (Coolify VPS)
+### Production (k3s VPS)
 
 ```
 SSH layer:        root@69.62.86.166
@@ -69,7 +69,7 @@ Same layout but on your laptop:
 ssh root@69.62.86.166
 ```
 
-(Replace with your VPS IP. The Coolify deploy script uses `root@69.62.86.166`.)
+(Replace with your VPS IP. The k3s deploy script uses `root@69.62.86.166`.)
 
 ### 2. List running Phoenix containers
 

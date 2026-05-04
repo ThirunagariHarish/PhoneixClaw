@@ -7,7 +7,7 @@ Use this for staging/production sign-off. Do not ship until **Go** criteria are 
 | Check | Owner | Date | Pass/Fail |
 |-------|--------|------|-----------|
 | Postgres + Redis available to API | | | |
-| `DATABASE_URL` / Coolify secrets match runtime | | | |
+| `DATABASE_URL` / k3s secrets match runtime | | | |
 | Alembic at head (includes `038_decision_trail` for `agent_trades.decision_trail`) | | | |
 
 Commands (local or CI image with repo root):

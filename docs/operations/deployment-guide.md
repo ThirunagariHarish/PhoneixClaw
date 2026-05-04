@@ -1,6 +1,6 @@
-# Deploying PhoenixTrade to Hostinger VPS with Coolify
+# Deploying Phoenix to VPS with k3s and Helm
 
-Step-by-step guide to deploy the full PhoenixTrade platform on a Hostinger VPS using Coolify.
+Step-by-step guide to deploy the Phoenix Trade Bot platform on a VPS using k3s and Helm.
 
 ---
 
@@ -8,36 +8,51 @@ Step-by-step guide to deploy the full PhoenixTrade platform on a Hostinger VPS u
 
 | Requirement | Details |
 |---|---|
-| Hostinger VPS | KVM 2+ recommended (2 vCPU, 8 GB RAM, 100 GB NVMe) |
-| Domain name | Point an A record to your VPS IP (e.g. `trade.yourdomain.com`) |
-| GitHub repo | This project pushed to a GitHub repository (public or private) |
-| Coolify installed | Pre-installed on Hostinger "Ubuntu 24.04 with Coolify" template |
+| VPS | 2+ vCPU, 8 GB RAM, 50 GB storage (KVM or dedicated recommended) |
+| Domain name | Point A records to your VPS IP (`cashflowus.com` and `www.cashflowus.com`) |
+| SSH access | root or sudo user |
+| Git | Repo cloned locally or on VPS |
 
 ### Minimum VPS specs
 
-The full stack runs 13 containers. Recommended: **8 GB RAM** (4 GB is tight).
+The full stack runs 15 microservices + 3 infrastructure containers (Postgres, Redis, MinIO). Recommended: **8 GB RAM**.
 
 | Component | Memory |
 |---|---|
-| Kafka | ~1 GB |
-| PostgreSQL | ~512 MB |
-| Redis | ~192 MB |
-| 10 Python services | ~2.5 GB total |
-| Dashboard (Nginx) | ~128 MB |
-| OS + Coolify overhead | ~2 GB |
-| **Total** | **~6.3 GB** |
+| PostgreSQL | ~1 GB |
+| Redis | ~256 MB |
+| MinIO | ~512 MB |
+| 15 Phoenix services | ~5.5 GB total |
+| OS + k3s overhead | ~1 GB |
+| **Total** | **~7.3 GB** |
 
 ---
 
-## Step 1: Set Up Your Hostinger VPS
+## Step 1: Provision the VPS with k3s
 
-1. Log in to [Hostinger hPanel](https://hpanel.hostinger.com)
-2. Go to **VPS** → Select your server
-3. If Coolify is not installed:
-   - Go to **OS & Panel** → **Operating System**
-   - Select **Ubuntu 24.04 with Coolify**
-   - Click **Change OS** (this wipes the VPS)
-4. Note your **VPS IP address**
+SSH into your VPS and run the provisioning script:
+
+```bash
+cd /opt
+git clone https://github.com/thirunagariharish/PhoneixClaw.git phoenix
+cd phoenix
+
+LETSENCRYPT_EMAIL=admin@yourdomain.com infra/scripts/provision-k3s.sh
+```
+
+This installs:
+- k3s (single-node with Traefik and servicelb)
+- Helm
+- Sealed Secrets controller (for encrypted secrets)
+- cert-manager (for Let's Encrypt TLS)
+- ClusterIssuer `letsencrypt-prod`
+- UFW firewall (SSH, HTTP, HTTPS only)
+
+Skip the firewall step if already configured:
+
+```bash
+LETSENCRYPT_EMAIL=admin@yourdomain.com infra/scripts/provision-k3s.sh --skip-firewall
+```
 
 ---
 
@@ -46,158 +61,128 @@ The full stack runs 13 containers. Recommended: **8 GB RAM** (4 GB is tight).
 In your domain DNS settings, create:
 
 ```
-A  trade.yourdomain.com  →  YOUR_VPS_IP
+A  cashflowus.com      →  YOUR_VPS_IP
+A  www.cashflowus.com  →  YOUR_VPS_IP
 ```
 
-Wait for DNS propagation (~5 minutes for Hostinger DNS, up to 24 hours elsewhere).
+Wait for DNS propagation (usually < 5 minutes).
 
 ---
 
-## Step 3: Access Coolify Dashboard
+## Step 3: Seal Secrets
 
-1. Open your browser: `http://YOUR_VPS_IP:8000`
-2. Create your admin account on first visit
-3. Complete the onboarding wizard:
-   - Select **Localhost** as the server (deploys on this VPS)
-   - Skip cloud provider setup
+Phoenix uses Bitnami SealedSecrets to encrypt sensitive values. From a machine with `kubectl` configured for the cluster and `kubeseal` installed:
 
----
+```bash
+# Install kubeseal if needed
+brew install kubeseal  # macOS
+# or download from https://github.com/bitnami-labs/sealed-secrets/releases
 
-## Step 4: Connect Your GitHub Repository
+# Create namespace
+kubectl create namespace phoenix
 
-### Option A: Public Repository
-No setup needed — you'll paste the URL directly when creating the resource.
+# Fetch the sealing certificate
+kubeseal --fetch-cert > /tmp/sealed-secrets-cert.pem
 
-### Option B: Private Repository
-1. In Coolify, go to **Sources** → **Add GitHub App**
-2. Follow the OAuth flow to authorize Coolify
-3. Select which repositories to grant access to
+# Seal each secret value
+for KEY in POSTGRES_PASSWORD JWT_SECRET_KEY CREDENTIAL_ENCRYPTION_KEY ANTHROPIC_API_KEY \
+           MINIO_ROOT_USER MINIO_ROOT_PASSWORD RH_USERNAME RH_PASSWORD RH_TOTP_SECRET DISCORD_BOT_TOKEN; do
+  echo "Seal $KEY:"
+  read -s VALUE
+  SEALED=$(echo -n "$VALUE" | kubeseal --raw \
+    --cert /tmp/sealed-secrets-cert.pem \
+    --namespace phoenix --name phoenix-secrets --scope namespace-wide)
+  echo "$KEY sealed ciphertext: $SEALED"
+  echo
+done
+```
 
----
+Copy the chart template and replace placeholders:
 
-## Step 5: Create the Project in Coolify
+```bash
+cd /opt/phoenix
+cp helm/phoenix/templates/sealedsecret.yaml.template helm/phoenix/templates/sealedsecret.yaml
+# Edit sealedsecret.yaml: replace each <SEALED_*> with the corresponding ciphertext
+kubectl apply -f helm/phoenix/templates/sealedsecret.yaml -n phoenix
+```
 
-1. Go to **Projects** → **Add Project**
-2. Name it `PhoenixTrade`
-3. Click into the **Production** environment
-4. Click **Add New Resource**
-
----
-
-## Step 6: Deploy via Docker Compose
-
-1. Select **Public Repository** (or GitHub App if private)
-2. Paste your repository URL:
-   ```
-   https://github.com/YOUR_USERNAME/discordmessages2trade
-   ```
-3. **Build Pack**: Select **Docker Compose** (not Nixpacks)
-4. **Docker Compose Location**: Set to:
-   ```
-   /docker-compose.coolify.yml
-   ```
-5. **Base Directory**: Leave as `/`
-6. **Branch**: `main`
-7. Click **Continue**
-
----
-
-## Step 7: Configure Environment Variables
-
-Before deploying, Coolify will detect all `${VAR}` references from the compose file and show them in the **Environment Variables** tab.
-
-### Required Variables (must set before first deploy)
+### Secret generation reference
 
 | Variable | How to generate |
 |---|---|
-| `POSTGRES_PASSWORD` | Any strong password (e.g. `openssl rand -base64 24`) |
+| `POSTGRES_PASSWORD` | `openssl rand -base64 24` |
 | `JWT_SECRET_KEY` | `openssl rand -hex 32` |
 | `CREDENTIAL_ENCRYPTION_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-
-### Optional Variables (have defaults)
-
-| Variable | Default | Description |
-|---|---|---|
-| `POSTGRES_USER` | `phoenixtrader` | DB username |
-| `POSTGRES_DB` | `phoenixtrader` | DB name |
-| `JWT_ALGORITHM` | `HS256` | JWT algorithm |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Token TTL |
-| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token TTL |
-| `APPROVAL_MODE` | `auto` | `auto` or `manual` |
-| `ENABLE_TRADING` | `true` | Master kill switch |
-| `DRY_RUN_MODE` | `false` | Simulate trades |
-| `BUFFER_PERCENTAGE` | `0.15` | Price buffer |
-| `MAX_POSITION_SIZE` | `10` | Max contracts per trade |
-| `MAX_DAILY_LOSS` | `1000.0` | Daily loss limit ($) |
-| `DEFAULT_PROFIT_TARGET` | `0.30` | Take profit at 30% |
-| `DEFAULT_STOP_LOSS` | `0.20` | Stop loss at 20% |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` |
-
-### Discord (set when ready to connect)
-
-| Variable | Description |
-|---|---|
+| `ANTHROPIC_API_KEY` | From Anthropic Console |
+| `MINIO_ROOT_USER` | Any username (e.g. `minioadmin`) |
+| `MINIO_ROOT_PASSWORD` | `openssl rand -base64 24` |
+| `RH_USERNAME` | Robinhood account email |
+| `RH_PASSWORD` | Robinhood password |
+| `RH_TOTP_SECRET` | (Optional) Authenticator app secret |
 | `DISCORD_BOT_TOKEN` | From Discord Developer Portal |
-| `DISCORD_TARGET_CHANNELS` | Comma-separated channel IDs |
-
-> You can also configure Discord sources and broker credentials through the dashboard UI after deployment.
-
-A reference file is available at `.env.coolify.example`.
 
 ---
 
-## Step 8: Assign a Domain to the Dashboard
+## Step 4: Deploy the Helm Chart
 
-1. In Coolify, go to your resource's **Settings**
-2. Under the `dashboard-ui` service, set the domain:
-   ```
-   https://trade.yourdomain.com
-   ```
-3. Coolify will automatically:
-   - Provision a Let's Encrypt SSL certificate
-   - Configure Traefik to route traffic to the dashboard on port 80
-
-> All other services (Kafka, Postgres, Redis, Python microservices) remain **private** — they communicate only on the internal Docker network.
-
----
-
-## Step 9: Deploy
-
-1. Click **Deploy** in Coolify
-2. Watch the build logs — first deploy takes 5–10 minutes (Docker image builds)
-3. Subsequent deploys are faster (layer caching)
-
-### What happens during deployment
-
-1. Docker builds all 13 service images
-2. Infrastructure starts first (Kafka, PostgreSQL, Redis)
-3. `init` container waits for PostgreSQL, creates database tables, then exits
-4. All application services start after `init` succeeds
-5. Dashboard becomes available at your domain
-
----
-
-## Step 10: Verify
-
-1. Open `https://trade.yourdomain.com` — you should see the login page
-2. Register a new account
-3. Go to **Trading Accounts** → Add your Alpaca account
-4. Go to **Data Sources** → Add your Discord bot
-5. Check **System** tab — all services should show healthy
-
-### Quick health check via terminal
-
-SSH into your VPS and run:
+For the initial cutover (using locally imported images):
 
 ```bash
-# Check all containers
-docker ps --format "table {{.Names}}\t{{.Status}}"
+helm install phoenix /opt/phoenix/helm/phoenix \
+  -n phoenix --create-namespace --wait --timeout=15m
+```
 
-# Test API health
-curl -s http://localhost:8011/health | jq .
+For production (pulling from GHCR):
 
-# Check logs for a specific service
-docker logs <container_name> --tail 50
+```bash
+helm install phoenix /opt/phoenix/helm/phoenix \
+  -f /opt/phoenix/helm/phoenix/values.prod.yaml \
+  -n phoenix --create-namespace \
+  --set image.tag=latest \
+  --wait --timeout=15m
+```
+
+### What happens during install
+
+1. Helm pre-install hook runs database migrations (Job)
+2. Postgres StatefulSet starts with 10Gi PVC
+3. Redis Deployment starts with 256MB memory limit
+4. MinIO StatefulSet starts with 5Gi PVC
+5. 15 Phoenix service Deployments start
+6. edge-nginx Deployment starts with nginx.conf ConfigMap
+7. Traefik IngressRoute created for `cashflowus.com` + `www.cashflowus.com`
+8. cert-manager provisions Let's Encrypt certificate
+9. All pods reach Ready state
+
+---
+
+## Step 5: Verify
+
+```bash
+# Check all pods are Running
+kubectl get pods -n phoenix
+
+# Check ingress
+kubectl get ingressroute -n phoenix
+
+# Check TLS certificate
+kubectl get certificate -n phoenix
+
+# View logs
+kubectl logs -n phoenix -l app.kubernetes.io/part-of=phoenix --tail=50 --prefix
+```
+
+Open `https://cashflowus.com` in your browser. You should see the Phoenix dashboard login page with a valid TLS certificate.
+
+### Quick health check
+
+```bash
+# From VPS
+kubectl port-forward -n phoenix svc/phoenix-api 8011:8011 &
+curl http://localhost:8011/health
+
+# Or via Traefik
+curl https://cashflowus.com/api/health
 ```
 
 ---
@@ -206,51 +191,98 @@ docker logs <container_name> --tail 50
 
 ### Redeploying (after code changes)
 
-Push to `main` → In Coolify, click **Deploy** (or enable auto-deploy via webhook).
+For tagged releases, GitHub Actions CI/CD handles deployment automatically:
 
-To enable auto-deploy:
-1. Go to resource **Settings** → **Webhooks**
-2. Copy the webhook URL
-3. Add it to your GitHub repo: **Settings** → **Webhooks** → **Add webhook**
-4. Set the payload URL, content type `application/json`, and trigger on `push`
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The workflow builds all images, pushes to GHCR, SSHs to the VPS, and runs:
+
+```bash
+helm upgrade --install phoenix /opt/phoenix/helm/phoenix \
+  -f /opt/phoenix/helm/phoenix/values.prod.yaml \
+  -n phoenix --set image.tag=v1.2.3 \
+  --wait --timeout=15m
+```
+
+Manual upgrade:
+
+```bash
+cd /opt/phoenix
+git pull
+helm upgrade phoenix helm/phoenix -f helm/phoenix/values.prod.yaml -n phoenix --wait
+```
 
 ### Viewing Logs
 
-In Coolify dashboard → select your resource → **Logs** tab. You can filter by service.
-
-Or SSH into VPS:
 ```bash
-docker compose -f docker-compose.coolify.yml logs -f api-gateway
-docker compose -f docker-compose.coolify.yml logs -f trade-executor
+# All Phoenix logs
+kubectl logs -n phoenix -l app.kubernetes.io/part-of=phoenix --tail=100 -f --prefix
+
+# Specific service
+kubectl logs -n phoenix deployment/phoenix-api --tail=100 -f
 ```
 
 ### Scaling (if your VPS has more resources)
 
-Edit `docker-compose.coolify.yml` → adjust `deploy.resources.limits` and push. Redeploy.
+Edit `helm/phoenix/values.yaml` or pass `--set` flags:
+
+```bash
+helm upgrade phoenix helm/phoenix -f helm/phoenix/values.prod.yaml -n phoenix \
+  --set resources.api.memory=4Gi \
+  --wait
+```
 
 ### Updating Environment Variables
 
-Change values in Coolify's **Environment Variables** panel → click **Redeploy**.
+For non-secret config, edit `helm/phoenix/values.prod.yaml`:
+
+```yaml
+appConfig:
+  enableTrading: "true"
+  dryRunMode: "false"
+```
+
+Then:
+
+```bash
+helm upgrade phoenix helm/phoenix -f helm/phoenix/values.prod.yaml -n phoenix --wait
+```
+
+For secrets, re-seal and re-apply the SealedSecret YAML, then restart affected pods:
+
+```bash
+kubectl rollout restart deployment/phoenix-api -n phoenix
+```
 
 ### Backups
 
-Coolify backs up PostgreSQL data automatically if you enable it in **Settings** → **Backups**.
+Postgres backup:
 
-For manual backup via SSH:
 ```bash
-docker exec postgres pg_dump -U phoenixtrader phoenixtrader > backup_$(date +%Y%m%d).sql
+kubectl exec -n phoenix postgres-0 -- pg_dump -U phoenixtrader phoenixtrader --format=custom > backup_$(date +%Y%m%d).dump
+```
+
+Restore:
+
+```bash
+kubectl cp backup_20260504.dump phoenix/postgres-0:/tmp/
+kubectl exec -n phoenix postgres-0 -- pg_restore -U phoenixtrader -d phoenixtrader --clean /tmp/backup_20260504.dump
 ```
 
 ### Monitoring
 
-SSH into VPS:
 ```bash
-# Resource usage by container
-docker stats --no-stream
+# Resource usage
+kubectl top pods -n phoenix
+
+# Events
+kubectl get events -n phoenix --sort-by='.lastTimestamp' | tail -20
 
 # Disk usage
 df -h
-docker system df
 ```
 
 ---
@@ -259,15 +291,13 @@ docker system df
 
 | Problem | Solution |
 |---|---|
-| **Backtesting tab missing** | Dashboard is serving a cached build. **Fix:** 1) In Coolify, go to your resource → **Deploy** → click the **⋮** menu → **Force Deploy** (rebuilds without cache). 2) Or: **Configuration → Advanced** → enable **Disabled Build Cache** → **Deploy**. 3) Hard-refresh browser (Ctrl+Shift+R or Cmd+Shift+R). |
-| **Build fails** | Check build logs in Coolify. Usually a missing env var or Docker context issue. |
-| **"502 Bad Gateway"** | Services still starting. Wait 1–2 min. Check `docker ps` for unhealthy containers. |
-| **Dashboard loads but API calls fail** | Verify `api-gateway` container is running. Check `docker logs api-gateway`. |
-| **"Database connection refused"** | PostgreSQL may not be ready. Check `docker logs postgres`. Ensure `POSTGRES_PASSWORD` is set. |
-| **Kafka keeps restarting** | Usually OOM. Increase Kafka memory limit in compose or upgrade VPS. |
-| **SSL not working** | Ensure your domain A record points to the VPS IP. Coolify handles Let's Encrypt automatically. |
-| **Out of disk space** | Run `docker system prune -a` to clean old images. |
-| **Out of memory** | Check `docker stats`. Reduce Kafka memory limit or disable unused services. |
+| **Pods stuck in Pending** | Check PVC binding: `kubectl describe pvc -n phoenix`. Ensure storage class exists. |
+| **"502 Bad Gateway"** | Pods still starting. Wait 1-2 min. Check `kubectl get pods -n phoenix` for unhealthy pods. |
+| **Dashboard loads but API calls fail** | Verify `phoenix-api` is Running: `kubectl logs -n phoenix deployment/phoenix-api`. |
+| **"Database connection refused"** | Check Postgres: `kubectl logs -n phoenix postgres-0`. Verify SealedSecret unsealed correctly: `kubectl get secret phoenix-secrets -n phoenix -o yaml`. |
+| **TLS certificate not issuing** | Check cert-manager logs: `kubectl logs -n cert-manager -l app=cert-manager`. Verify ClusterIssuer: `kubectl describe clusterissuer letsencrypt-prod`. |
+| **Out of disk space** | Clean containerd: `k3s crictl rmi --prune`. Clean PVCs: `kubectl delete pvc <unused-pvc> -n phoenix`. |
+| **Out of memory** | Check `kubectl top pods -n phoenix`. Reduce resource limits in values.yaml or scale down replicas. |
 
 ---
 
@@ -277,23 +307,51 @@ docker system df
 Internet
    │
    ▼
-Traefik (Coolify built-in) ─── HTTPS ───▶ dashboard-ui (nginx :80)
-                                              │
-                                    ┌─────────┤ /api/* /auth/*
-                                    ▼
-                              api-gateway (:8011)
-                                    │
-                   ┌────────────────┼────────────────┐
-                   ▼                ▼                 ▼
-             auth-service     trade-parser    source-orchestrator
-                              trade-gateway   notification-service
-                              trade-executor  audit-writer
-                              position-monitor
-                                    │
-                   ┌────────────────┼──────────┐
-                   ▼                ▼           ▼
-                 Kafka          PostgreSQL    Redis
-            (internal)         (internal)   (internal)
+Traefik (k3s built-in) ─── HTTPS ───▶ edge-nginx (ClusterIP :80)
+                                          │
+                                ┌─────────┤ /api/* /auth/* /ws/*
+                                ▼         │
+                          phoenix-api (:8011)  phoenix-ws-gateway (:8031)
+                                │             phoenix-dashboard (:80)
+               ┌────────────────┼────────────────┐
+               ▼                ▼                 ▼
+         phoenix-execution  phoenix-llm-gateway  phoenix-broker-gateway
+         phoenix-automation phoenix-inference   phoenix-agent-orchestrator
+         ...                                     ...
+               │
+  ┌────────────┼──────────┐
+  ▼            ▼           ▼
+postgres    redis       minio
+(StatefulSet) (Deployment) (StatefulSet)
 ```
 
-All infrastructure and microservices are on a **private Docker network**. Only the dashboard is exposed to the internet through Coolify's Traefik proxy with automatic HTTPS.
+All services communicate on the internal Kubernetes ClusterIP network. Only Traefik exposes HTTPS to the internet via the IngressRoute.
+
+---
+
+## CI/CD Workflow
+
+See `.github/workflows/cd.yml`. Required GitHub secrets:
+- `K3S_HOST` — VPS IP or hostname
+- `K3S_SSH_KEY` — Private SSH key for `root@VPS`
+
+The workflow:
+1. Builds 14 service images on `v*` tag push
+2. Pushes to `ghcr.io/thirunagariharish/phoneixclaw/phoenix-*`
+3. SCPs the Helm chart to `/opt/phoenix` on the VPS
+4. Runs `helm upgrade --install` with the new tag
+
+---
+
+## Uninstalling
+
+```bash
+helm uninstall phoenix -n phoenix
+kubectl delete namespace phoenix
+```
+
+This does NOT delete PVCs. To delete all data:
+
+```bash
+kubectl delete pvc -n phoenix --all
+```

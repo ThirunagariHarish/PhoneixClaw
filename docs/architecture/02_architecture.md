@@ -320,12 +320,12 @@ But CAN:
 
 ## Deployment
 
-Deployed via Coolify on a VPS:
+Deployed via k3s on a VPS:
 
-- `docker-compose.coolify.yml` defines the service stack
+- `docker-compose.k3s.yml` defines the service stack
 - `apps/api/Dockerfile` builds the API container
 - `apps/api/entrypoint.sh` runs migrations on container startup, then `uvicorn`
-- Coolify auto-deploys on git push to `main`
+- k3s auto-deploys on git push to `main`
 
 ---
 
@@ -392,7 +392,7 @@ agents/
 
 scripts/
 ├── init_db.py                       # Bootstrap DB schema
-└── coolify-deploy-via-ssh.sh
+└── k3s-deploy-via-ssh.sh
 ```
 
 ---

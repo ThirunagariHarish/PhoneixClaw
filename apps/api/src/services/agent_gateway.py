@@ -734,7 +734,7 @@ class AgentGateway:
                 # is guaranteed to fail with the same OOM. Bump phoenix-api memory.
                 if "exit code -9" in last_error or "exit code: -9" in last_error:
                     logger.error("Claude SDK OOM-killed (exit -9) for agent %s — not retrying. "
-                                 "Bump phoenix-api memory limit in docker-compose.coolify.yml.", agent_id)
+                                 "Bump phoenix-api memory limit in helm/phoenix/values.yaml (resources.api.memory).", agent_id)
                     async for db in _get_session():
                         await self._update_session(db, session_row_id, status="error",
                                                    error="Claude CLI OOM-killed by cgroup (exit -9). Bump phoenix-api memory.")

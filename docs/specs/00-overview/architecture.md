@@ -19,7 +19,7 @@ Phoenix is a multi-agent trading platform. **Claude Code Cloud Tasks** (on Anthr
 
 Claude Code Cloud Tasks clone the repo, run Python tools, and POST results to the Phoenix API via HTTP callbacks. They self-heal on errors and require no VPS management.
 
-### Tier 2 — Phoenix Server (Coolify VPS)
+### Tier 2 — Phoenix Server (k3s VPS)
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|

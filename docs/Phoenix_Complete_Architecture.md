@@ -660,10 +660,10 @@ Each agent has a `.claude/settings.json` that controls permissions:
 
 # 23. Deployment Architecture
 
-Deployed via **Coolify** on a VPS:
+Deployed via **k3s** on a VPS:
 
 ```
-Coolify (Git-based Deploy)
+k3s (Git-based Deploy)
     │ push to main → auto-deploy
     ▼
 ┌─────────────────────────────────┐
@@ -681,7 +681,7 @@ Coolify (Git-based Deploy)
 └─────────────────────────────────┘
 ```
 
-- `docker-compose.coolify.yml` defines the service stack
+- `docker-compose.k3s.yml` defines the service stack
 - `apps/api/Dockerfile` builds the API container
 - `apps/api/entrypoint.sh` runs migrations on startup, then `uvicorn`
 
@@ -743,7 +743,7 @@ cat /app/data/live_agents/<id>/CLAUDE.md
 | AI Agents | Claude Code SDK (`claude-agent-sdk`) |
 | ML Training | XGBoost, LightGBM, CatBoost, PyTorch (LSTM/Transformer/TFT/TCN) |
 | Broker | Robinhood via `robin_stocks` + custom MCP server |
-| Deployment | Docker, Coolify (git-push deploy) |
+| Deployment | Docker, k3s (git-push deploy) |
 | Testing | pytest, Vitest, Playwright |
 | Linting | Ruff (Python), ESLint (TypeScript) |
 | Notifications | WhatsApp Cloud API, WebSocket |

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-End-to-end deployment process for Phoenix Claw, covering local development, Docker Compose, Coolify production, and Claude Code VPS agent deployment.
+End-to-end deployment process for Phoenix Claw, covering local development, Docker Compose, k3s production, and Claude Code VPS agent deployment.
 
 ## Environments
 
@@ -19,12 +19,12 @@ End-to-end deployment process for Phoenix Claw, covering local development, Dock
 - `docker-compose.dev.yml` for development with hot-reload
 - All services, infra, and monitoring included
 
-### Production (Coolify)
+### Production (k3s)
 
 - Host: 69.62.86.166
 - Domain: cashflowus.com
-- Platform: Coolify with Traefik for TLS termination
-- Compose file: `docker-compose.coolify.yml`
+- Platform: k3s with Traefik for TLS termination
+- Compose file: `docker-compose.k3s.yml`
 - Container registry: GHCR (ghcr.io/cashflowus/phoneixclaw/*)
 
 ## CI/CD Pipeline
@@ -48,7 +48,7 @@ Steps:
 
 1. Build all service images
 2. Push to GHCR with tag
-3. SSH to Coolify VPS
+3. SSH to k3s VPS
 4. Pull new images and restart services
 5. Run database migrations (Alembic)
 6. Health check all endpoints
@@ -56,19 +56,19 @@ Steps:
 
 ```yaml
 # Deployment step (to replace commented webhook)
-- name: Deploy to Coolify VPS
+- name: Deploy to k3s VPS
   env:
-    SSH_KEY: ${{ secrets.COOLIFY_SSH_KEY }}
-    VPS_HOST: ${{ secrets.COOLIFY_HOST }}
+    SSH_KEY: ${{ secrets.K3S_SSH_KEY }}
+    VPS_HOST: ${{ secrets.K3S_HOST }}
   run: |
     mkdir -p ~/.ssh
     echo "$SSH_KEY" > ~/.ssh/deploy_key
     chmod 600 ~/.ssh/deploy_key
     ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key root@$VPS_HOST \
-      "cd /data/coolify/applications/tsogksw8kg0kgkgoow048cgk && \
-       docker compose pull && \
-       docker compose up -d --remove-orphans && \
-       docker compose exec phoenix-api alembic upgrade head"
+      "cd /data/k3s/applications/tsogksw8kg0kgkgoow048cgk && \
+       kubectl pull && \
+       kubectl up -d --remove-orphans && \
+       kubectl exec phoenix-api alembic upgrade head"
 ```
 
 ## Database Migration Strategy
@@ -129,14 +129,14 @@ Services must start in this order (enforced by Docker Compose `depends_on` with 
 ### Secret Storage
 
 - Local: `.env` file (gitignored)
-- Production: Coolify Environment Variables panel (encrypted at rest)
+- Production: k3s Environment Variables panel (encrypted at rest)
 - Agent VPS: injected via SSH during ship-agent, stored in agent's `.env`
 
 ## Rollback Procedure
 
-1. Identify failing version from Coolify logs
+1. Identify failing version from k3s logs
 2. `git tag` the last known working version
-3. SSH to VPS: `docker compose pull [service]:previous-tag && docker compose up -d [service]`
+3. SSH to VPS: `kubectl pull [service]:previous-tag && kubectl up -d [service]`
 4. If DB migration caused issue: `alembic downgrade -1`
 5. Verify health endpoints
 
@@ -145,7 +145,7 @@ Services must start in this order (enforced by Docker Compose `depends_on` with 
 | File | Action |
 |------|--------|
 | `.github/workflows/cd.yml` | Update — wire SSH deploy |
-| `docker-compose.coolify.yml` | Update — add missing services |
+| `docker-compose.k3s.yml` | Update — add missing services |
 | `.env.production.example` | New — production env template |
 | `alembic.ini` | New — migration config |
 | `alembic/env.py` | New — async migration env |

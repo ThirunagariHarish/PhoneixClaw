@@ -2,8 +2,7 @@
 
 ## Architecture Overview
 
-The platform consists of 14+ Docker services orchestrated via Docker Compose, deployed to a VPS
-using Coolify (self-hosted PaaS).
+The platform consists of 15+ microservices deployed on k3s via Helm. Production runs on a single-node VPS with Traefik ingress and cert-manager for TLS.
 
 ### Services
 
@@ -41,67 +40,61 @@ Discord → source-orchestrator → discord-ingestor
 
 ## Deployment Methods
 
-### Method 1: Coolify (Production)
+### Method 1: k3s + Helm (Production)
 
-Coolify auto-deploys on push to `main`. To trigger manually:
+Production deploys automatically on tagged releases via GitHub Actions CD workflow. The workflow builds all service images, pushes to GHCR, and runs `helm upgrade` on the k3s cluster.
+
+**Manual deployment:**
 
 ```bash
-# Normal deploy (uses Docker cache)
-curl -sk -X GET \
-  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
-  "http://$VPS_IP:8000/api/v1/deploy?uuid=$APP_UUID"
+# Tag a release
+git tag v1.2.3
+git push origin v1.2.3
 
-# Force rebuild (no cache — use sparingly, causes long build times)
-curl -sk -X GET \
-  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
-  "http://$VPS_IP:8000/api/v1/deploy?uuid=$APP_UUID&force=true"
+# Or manually deploy from the VPS
+ssh root@<VPS_IP>
+cd /opt/phoenix
+helm upgrade --install phoenix helm/phoenix \
+  -f helm/phoenix/values.prod.yaml \
+  -n phoenix --create-namespace \
+  --set image.tag=v1.2.3 \
+  --wait --timeout=15m
 ```
 
 **Check deployment status:**
 
 ```bash
-curl -sk -X GET \
-  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
-  "http://$VPS_IP:8000/api/v1/deployments/$DEPLOYMENT_UUID"
+kubectl get pods -n phoenix
+kubectl logs -n phoenix -l app.kubernetes.io/part-of=phoenix --tail=50
 ```
 
-### Method 2: Manual Docker Compose
+### Method 2: Local Docker Compose
 
 ```bash
 # Build and start all services
-DOCKER_BUILDKIT=1 docker compose -f docker-compose.coolify.yml up -d --build
+make up
 
-# Build only specific services
-DOCKER_BUILDKIT=1 docker compose -f docker-compose.coolify.yml build api-gateway dashboard-ui
-docker compose -f docker-compose.coolify.yml up -d api-gateway dashboard-ui
+# Stop all services
+make down
 ```
 
 ---
 
-## Selective Build Script
+## CI/CD Pipeline
 
-To avoid rebuilding all 14 images on every deploy, use the selective build script:
+The `.github/workflows/cd.yml` workflow handles production deployments:
 
-```bash
-# Detect changes and build only modified services
-./scripts/selective-build.sh
+1. Trigger: Push a `v*` tag
+2. Build all 14 service images with Docker Buildx
+3. Tag each image as `ghcr.io/thirunagariharish/phoneixclaw/phoenix-<svc>:$TAG` and `:latest`
+4. Push to GitHub Container Registry
+5. SSH to k3s host, copy Helm chart, run `helm upgrade --install`
+6. Helm pre-install hook runs database migrations
+7. Traefik routes public traffic to the new pods
 
-# Just list what would be built (dry run)
-./scripts/selective-build.sh --list
-
-# Force build all services
-./scripts/selective-build.sh --all
-
-# Compare against a specific commit
-./scripts/selective-build.sh --since abc1234
-```
-
-**How it works:**
-1. Runs `git diff` to find changed files since last commit.
-2. Maps changed files to Docker Compose service names.
-3. If `shared/` changed, rebuilds all Python services (they all depend on it).
-4. If `docker-compose*.yml` changed, rebuilds everything.
-5. Builds only the affected services with `docker compose build <service1> <service2>`.
+**Required secrets:**
+- `K3S_HOST` — VPS IP or hostname
+- `K3S_SSH_KEY` — Private SSH key for root@VPS
 
 ---
 
@@ -115,7 +108,7 @@ All Dockerfiles use BuildKit cache mounts for dependency installation:
 - **dashboard-ui:** `--mount=type=cache,target=/root/.npm` — npm packages cached
 - **nlp-parser:** `--mount=type=cache,target=/root/.cache/huggingface` — ML model weights cached
 
-Requires `DOCKER_BUILDKIT=1` (Coolify enables this by default).
+Requires `DOCKER_BUILDKIT=1` (GitHub Actions `docker/setup-buildx-action@v3` enables this by default).
 
 ### NLP Parser Multi-Stage Build
 
@@ -133,20 +126,23 @@ This means adding a new Python source file does NOT re-download 1.5GB of ML mode
 ### Deployment fails with disk space error
 
 ```bash
-# SSH into VPS and clean Docker
-ssh root@$VPS_IP "docker system prune -af --volumes && docker builder prune -af"
+# SSH into VPS and clean k3s containerd image cache
+ssh root@$VPS_IP "k3s crictl rmi --prune"
 
-# Then redeploy WITHOUT force flag
-curl -sk -X GET \
-  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
-  "http://$VPS_IP:8000/api/v1/deploy?uuid=$APP_UUID"
+# Then re-tag the release to retrigger CD, or run helm upgrade manually:
+ssh root@$VPS_IP "helm upgrade --install phoenix /opt/phoenix/helm/phoenix \
+  -f /opt/phoenix/helm/phoenix/values.prod.yaml -n phoenix \
+  --set image.tag=$TAG --wait --timeout=15m"
 ```
 
 ### Service not starting (check logs)
 
 ```bash
-# On VPS
-docker compose -f docker-compose.coolify.yml logs -f <service-name>
+# On k3s
+kubectl logs -n phoenix deployment/phoenix-<service> --tail=100 -f
+
+# Or view all Phoenix logs
+kubectl logs -n phoenix -l app.kubernetes.io/part-of=phoenix --tail=50 --prefix
 ```
 
 ### Admin user loses admin status
@@ -174,7 +170,7 @@ Check the pipeline in order:
 
 ## Environment Variables
 
-Required variables (set in Coolify Environment panel):
+Required variables (sealed via SealedSecret in k3s, or set in `.env` for local dev):
 
 | Variable | Description |
 |----------|-------------|

@@ -88,10 +88,10 @@ make go-live-regression  # Full regression suite
 
 ## Deployment
 
-Deployed via Coolify on VPS. See [docs/operations/deployment-guide.md](docs/operations/deployment-guide.md).
+Deployed on k3s via Helm. See [docs/operations/deployment-guide.md](docs/operations/deployment-guide.md).
 
 ```bash
-make up     # Docker full stack
+make up     # Docker full stack (local dev)
 make down   # Stop
 make logs   # Watch logs
 ```
@@ -101,14 +101,14 @@ make logs   # Watch logs
 - [How Phoenix Works](docs/architecture/01_how_project_works.md) — end-to-end walkthrough
 - [Architecture](docs/architecture/02_architecture.md) — system design and diagrams
 - [Agent Development](docs/development/agent-development.md) — creating new agent types
-- [Deployment Guide](docs/operations/deployment-guide.md) — VPS setup with Coolify
+- [Deployment Guide](docs/operations/deployment-guide.md) — k3s + Helm setup
 - [Go-Live Checklist](docs/dev/go-live-regression-checklist.md) — regression and sign-off
 
 ## Robinhood session persistence
 
 Robinhood auth persistence is handled by `services/broker-gateway`. The gateway logs in with cached Robinhood sessions, stores token pickle files in `TOKEN_DIR` (default `/app/data/.tokens`), and refreshes live sessions before they age out.
 
-For Docker and Coolify deployments, mount `TOKEN_DIR` to a persistent volume so device approval survives container restarts. The compose files now mount `rh_tokens` into the broker gateway for exactly that reason.
+For Docker and k3s deployments, mount `TOKEN_DIR` to a persistent volume so device approval survives container restarts. In k3s, the Helm chart mounts a 100Mi PVC at `/app/data/.tokens`.
 
 Legacy single-account env vars:
 

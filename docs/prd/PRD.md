@@ -2345,7 +2345,7 @@ The following components are carried over from the existing codebase with minima
 | **Options Data** | Unusual Whales API | Flow, GEX, dark pool |
 | **NLP** | FinBERT + spaCy | Sentiment classification |
 | **Observability** | Prometheus + Grafana + Loki | Metrics, logs, dashboards |
-| **Deployment** | Docker + Coolify | Container orchestration |
+| **Deployment** | Docker + k3s | Container orchestration |
 | **VPS/Compute** | Hetzner / DigitalOcean / AWS | OpenClaw instances |
 | **Agent Network Graph** | @xyflow/react | Agent network visualization |
 | **Task Board** | @dnd-kit/core + @dnd-kit/sortable | Drag-and-drop kanban |
@@ -2601,8 +2601,8 @@ phoenix-v2/
 │   │   └── ...
 │   ├── docker-compose.yml      # Full stack
 │   ├── docker-compose.dev.yml  # Development
-│   └── coolify/
-│       ├── docker-compose.coolify.yml
+│   └── k3s/
+│       ├── docker-compose.k3s.yml
 │       └── .env.production
 │
 ├── migrations/                 # Alembic DB migrations
@@ -2614,14 +2614,14 @@ phoenix-v2/
 └── README.md
 ```
 
-### 17.2 Coolify Deployment
+### 17.2 k3s Deployment
 
-**Dashboard + API** (primary Coolify app):
+**Dashboard + API** (primary k3s app):
 - Docker Compose with: dashboard (nginx + React build), api (FastAPI), PostgreSQL, Redis, NATS/Redis Streams
 - Exposed on custom domain (e.g., phoenix.yourdomain.com)
-- HTTPS via Coolify's built-in Let's Encrypt
+- HTTPS via k3s's built-in Let's Encrypt
 
-**Supporting Services** (Coolify services):
+**Supporting Services** (k3s services):
 - Orchestrator Worker
 - Execution Service
 - Global Position Monitor
@@ -2635,7 +2635,7 @@ phoenix-v2/
 - Connected to the central event bus via NATS or Redis Streams over WireGuard VPN
 - Health monitored from the dashboard
 
-**Infrastructure Services** (Coolify or dedicated):
+**Infrastructure Services** (k3s or dedicated):
 - MinIO (artifact store)
 - TimescaleDB (time-series data)
 - Kafka (if using for high-volume ingestion; otherwise Redis Streams suffices)
@@ -2694,9 +2694,9 @@ MINIO_BUCKET=phoenix-artifacts
 
 ### 17.4 Deployment Sequence
 
-1. **Provision infrastructure**: Coolify server + 1-4 VPS for OpenClaw instances
-2. **Set up WireGuard VPN**: Secure connectivity between Coolify server and OpenClaw VPS nodes
-3. **Deploy core services** on Coolify: dashboard, API, PostgreSQL, Redis, NATS, MinIO
+1. **Provision infrastructure**: k3s server + 1-4 VPS for OpenClaw instances
+2. **Set up WireGuard VPN**: Secure connectivity between k3s server and OpenClaw VPS nodes
+3. **Deploy core services** on k3s: dashboard, API, PostgreSQL, Redis, NATS, MinIO
 4. **Run migrations**: `alembic upgrade head`
 5. **Deploy OpenClaw instances**: Install OpenClaw + Bridge Service on each VPS
 6. **Register instances**: Via dashboard API or admin CLI

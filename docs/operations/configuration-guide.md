@@ -1,6 +1,6 @@
 # Phoenix v2 Configuration Guide
 
-This guide covers environment variables, Docker Compose setup, and Coolify deployment for the Phoenix v2 trading bot.
+This guide covers environment variables, Docker Compose setup, and k3s deployment for the Phoenix v2 trading bot.
 
 ---
 
@@ -86,18 +86,18 @@ Services: `phoenix-api`, `phoenix-dashboard`, `phoenix-ws-gateway`, `phoenix-exe
 
 ---
 
-## Coolify Deployment
+## k3s Deployment
 
-1. **Provision Coolify** on a fresh VPS:
+1. **Provision k3s** on a fresh VPS:
    ```bash
-   ./infra/scripts/provision-coolify.sh
-   # Or: ./infra/scripts/provision-coolify.sh --skip-firewall
+   LETSENCRYPT_EMAIL=admin@yourdomain.com ./infra/scripts/provision-k3s.sh
    ```
 
-2. **Create a new project** in Coolify and add the Phoenix repo.
+2. **Seal secrets** using kubeseal and apply the SealedSecret YAML. See `helm/phoenix/README.md` for the complete workflow.
 
-3. **Set environment variables** from `.env.coolify.example` in Coolify's Environment Variables panel. Required: `POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`.
+3. **Deploy via Helm**:
+   ```bash
+   helm install phoenix helm/phoenix -f helm/phoenix/values.prod.yaml -n phoenix --create-namespace --wait
+   ```
 
-4. **Deploy** using `docker-compose.coolify.yml` or the production compose file. Coolify will build and run the stack.
-
-5. **Configure domains** for API and dashboard in Coolify (e.g. `api.phoenix.example.com`, `app.phoenix.example.com`).
+4. **Deploy** using the Helm chart. The chart includes the IngressRoute and TLS certificate.

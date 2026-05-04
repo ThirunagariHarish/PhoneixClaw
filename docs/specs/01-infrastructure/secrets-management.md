@@ -61,7 +61,7 @@ def decrypt_credentials(encrypted: str) -> dict:
 ### Master Key Location
 
 - **Local dev**: `FERNET_KEY` in `.env` file
-- **Production**: Coolify Environment Variables (encrypted by Coolify)
+- **Production**: k3s Environment Variables (encrypted by k3s)
 - **Agent VPS**: injected at agent creation time into agent's `.env`
 - **Key rotation**: generate new key, re-encrypt all DB values, update `.env` files
 
@@ -69,9 +69,9 @@ def decrypt_credentials(encrypted: str) -> dict:
 
 | Secret | Storage | Encryption | Injection Method |
 |--------|---------|------------|------------------|
-| `JWT_SECRET_KEY` | Coolify env | Coolify encrypted | Environment variable |
-| `DATABASE_URL` | Coolify env | Coolify encrypted | Environment variable |
-| `FERNET_KEY` | Coolify env | Coolify encrypted | Environment variable |
+| `JWT_SECRET_KEY` | k3s env | k3s encrypted | Environment variable |
+| `DATABASE_URL` | k3s env | k3s encrypted | Environment variable |
+| `FERNET_KEY` | k3s env | k3s encrypted | Environment variable |
 | SSH private keys | Postgres | Fernet encrypted | Decrypted in-memory for SSH sessions |
 | Discord bot token | Postgres | Fernet encrypted | SCP to agent `.env` on VPS |
 | Robinhood username | Postgres | Fernet encrypted | SCP to agent `.env` on VPS |

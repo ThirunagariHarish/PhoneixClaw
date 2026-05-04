@@ -27,10 +27,10 @@ How Phoenix stores, rotates, and protects secrets. Read this before deploying to
 - Never commit `.env` — only `.env.example` with placeholder values
 - Local Postgres holds encrypted connector credentials
 
-### Production (Coolify)
-- Coolify's built-in env var encryption handles `.env` for the `phoenix-api` service
-- Set via Coolify UI → service → Environment Variables
-- Coolify decrypts at container start and exposes via standard env vars
+### Production (k3s + SealedSecret)
+- Bitnami SealedSecret controller encrypts secrets using asymmetric crypto
+- Operator seals plaintext with `kubeseal --raw` → ciphertext safe to commit
+- Controller in cluster unseals → standard Kubernetes Secret → pod env vars
 - Postgres data volume holds encrypted connector credentials
 
 ### Audit
@@ -97,7 +97,7 @@ Easier — just changes signature verification:
    openssl rand -hex 32
    ```
 
-2. Set `JWT_SECRET_KEY` in `.env` (or Coolify env vars)
+2. Set `JWT_SECRET_KEY` in `.env` (local) or seal it in the SealedSecret (k3s)
 
 3. Restart the API
 
@@ -108,7 +108,7 @@ Easier — just changes signature verification:
 ## Anthropic / WhatsApp / external API key rotation
 
 1. Generate new key in the provider's console
-2. Update `.env` (or Coolify env)
+2. Update `.env` (or k3s env)
 3. Restart the API
 4. The old key keeps working until the provider invalidates it (Anthropic: keys are valid until manually deleted in console)
 
@@ -144,17 +144,17 @@ git push --force
 
 ---
 
-## Coolify-specific notes
+## k3s-specific notes
 
-Coolify stores env vars encrypted at rest using its own server-side key. When you update an env var via the Coolify UI, it:
-1. Encrypts the new value with the Coolify master key
-2. Stores in Coolify's internal database
+k3s stores env vars encrypted at rest using its own server-side key. When you update an env var via the k3s UI, it:
+1. Encrypts the new value with the k3s master key
+2. Stores in k3s's internal database
 3. On container deploy, decrypts and writes to the container's process env
 
 This means:
-- Don't put secrets in `docker-compose.coolify.yml` directly — use Coolify's UI for env vars
-- Coolify env vars survive container restarts (not lost on rebuild)
-- To rotate: update the value in Coolify UI → trigger a redeploy
+- Don't put secrets in the Helm chart directly — use SealedSecret for encrypted values
+- k3s env vars survive container restarts (not lost on rebuild)
+- To rotate: update the value in k3s UI → trigger a redeploy
 
 ---
 
@@ -163,7 +163,7 @@ This means:
 If a secret is publicly exposed (e.g. accidentally pushed to GitHub):
 
 1. **Revoke immediately** in the provider's console (Anthropic, WhatsApp, etc.)
-2. **Generate replacement** and update Coolify env
+2. **Generate replacement** and update k3s env
 3. **Audit access logs** in the provider's console to see if the leaked key was used
 4. **Force-push history scrub** if it's in git history (BFG)
 5. **Rotate the Fernet key** if `CREDENTIAL_ENCRYPTION_KEY` was the leaked secret (see above)
@@ -177,6 +177,6 @@ If a secret is publicly exposed (e.g. accidentally pushed to GitHub):
 - [ ] `pre-commit run --all-files` passes (no private keys in working tree)
 - [ ] `JWT_SECRET_KEY` is at least 32 random characters (not the default)
 - [ ] `CREDENTIAL_ENCRYPTION_KEY` was rotated within the last 90 days
-- [ ] No production secrets in any developer laptop's `.env` (only Coolify-managed ones)
-- [ ] All Anthropic / WhatsApp / external API keys in Coolify, not laptop env files
+- [ ] No production secrets in any developer laptop's `.env` (only k3s-managed ones)
+- [ ] All Anthropic / WhatsApp / external API keys in k3s, not laptop env files
 - [ ] `system_logs` has entries for credential decryption events (audit trail working)

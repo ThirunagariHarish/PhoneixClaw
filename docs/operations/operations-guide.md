@@ -16,7 +16,7 @@ This guide covers deployment, monitoring, backups, incident response, scaling, a
 
 2. Start the stack:
    ```bash
-   cd infra && docker compose -f docker-compose.production.yml up -d
+   cd infra && kubectl -f docker-compose.production.yml up -d
    ```
 
 3. Verify health:
@@ -24,15 +24,15 @@ This guide covers deployment, monitoring, backups, incident response, scaling, a
    curl http://localhost:8011/health
    ```
 
-### Coolify Deployment
+### k3s Deployment
 
-1. Provision Coolify: `./infra/scripts/provision-coolify.sh`
-2. Add the Phoenix project and configure env vars from `.env.coolify.example`
-3. Deploy via Coolify using the production compose or Coolify-specific compose
+1. Provision k3s: `./infra/scripts/provision-k3s.sh`
+2. Add the Phoenix project and configure env vars from `.env.k3s.example`
+3. Deploy via k3s using the production compose or k3s-specific compose
 
 ### Rolling Updates
 
-- Use `docker compose pull && docker compose up -d` for rolling updates.
+- Use `kubectl pull && kubectl up -d` for rolling updates.
 - For zero-downtime, run multiple API replicas behind a load balancer (Nginx).
 
 ---
@@ -79,7 +79,7 @@ gunzip -c phoenix_YYYYMMDD_HHMMSS.sql.gz | psql -h $PG_HOST -U $PG_USER -d $PG_D
 
 ## Incident Response Procedures
 
-1. **Service down** — Check `docker ps`, logs (`docker compose logs -f phoenix-api`), and `/health` endpoint.
+1. **Service down** — Check `docker ps`, logs (`kubectl logs -f phoenix-api`), and `/health` endpoint.
 2. **Database issues** — Verify `pg_isready`, connection limits, and disk space.
 3. **Redis issues** — Check `redis-cli ping`, memory usage, and eviction policy.
 4. **Trade execution failures** — Review execution service logs, broker API status, and connector credentials.
@@ -93,11 +93,11 @@ gunzip -c phoenix_YYYYMMDD_HHMMSS.sql.gz | psql -h $PG_HOST -U $PG_USER -d $PG_D
 
 - Run multiple API replicas behind Nginx (load balancing).
 - Ensure Redis and PostgreSQL can handle increased connections.
-- Use `docker compose up -d --scale phoenix-api=3` (or equivalent) if supported by your compose setup.
+- Use `kubectl up -d --scale phoenix-api=3` (or equivalent) if supported by your compose setup.
 
 ### Adding Nodes
 
-- Provision new OpenClaw nodes with `./infra/scripts/provision-local-node.sh` or `./infra/scripts/provision-coolify.sh`.
+- Provision new OpenClaw nodes with `./infra/scripts/provision-local-node.sh` or `./infra/scripts/provision-k3s.sh`.
 - Add WireGuard peers and register nodes with the control plane.
 - Deploy the bridge service on each node.
 
@@ -109,7 +109,7 @@ gunzip -c phoenix_YYYYMMDD_HHMMSS.sql.gz | psql -h $PG_HOST -U $PG_USER -d $PG_D
 |-------|----------------|--------|
 | 401 Unauthorized | Invalid or expired JWT | Re-login; check `JWT_SECRET_KEY` |
 | 502 Bad Gateway | API not ready or crashed | Check API logs; restart `phoenix-api` |
-| Connection refused to Redis | Redis down or wrong URL | Verify `REDIS_URL`; `docker compose ps redis` |
+| Connection refused to Redis | Redis down or wrong URL | Verify `REDIS_URL`; `kubectl ps redis` |
 | Skills not syncing | MinIO or bridge unreachable | Check `MINIO_ENDPOINT`, `BRIDGE_URL`, `BRIDGE_TOKEN` |
 | Agents not starting | Bridge unreachable or wrong token | Verify bridge health; check `BRIDGE_TOKEN` on node |
 | WireGuard handshake stale | Network or config issue | Run `./infra/scripts/test_wireguard.sh`; restart `wg-quick` |
