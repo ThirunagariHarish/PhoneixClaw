@@ -9,8 +9,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lint (ruff)
+        run: |
+          pip install -q ruff
+          ruff check shared/ services/ apps/api/src/ || { echo "::error::ruff lint failed — fix locally with 'make lint-fix'"; exit 1; }
+      - name: Trivy filesystem scan (CRITICAL only)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          severity: CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          scanners: vuln
+          format: table
+        continue-on-error: true   # SHOULD FAIL once we triage existing CVEs; warn-only for now
+
   deploy:
     runs-on: ubuntu-latest
+    needs: validate
     environment: production
     permissions:
       contents: read
@@ -96,6 +122,8 @@ jobs:
           ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded). See https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions"; exit 1; }
 
       - name: Pre-upgrade Postgres backup
+        id: backup
+        continue-on-error: true
         env:
           K3S_HOST: ${{ secrets.K3S_HOST }}
         run: |
@@ -103,13 +131,23 @@ jobs:
           TAG="${{ steps.tag.outputs.TAG }}"
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           REMOTE_DUMP="/tmp/phoenix-${STAMP}-${TAG}.dump"
-          LOCAL_DUMP="/tmp/postgres-pre-${TAG}.dump"
+          # Use $GITHUB_WORKSPACE (NOT /tmp) so actions/upload-artifact can find it.
+          LOCAL_DUMP="$GITHUB_WORKSPACE/postgres-pre-${TAG}.dump"
+          mkdir -p "$GITHUB_WORKSPACE/_backup"
 
-          # Skip if postgres pod doesn't exist (first-ever install on a new cluster)
-          if ! ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" \
-                "kubectl get pod postgres-0 -n phoenix --no-headers 2>/dev/null | grep -q Running"; then
-            echo "postgres-0 not Running — skipping backup (first install or upgrade with no DB)"
+          # Detect postgres state — first install (pod not found) is OK to skip;
+          # CrashLoopBackOff (pod exists but unhealthy) is a real problem and should fail loud.
+          POD_STATE=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i ~/.ssh/deploy_key "root@$K3S_HOST" \
+            "kubectl get pod postgres-0 -n phoenix -o jsonpath='{.status.phase}' 2>/dev/null" || echo "NotFound")
+
+          if [ "$POD_STATE" = "NotFound" ] || [ -z "$POD_STATE" ]; then
+            echo "postgres-0 not present — first install on this cluster. Skipping backup."
+            echo "BACKED_UP=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ "$POD_STATE" != "Running" ]; then
+            echo "::error::postgres-0 is in state '$POD_STATE' (not Running). Refusing to deploy without a backup."
+            exit 1
           fi
 
           echo "Dumping postgres-0 → $REMOTE_DUMP"
@@ -119,18 +157,23 @@ jobs:
           echo "Copying dump back to runner..."
           scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST:$REMOTE_DUMP" "$LOCAL_DUMP"
           ls -lh "$LOCAL_DUMP"
-
-          # Clean up the VPS-side copy (we have it on the runner now and will upload as artifact)
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "rm -f $REMOTE_DUMP"
+          echo "BACKED_UP=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload Postgres backup as artifact
-        if: hashFiles('/tmp/postgres-pre-*.dump') != ''
+        if: steps.backup.outputs.BACKED_UP == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: postgres-pre-${{ steps.tag.outputs.TAG }}
-          path: /tmp/postgres-pre-*.dump
+          path: ${{ github.workspace }}/postgres-pre-*.dump
           retention-days: 90
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Fail if backup step errored AND postgres exists
+        if: steps.backup.outcome == 'failure'
+        run: |
+          echo "::error::Pre-upgrade Postgres backup failed. Refusing to deploy without a recoverable dump."
+          exit 1
 
       - name: Deploy to k3s
         env:
@@ -140,16 +183,35 @@ jobs:
           TAG="${{ steps.tag.outputs.TAG }}"
 
           echo "Copying Helm chart to k3s host..."
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "mkdir -p /opt/phoenix"
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key -r helm/phoenix "root@$K3S_HOST:/opt/phoenix/"
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key "root@$K3S_HOST" "mkdir -p /opt/phoenix"
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key -r helm/phoenix "root@$K3S_HOST:/opt/phoenix/"
 
           echo "Deploying Phoenix to k3s (tag: $TAG)..."
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" \
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key "root@$K3S_HOST" \
             "helm upgrade --install phoenix /opt/phoenix/helm/phoenix \
               -f /opt/phoenix/helm/phoenix/values.prod.yaml \
               -n phoenix --create-namespace \
               --set image.tag=$TAG \
               --wait --timeout=15m"
+
+      - name: Smoke test public health
+        if: success()
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS https://cashflowus.com/health | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='ready' else 1)"; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Health check failed (attempt $i/6), retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::Public health check failed after 6 attempts. Investigate at https://cashflowus.com/health"
+          exit 1
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
 
           rm -f ~/.ssh/deploy_key
           echo "Deployment complete (tag: $TAG)"
