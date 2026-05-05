@@ -21,7 +21,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_PAT }}
 
       - name: Build and push all Phoenix services
         if: startsWith(github.ref, 'refs/tags/v')
@@ -29,6 +29,7 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           IMAGE_REPO="ghcr.io/thirunagariharish/phoneixclaw"
+          SOURCE_LABEL="org.opencontainers.image.source=https://github.com/ThirunagariHarish/PhoneixClaw"
 
           SERVICES=(
             "phoenix-api:apps/api/Dockerfile"
@@ -44,6 +45,7 @@ jobs:
             "phoenix-agent-orchestrator:services/agent-orchestrator/Dockerfile"
             "phoenix-prediction-monitor:services/prediction-monitor/Dockerfile"
             "phoenix-backtesting:services/backtesting/Dockerfile"
+            "phoenix-pipeline-worker:services/pipeline-worker/Dockerfile"
             "phoenix-nginx:infra/Dockerfile.nginx"
           )
 
@@ -51,7 +53,11 @@ jobs:
             IFS=":" read -r svc dockerfile <<< "$entry"
             if [ -f "$dockerfile" ]; then
               echo "Building $svc ($TAG)..."
-              docker build -t "$IMAGE_REPO/$svc:$TAG" -t "$IMAGE_REPO/$svc:latest" -f "$dockerfile" .
+              docker build \
+                --label "$SOURCE_LABEL" \
+                -t "$IMAGE_REPO/$svc:$TAG" \
+                -t "$IMAGE_REPO/$svc:latest" \
+                -f "$dockerfile" .
               docker push "$IMAGE_REPO/$svc:$TAG"
               docker push "$IMAGE_REPO/$svc:latest"
             else
