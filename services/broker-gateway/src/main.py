@@ -33,6 +33,8 @@ from pydantic import BaseModel, Field
 from shared.utils.circuit_breaker import CircuitBreaker as _CBAsync
 from shared.utils.circuit_breaker import CircuitBreakerOpen
 
+from . import rh_client
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -169,6 +171,7 @@ def _get_rh() -> Any:
 # Retry helper
 # ---------------------------------------------------------------------------
 def _retry(fn: Any, *args: Any, session: RobinhoodSession | None = None, **kwargs: Any) -> Any:
+    """Sync retry wrapper with circuit breaker. Blocks caller thread."""
     cb_state = _rh_circuit.state
     if cb_state == _CBAsync.OPEN:
         remaining = max(0, _rh_circuit.cooldown_seconds - (time.monotonic() - _rh_circuit._last_failure_time))
@@ -198,6 +201,11 @@ def _retry(fn: Any, *args: Any, session: RobinhoodSession | None = None, **kwarg
     raise last_exc  # type: ignore[misc]
 
 
+async def _async_retry(fn: Any, *args: Any, session: RobinhoodSession | None = None, **kwargs: Any) -> Any:
+    """Async wrapper around _retry. Offloads blocking call to thread pool."""
+    return await asyncio.to_thread(_retry, fn, *args, session=session, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
@@ -210,12 +218,21 @@ def _ensure_token_dir() -> None:
 
 
 def _do_login(session: RobinhoodSession) -> None:
+    """Perform robin_stocks login with 30s timeout and pickle invalidation on failure."""
     if session.paper_mode:
         session.logged_in = True
+        rh_client.reset_auth_fail_count()
         return
 
     if not session.username or not session.password:
         raise ValueError(f"Robinhood credentials missing for account {session.account_id}")
+
+    # Check backoff before attempting
+    try:
+        rh_client.check_backoff()
+    except RuntimeError as exc:
+        log.warning("Login skipped for %s: %s", session.account_id, exc)
+        raise
 
     rh = _get_rh()
     _ensure_token_dir()
@@ -233,18 +250,38 @@ def _do_login(session: RobinhoodSession) -> None:
             log.warning("TOTP generation failed for %s: %s", session.account_id, exc)
 
     try:
-        rh.login(
-            session.username,
-            session.password,
-            mfa_code=mfa_code,
-            store_session=True,
-            expiresIn=86400,
-            pickle_name=pickle_name,
-        )
+        # Wrap login in hard timeout (30 s)
+        import signal
+
+        def _timeout_handler(signum, frame):  # noqa: ARG001
+            raise TimeoutError("rh.login exceeded 30s")
+
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(30)
+
+        try:
+            rh.login(
+                session.username,
+                session.password,
+                mfa_code=mfa_code,
+                store_session=True,
+                expiresIn=86400,
+                pickle_name=pickle_name,
+            )
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    except TimeoutError as timeout_exc:
+        log.error("Login timeout for %s after 30s — invalidating pickle", session.account_id)
+        rh_client.invalidate_session_pickle(pickle_name)
+        rh_client.record_auth_fail()
+        raise timeout_exc
     except Exception as first_err:
         if mfa_code:
             log.warning("Login with TOTP failed for %s (%s), retrying without MFA", session.account_id, first_err)
             try:
+                signal.alarm(30)
                 rh.login(
                     session.username,
                     session.password,
@@ -252,13 +289,20 @@ def _do_login(session: RobinhoodSession) -> None:
                     expiresIn=86400,
                     pickle_name=pickle_name,
                 )
+                signal.alarm(0)
             except Exception:
+                signal.alarm(0)
+                rh_client.invalidate_session_pickle(pickle_name)
+                rh_client.record_auth_fail()
                 raise first_err
         else:
+            rh_client.invalidate_session_pickle(pickle_name)
+            rh_client.record_auth_fail()
             raise
 
     session.logged_in = True
     session.login_time = time.time()
+    rh_client.reset_auth_fail_count()
     log.info("Logged in to Robinhood for account %s (%s)", session.account_id, session.username)
 
 
@@ -476,8 +520,9 @@ def _poll_order_status(order_id: str, session: RobinhoodSession, *, is_option: b
 # Session refresh background task
 # ---------------------------------------------------------------------------
 async def _auto_refresh_loop() -> None:
+    """Background task: refresh sessions every 15 min to keep them warm."""
     while True:
-        await asyncio.sleep(1800)
+        await asyncio.sleep(rh_client.REFRESH_INTERVAL_S)
         with _sessions_lock:
             sessions_snapshot = list(_sessions.values())
 
@@ -490,12 +535,15 @@ async def _auto_refresh_loop() -> None:
                     session.account_id,
                     session.session_age_hours(),
                 )
-                session.logged_in = False
+                pickle_name = f"phoenix_{session.account_id}_{session.username.split('@')[0]}"
                 try:
-                    await asyncio.get_event_loop().run_in_executor(None, _ensure_login, session)
+                    await rh_client.refresh_session_light(session.username, pickle_name)
+                    session.login_time = time.time()  # Update timestamp on successful refresh
                     log.info("Session %s refreshed successfully", session.account_id)
                 except Exception as exc:
                     log.error("Session %s refresh failed: %s", session.account_id, exc)
+                    session.logged_in = False  # Force re-login on next request
+                    rh_client.record_auth_fail()
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +576,31 @@ class WatchlistAddRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    account_id: str | None = None
+
+
+class OptionOrderByContractRequest(BaseModel):
+    """Option order using contract_id URL instead of strike/expiry/type."""
+    contract_id: str = Field(description="Robinhood option instrument URL")
+    quantity: int
+    side: str = Field(pattern="^(buy|sell)$")
+    price: float
+    time_in_force: str = "gfd"
+    account_id: str | None = None
+
+
+class OptionWatchlistAddRequest(BaseModel):
+    ticker: str
+    expiry: str = Field(description="YYYY-MM-DD")
+    strike: float
+    option_type: str = Field(pattern="^(call|put)$")
+    watchlist_name: str = "Options Watchlist"
+    account_id: str | None = None
+
+
+class WatchlistRemoveRequest(BaseModel):
+    ticker: str = Field(description="Stock ticker or option contract identifier")
+    watchlist_name: str = "Phoenix Paper"
     account_id: str | None = None
 
 
@@ -646,11 +719,22 @@ async def place_stock_order(req: StockOrderRequest):
         if oid:
             result = _poll_order_status(oid, session)
             result["account_id"] = session.account_id
+            # Audit log
+            rh_client._audit(
+                "order_placed",
+                account_id=session.account_id,
+                ticker=req.ticker,
+                side=req.side,
+                qty=req.quantity,
+                price=req.price,
+                order_id=oid,
+                state=result.get("state"),
+            )
             return result
         return {"order_id": oid, "state": order.get("state", "unknown"), "account_id": session.account_id}
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:
@@ -691,11 +775,25 @@ async def place_option_order(req: OptionOrderRequest):
         if oid:
             result = _poll_order_status(oid, session, is_option=True)
             result["account_id"] = session.account_id
+            # Audit log
+            rh_client._audit(
+                "option_order_placed",
+                account_id=session.account_id,
+                ticker=req.ticker,
+                side=req.side,
+                strike=req.strike,
+                expiry=req.expiry,
+                option_type=req.option_type,
+                qty=req.quantity,
+                price=req.price,
+                order_id=oid,
+                state=result.get("state"),
+            )
             return result
         return {"order_id": oid, "state": order.get("state", "unknown"), "account_id": session.account_id}
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:
@@ -731,7 +829,7 @@ async def get_positions(account_id: str | None = Query(default=None)):
         return {"positions": result, "account_id": session.account_id}
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:
@@ -760,6 +858,12 @@ async def add_to_watchlist(req: WatchlistAddRequest):
 
         rh = _get_rh()
         result = _retry(rh.account.post_symbols_to_watchlist, [req.ticker], req.watchlist_name, session=session)
+        rh_client._audit(
+            "watchlist_add_stock",
+            account_id=session.account_id,
+            ticker=req.ticker,
+            watchlist=req.watchlist_name,
+        )
         return {
             "status": "added",
             "ticker": req.ticker,
@@ -769,7 +873,7 @@ async def add_to_watchlist(req: WatchlistAddRequest):
         }
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:
@@ -814,7 +918,7 @@ async def get_watchlist(
         }
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:
@@ -851,7 +955,396 @@ async def get_account(account_id: str | None = Query(default=None)):
         }
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _execute)
+        return await asyncio.to_thread(_execute)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# New endpoints (ported from SelfAgentBot)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/orders/option/contract")
+async def place_option_order_by_contract(req: OptionOrderByContractRequest):
+    """Place option order using contract_id URL instead of strike/expiry/type triple.
+
+    Modern path that agents should prefer when they already have the contract URL
+    from a previous option chain lookup.
+    """
+    aid = _resolve_account_id(req.account_id)
+    session = _get_session(aid)
+
+    def _execute() -> dict:
+        _ensure_login(session)
+        _order_limiter.acquire()
+
+        if session.paper_mode:
+            oid = f"paper-opt-contract-{uuid_mod.uuid4().hex[:12]}"
+            return {
+                "order_id": oid,
+                "state": "filled",
+                "paper_mode": True,
+                "account_id": session.account_id,
+            }
+
+        rh = _get_rh()
+        pos_effect = "open" if req.side == "buy" else "close"
+        price_effect = "debit" if req.side == "buy" else "credit"
+
+        # robin_stocks option-by-id helpers take the contract URL
+        if req.side == "buy":
+            order = _retry(
+                rh.orders.order_buy_option_limit,
+                pos_effect,
+                price_effect,
+                req.price,
+                req.contract_id,
+                req.quantity,
+                "", 0.0, "",  # Empty strike/expiry/type — contract_id is enough
+                timeInForce=req.time_in_force,
+                session=session,
+            )
+        else:
+            order = _retry(
+                rh.orders.order_sell_option_limit,
+                pos_effect,
+                price_effect,
+                req.price,
+                req.contract_id,
+                req.quantity,
+                "", 0.0, "",
+                timeInForce=req.time_in_force,
+                session=session,
+            )
+
+        oid = order.get("id", "")
+        if oid:
+            result = _poll_order_status(oid, session, is_option=True)
+            result["account_id"] = session.account_id
+            rh_client._audit(
+                "option_order_by_contract",
+                account_id=session.account_id,
+                contract_id=req.contract_id,
+                side=req.side,
+                qty=req.quantity,
+                price=req.price,
+                order_id=oid,
+                state=result.get("state"),
+            )
+            return result
+        return {"order_id": oid, "state": order.get("state", "unknown"), "account_id": session.account_id}
+
+    try:
+        return await asyncio.to_thread(_execute)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/orders")
+async def get_orders(
+    status: str = Query(default="all", description="all, open, filled, or cancelled"),
+    order_type: str = Query(default="all", description="all, stock, or option"),
+    account_id: str | None = Query(default=None),
+):
+    """List recent orders with optional status and type filters."""
+    aid = _resolve_account_id(account_id)
+    session = _get_session(aid)
+
+    def _execute() -> dict:
+        _ensure_login(session)
+
+        if session.paper_mode:
+            orders = list(session.paper_orders.values())
+            if status.lower() == "open":
+                orders = [o for o in orders if o.get("state") in ("queued", "confirmed", "partially_filled")]
+            elif status.lower() == "filled":
+                orders = [o for o in orders if o.get("state") == "filled"]
+            return {"orders": orders, "paper_mode": True, "account_id": session.account_id}
+
+        rh = _get_rh()
+        result = []
+
+        if order_type.lower() in ("all", "option"):
+            try:
+                raw_options = _retry(rh.orders.get_all_option_orders, session=session)
+            except Exception:
+                raw_options = []
+            for entry in raw_options or []:
+                if not isinstance(entry, dict):
+                    continue
+                state = str(entry.get("state", "unknown"))
+                if status.lower() == "open" and state not in ("queued", "confirmed", "partially_filled"):
+                    continue
+                if status.lower() == "filled" and state != "filled":
+                    continue
+                result.append({
+                    "order_id": entry.get("id", ""),
+                    "symbol": entry.get("chain_symbol", ""),
+                    "side": entry.get("direction", "unknown"),
+                    "quantity": float(entry.get("quantity") or 0),
+                    "price": entry.get("price"),
+                    "state": state,
+                    "asset_class": "option",
+                    "created_at": entry.get("created_at"),
+                })
+
+        if order_type.lower() in ("all", "stock"):
+            try:
+                raw_stocks = _retry(rh.orders.get_all_stock_orders, session=session)
+            except Exception:
+                raw_stocks = []
+            for entry in raw_stocks or []:
+                if not isinstance(entry, dict):
+                    continue
+                state = str(entry.get("state", "unknown"))
+                if status.lower() == "open" and state not in ("queued", "confirmed", "partially_filled"):
+                    continue
+                if status.lower() == "filled" and state != "filled":
+                    continue
+                result.append({
+                    "order_id": entry.get("id", ""),
+                    "symbol": entry.get("symbol", ""),
+                    "side": entry.get("side", "unknown"),
+                    "quantity": float(entry.get("quantity") or 0),
+                    "price": entry.get("price"),
+                    "state": state,
+                    "asset_class": "stock",
+                    "created_at": entry.get("created_at"),
+                })
+
+        return {"orders": result, "account_id": session.account_id}
+
+    try:
+        return await asyncio.to_thread(_execute)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/quotes")
+async def get_quotes(
+    tickers: str = Query(description="Comma-separated tickers, e.g. AAPL,MSFT"),
+    account_id: str | None = Query(default=None),
+):
+    """Bulk stock quotes (bid, ask, last, prev_close, day_pct)."""
+    aid = _resolve_account_id(account_id)
+    session = _get_session(aid)
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+
+    if not ticker_list:
+        raise HTTPException(status_code=400, detail="No tickers provided")
+
+    def _execute() -> dict:
+        _ensure_login(session)
+
+        if session.paper_mode:
+            # Synthetic quotes for paper mode
+            quotes = {
+                t: {
+                    "bid": 99.95,
+                    "ask": 100.05,
+                    "last": 100.0,
+                    "prev_close": 99.0,
+                    "day_pct": 1.01,
+                }
+                for t in ticker_list
+            }
+            return {"quotes": quotes, "paper_mode": True, "account_id": session.account_id}
+
+        rh = _get_rh()
+        try:
+            raw = _retry(rh.stocks.get_quotes, ticker_list, session=session)
+        except Exception:
+            raw = []
+
+        quotes = {}
+        for entry in raw or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                sym = str(entry.get("symbol", "")).upper()
+                if not sym:
+                    continue
+                last = float(entry.get("last_trade_price") or entry.get("last_extended_hours_trade_price") or 0.0)
+                prev = float(entry.get("previous_close") or 0.0)
+                bid = float(entry.get("bid_price") or 0.0)
+                ask = float(entry.get("ask_price") or 0.0)
+                day_pct = ((last - prev) / prev * 100.0) if prev else 0.0
+                quotes[sym] = {
+                    "bid": bid,
+                    "ask": ask,
+                    "last": last,
+                    "prev_close": prev,
+                    "day_pct": round(day_pct, 2),
+                }
+            except Exception:
+                continue
+
+        # Fill missing tickers with zeros
+        for t in ticker_list:
+            if t not in quotes:
+                quotes[t] = {"bid": 0.0, "ask": 0.0, "last": 0.0, "prev_close": 0.0, "day_pct": 0.0}
+
+        return {"quotes": quotes, "account_id": session.account_id}
+
+    try:
+        return await asyncio.to_thread(_execute)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/watchlist/option")
+async def add_option_to_watchlist(req: OptionWatchlistAddRequest):
+    """Add option contract to watchlist via RH quick_add API.
+
+    Discovers contract from ticker/expiry/strike/type and posts to
+    /discovery/lists/items/quick_add/. Auto-targets "Options Watchlist".
+    """
+    aid = _resolve_account_id(req.account_id)
+    session = _get_session(aid)
+
+    def _execute() -> dict:
+        _ensure_login(session)
+
+        if session.paper_mode:
+            wl_key = f"{req.watchlist_name}_options"
+            wl = session.paper_watchlists.setdefault(wl_key, [])
+            contract_sig = f"{req.ticker} {req.option_type} ${req.strike} {req.expiry}"
+            if contract_sig not in wl:
+                wl.append(contract_sig)
+            return {
+                "status": "added",
+                "contract": contract_sig,
+                "watchlist_name": req.watchlist_name,
+                "paper_mode": True,
+                "account_id": session.account_id,
+            }
+
+        rh = _get_rh()
+        # Discover contract
+        chain = _retry(
+            rh.options.find_options_by_strike,
+            inputSymbols=req.ticker,
+            strikePrice=req.strike,
+            optionType=req.option_type.lower(),
+            session=session,
+        )
+        contracts = [c for c in (chain or []) if c.get("expiration_date") == req.expiry]
+        if not contracts:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No contract found for {req.ticker} {req.option_type} ${req.strike} {req.expiry}",
+            )
+
+        contract = contracts[0]
+        contract_id = contract["id"]
+
+        # POST quick_add
+        url = "https://api.robinhood.com/discovery/lists/items/quick_add/"
+        body = {
+            "legs": [{
+                "option_id": contract_id,
+                "position_type": "long",
+                "ratio_quantity": 1,
+            }],
+            "object_type": "option_strategy",
+        }
+
+        # Use robin_stocks helper for authenticated POST
+        from robin_stocks.robinhood.helper import request_post
+        resp = _retry(request_post, url, body, json=True, session=session)
+
+        if not isinstance(resp, dict):
+            raise HTTPException(status_code=500, detail=f"Unexpected RH response: {resp!r}")
+        if "failed operations" in resp or "detail" in resp:
+            raise HTTPException(
+                status_code=400,
+                detail=f"RH quick_add rejected: {resp.get('failed operations') or resp.get('detail')}",
+            )
+
+        rh_client._audit(
+            "watchlist_add_option",
+            account_id=session.account_id,
+            ticker=req.ticker,
+            strike=req.strike,
+            expiry=req.expiry,
+            option_type=req.option_type,
+            contract_id=contract_id,
+        )
+
+        return {
+            "status": "added",
+            "contract_id": contract_id,
+            "watchlist_name": req.watchlist_name,
+            "account_id": session.account_id,
+        }
+
+    try:
+        return await asyncio.to_thread(_execute)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/watchlist/{ticker}")
+async def remove_from_watchlist(
+    ticker: str,
+    watchlist_name: str = Query(default="Phoenix Paper"),
+    account_id: str | None = Query(default=None),
+):
+    """Remove a stock ticker from a named watchlist."""
+    aid = _resolve_account_id(account_id)
+    session = _get_session(aid)
+
+    def _execute() -> dict:
+        _ensure_login(session)
+
+        if session.paper_mode:
+            wl = session.paper_watchlists.get(watchlist_name, [])
+            if ticker.upper() in wl:
+                wl.remove(ticker.upper())
+            return {
+                "status": "removed",
+                "ticker": ticker,
+                "watchlist_name": watchlist_name,
+                "paper_mode": True,
+                "account_id": session.account_id,
+            }
+
+        rh = _get_rh()
+        try:
+            result = _retry(
+                rh.account.delete_symbols_from_watchlist,
+                ticker.upper(),
+                watchlist_name,
+                session=session,
+            )
+            rh_client._audit(
+                "watchlist_remove_stock",
+                account_id=session.account_id,
+                ticker=ticker,
+                watchlist=watchlist_name,
+            )
+            return {
+                "status": "removed",
+                "ticker": ticker,
+                "watchlist_name": watchlist_name,
+                "account_id": session.account_id,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        return await asyncio.to_thread(_execute)
     except HTTPException:
         raise
     except Exception as exc:

@@ -6,6 +6,7 @@ on:
       - "v*"
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -23,11 +24,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="main-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved image tag: $TAG"
+
       - name: Build and push all Phoenix services
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ steps.tag.outputs.TAG }}"
           IMAGE_REPO="ghcr.io/thirunagariharish/phoneixclaw"
           SOURCE_LABEL="org.opencontainers.image.source=https://github.com/ThirunagariHarish/PhoneixClaw"
 
@@ -66,13 +77,12 @@ jobs:
           done
 
       - name: Deploy to k3s
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           K3S_HOST: ${{ secrets.K3S_HOST }}
           K3S_SSH_KEY: ${{ secrets.K3S_SSH_KEY }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ steps.tag.outputs.TAG }}"
 
           if [ -z "${K3S_HOST:-}" ] || [ -z "${K3S_SSH_KEY:-}" ]; then
             echo "ERROR: K3S_HOST and K3S_SSH_KEY secrets are required for k3s deployment"
@@ -88,7 +98,6 @@ jobs:
             echo "$K3S_SSH_KEY" | base64 -d > ~/.ssh/deploy_key
           fi
           chmod 600 ~/.ssh/deploy_key
-          # Sanity-check the key parses
           ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded). See https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions"; exit 1; }
 
           echo "Copying Helm chart to k3s host..."
@@ -104,4 +113,4 @@ jobs:
               --wait --timeout=15m"
 
           rm -f ~/.ssh/deploy_key
-          echo "Deployment complete"
+          echo "Deployment complete (tag: $TAG)"
