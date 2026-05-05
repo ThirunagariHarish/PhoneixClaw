@@ -58,21 +58,37 @@ Use `infra/scripts/provision-k3s.sh` to bootstrap k3s + sealed-secrets + cert-ma
 
 ---
 
-## Backups (do this monthly)
+## Backups
 
-Off-cluster sealed-secrets backup:
+### Postgres — automatic (every CD run)
+
+Every push to `main` (and every `v*` tag) runs a `pg_dump` on the live `postgres-0` BEFORE `helm upgrade`. The dump is uploaded as a **GitHub Actions artifact** named `postgres-pre-<tag>` with **90-day retention**.
+
+**To download a backup** (any time within 90 days):
+```bash
+gh run list --workflow=cd.yml --limit 10 -R ThirunagariHarish/PhoneixClaw
+gh run download <run-id> -n postgres-pre-<tag> -R ThirunagariHarish/PhoneixClaw
+```
+
+**To restore from one** (after a wipe):
+```bash
+# Get a recent dump from GitHub Actions
+gh run download <run-id> -n postgres-pre-<tag> -R ThirunagariHarish/PhoneixClaw -D /tmp/
+
+# Push it into the cluster and restore
+scp -i ~/.ssh/coolify_deploy /tmp/postgres-pre-*.dump root@69.62.86.166:/tmp/restore.dump
+ssh -i ~/.ssh/coolify_deploy root@69.62.86.166 \
+  "kubectl cp /tmp/restore.dump phoenix/postgres-0:/tmp/restore.dump && \
+   kubectl exec -n phoenix postgres-0 -- pg_restore -U phoenixtrader -d phoenixtrader --clean --if-exists /tmp/restore.dump"
+```
+
+There's also a daily in-cluster CronJob (`postgres-backup`, 03:00 UTC) that dumps to MinIO. That's a second-tier backup; if the whole cluster dies, the GitHub Actions artifacts are the survivors.
+
+### Sealed-secrets — quarterly
 
 ```bash
 ./infra/scripts/backup-sealed-secrets-key.sh
 gpg -c ~/Phoenix-DR/sealed-secrets-key.*.backup.yaml
-```
-
-Postgres has a daily CronJob (`postgres-backup`, 03:00 UTC) that pg_dumps to MinIO inside the cluster. **That's not a real backup** — if the cluster dies, the dumps die with it. For real DR, also pull a periodic dump off-cluster:
-
-```bash
-ssh -i ~/.ssh/coolify_deploy root@69.62.86.166 \
-  "kubectl exec -n phoenix postgres-0 -- pg_dump -U phoenixtrader -d phoenixtrader --format=custom" \
-  > ~/Phoenix-DR/postgres-$(date +%Y%m%dT%H%M%S).dump
 ```
 
 ---

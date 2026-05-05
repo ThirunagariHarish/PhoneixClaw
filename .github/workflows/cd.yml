@@ -76,22 +76,17 @@ jobs:
             fi
           done
 
-      - name: Deploy to k3s
+      - name: Stage SSH key
         env:
           K3S_HOST: ${{ secrets.K3S_HOST }}
           K3S_SSH_KEY: ${{ secrets.K3S_SSH_KEY }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.TAG }}"
-
           if [ -z "${K3S_HOST:-}" ] || [ -z "${K3S_SSH_KEY:-}" ]; then
             echo "ERROR: K3S_HOST and K3S_SSH_KEY secrets are required for k3s deployment"
             exit 1
           fi
-
           mkdir -p ~/.ssh
-          # Support either raw key text OR base64-encoded key (more robust against
-          # copy-paste mangling of newlines via the GitHub secrets web form).
           if echo "$K3S_SSH_KEY" | head -1 | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
             printf '%s\n' "$K3S_SSH_KEY" > ~/.ssh/deploy_key
           else
@@ -99,6 +94,50 @@ jobs:
           fi
           chmod 600 ~/.ssh/deploy_key
           ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded). See https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions"; exit 1; }
+
+      - name: Pre-upgrade Postgres backup
+        env:
+          K3S_HOST: ${{ secrets.K3S_HOST }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.TAG }}"
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          REMOTE_DUMP="/tmp/phoenix-${STAMP}-${TAG}.dump"
+          LOCAL_DUMP="/tmp/postgres-pre-${TAG}.dump"
+
+          # Skip if postgres pod doesn't exist (first-ever install on a new cluster)
+          if ! ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" \
+                "kubectl get pod postgres-0 -n phoenix --no-headers 2>/dev/null | grep -q Running"; then
+            echo "postgres-0 not Running — skipping backup (first install or upgrade with no DB)"
+            exit 0
+          fi
+
+          echo "Dumping postgres-0 → $REMOTE_DUMP"
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" \
+            "kubectl exec -n phoenix postgres-0 -- pg_dump -U phoenixtrader -d phoenixtrader --format=custom --compress=9 > $REMOTE_DUMP && ls -lh $REMOTE_DUMP"
+
+          echo "Copying dump back to runner..."
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST:$REMOTE_DUMP" "$LOCAL_DUMP"
+          ls -lh "$LOCAL_DUMP"
+
+          # Clean up the VPS-side copy (we have it on the runner now and will upload as artifact)
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "rm -f $REMOTE_DUMP"
+
+      - name: Upload Postgres backup as artifact
+        if: hashFiles('/tmp/postgres-pre-*.dump') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-pre-${{ steps.tag.outputs.TAG }}
+          path: /tmp/postgres-pre-*.dump
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Deploy to k3s
+        env:
+          K3S_HOST: ${{ secrets.K3S_HOST }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.TAG }}"
 
           echo "Copying Helm chart to k3s host..."
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "mkdir -p /opt/phoenix"
