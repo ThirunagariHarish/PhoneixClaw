@@ -249,49 +249,35 @@ def _do_login(session: RobinhoodSession) -> None:
         except Exception as exc:
             log.warning("TOTP generation failed for %s: %s", session.account_id, exc)
 
+    # Hard 30s login timeout via thread-pool future. Replaces SIGALRM
+    # (process-global, not thread-safe — multi-account login can race).
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+
+    def _do_login(use_mfa: bool) -> None:
+        kwargs = {
+            "store_session": True,
+            "expiresIn": 86400,
+            "pickle_name": pickle_name,
+        }
+        if use_mfa and mfa_code:
+            kwargs["mfa_code"] = mfa_code
+        rh.login(session.username, session.password, **kwargs)
+
     try:
-        # Wrap login in hard timeout (30 s)
-        import signal
-
-        def _timeout_handler(signum, frame):  # noqa: ARG001
-            raise TimeoutError("rh.login exceeded 30s")
-
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(30)
-
-        try:
-            rh.login(
-                session.username,
-                session.password,
-                mfa_code=mfa_code,
-                store_session=True,
-                expiresIn=86400,
-                pickle_name=pickle_name,
-            )
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-
-    except TimeoutError as timeout_exc:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_do_login, True).result(timeout=30)
+    except _FuturesTimeout:
         log.error("Login timeout for %s after 30s — invalidating pickle", session.account_id)
         rh_client.invalidate_session_pickle(pickle_name)
         rh_client.record_auth_fail()
-        raise timeout_exc
+        raise TimeoutError("rh.login exceeded 30s")
     except Exception as first_err:
         if mfa_code:
             log.warning("Login with TOTP failed for %s (%s), retrying without MFA", session.account_id, first_err)
             try:
-                signal.alarm(30)
-                rh.login(
-                    session.username,
-                    session.password,
-                    store_session=True,
-                    expiresIn=86400,
-                    pickle_name=pickle_name,
-                )
-                signal.alarm(0)
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    ex.submit(_do_login, False).result(timeout=30)
             except Exception:
-                signal.alarm(0)
                 rh_client.invalidate_session_pickle(pickle_name)
                 rh_client.record_auth_fail()
                 raise first_err

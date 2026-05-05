@@ -82,9 +82,14 @@ def _redact(text: str) -> str:
 
 
 def _safe_exc(exc: BaseException) -> str:
-    """Format exception for audit log: Type: message, redacted + truncated."""
+    """Format exception for audit log: redact every line, then truncate.
+
+    Truncate-before-redact would leak a secret straddling the 200-char cut.
+    Redact line-by-line so multi-line tracebacks can't smuggle creds past the regex.
+    """
     rendered = f"{type(exc).__name__}: {exc}"
-    return _redact(rendered)[:200]
+    redacted_lines = [_redact(line) for line in rendered.splitlines()]
+    return "\n".join(redacted_lines)[:200]
 
 
 # ---------------------------------------------------------------------------
