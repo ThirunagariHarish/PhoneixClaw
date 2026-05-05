@@ -15,11 +15,11 @@ spec:
     targetRevision: main
     path: helm/phoenix
     helm:
-      # Default to local images already imported into k3s containerd via
-      # `docker save | k3s ctr images import`. Switch to values.prod.yaml once
-      # the 14 service images are pushed to ghcr.io (see CD pipeline).
       valueFiles:
-      - values.local.yaml
+      - values.prod.yaml
+      parameters:
+      - name: image.tag
+        value: latest
   destination:
     server: https://kubernetes.default.svc
     namespace: phoenix
