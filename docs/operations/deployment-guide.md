@@ -318,20 +318,83 @@ The `pgdata-postgres-0` PVC stores all Phoenix data. If lost:
 
 ### 9.3 SealedSecret can't decrypt (cluster rebuilt)
 
-The Bitnami sealed-secrets controller stores its master key as a Secret in `kube-system`. If k3s is reinstalled, the new controller has a different key and old ciphertexts won't decrypt. You'd need to re-seal each secret:
+The Bitnami sealed-secrets controller stores its master key as a Secret in `kube-system`. If k3s is reinstalled, the new controller has a different key and old ciphertexts won't decrypt.
+
+#### Why this matters
+
+Phoenix's 6 production secrets (`POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`) are stored as a `SealedSecret` in `helm/phoenix/templates/sealedsecret.yaml`. The sealed-secrets controller decrypts them at runtime into the `phoenix-secrets` Secret that pods consume.
+
+If the controller's master key is lost:
+- All existing sealed ciphertexts in the repo become permanently unreadable.
+- You'd have to regenerate all 6 secrets from scratch and re-seal them.
+- **Losing `CREDENTIAL_ENCRYPTION_KEY` is especially painful** — it's the Fernet key that encrypts broker credentials (Robinhood, Discord, etc.) in the `connectors` table. Without it, all stored connector credentials in the database become unreadable.
+
+#### Backup the master key (required for DR)
+
+Run the backup script to pull the key off-cluster:
+
+```bash
+# From your Mac (or wherever you manage the cluster)
+cd /Users/harishkumar/Projects/TradingBot/ProjectPhoneix
+./infra/scripts/backup-sealed-secrets-key.sh
+```
+
+This writes to `~/Phoenix-DR/sealed-secrets-key.<timestamp>.backup.yaml` (mode 600, outside the repo).
+
+**Encrypt the backup before storing it:**
+
+```bash
+gpg -c ~/Phoenix-DR/sealed-secrets-key.<timestamp>.backup.yaml
+# Enter a strong passphrase when prompted
+rm ~/Phoenix-DR/sealed-secrets-key.<timestamp>.backup.yaml  # delete unencrypted original
+```
+
+Store the `.gpg` file securely (cloud storage, password manager, hardware key, offsite backup, etc.). You'll need both the `.gpg` file AND the passphrase to restore.
+
+#### When to run the backup
+
+- After initial cluster setup (one-time)
+- After any `kube-system` upgrade or sealed-secrets controller reinstall
+- Quarterly as part of DR hygiene (recommended)
+
+#### Restore the master key (disaster recovery)
+
+On a fresh cluster where the sealed-secrets controller was reinstalled with a new key:
+
+```bash
+# Decrypt the backup
+gpg -d ~/Phoenix-DR/sealed-secrets-key.<timestamp>.backup.yaml.gpg > /tmp/sealed-secrets-key-restore.yaml
+
+# SSH to the cluster
+ssh -i ~/.ssh/coolify_deploy root@69.62.86.166
+
+# Delete the new controller-generated key (optional, but clean)
+kubectl delete secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key
+
+# Apply the restored key
+kubectl create -f /tmp/sealed-secrets-key-restore.yaml
+
+# Restart the controller to pick up the restored key
+kubectl rollout restart -n kube-system deployment/sealed-secrets-controller
+kubectl rollout status -n kube-system deployment/sealed-secrets-controller --timeout=2m
+
+# Clean up the temp file
+rm /tmp/sealed-secrets-key-restore.yaml
+```
+
+After the controller restarts, existing `SealedSecret` resources (including Phoenix's `phoenix-secrets`) will decrypt correctly again.
+
+#### Manual re-sealing (if backup is lost)
+
+If you don't have a backup and the cluster was rebuilt, you must regenerate and re-seal all secrets:
 
 ```bash
 # On the new cluster, with kubeseal installed (see helm/phoenix/README.md)
-echo -n "<plaintext>" | kubeseal --raw --namespace phoenix --name phoenix-secrets
+echo -n "<new-plaintext-value>" | kubeseal --raw --namespace phoenix --name phoenix-secrets --scope strict
+# Update helm/phoenix/templates/sealedsecret.yaml with the new ciphertext
 ```
 
-To back up the controller's key (recommended):
-
-```bash
-kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key \
-  -o yaml > sealed-secrets-key.backup.yaml
-# Store this file securely OUTSIDE the cluster.
-```
+Repeat for all 6 secrets. For `CREDENTIAL_ENCRYPTION_KEY`, you'll also need to re-generate a new Fernet key (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) and **all existing connector credentials in the DB will be lost** (users must re-enter them via the dashboard).
 
 ### 9.4 Cluster is gone entirely
 
@@ -350,7 +413,6 @@ kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-ke
 | argocd Application not registered | low | Deferred until images are in GHCR (would otherwise break the install — see §6.6). |
 | GitHub Actions secrets not set | medium | Add `K3S_HOST` + `K3S_SSH_KEY` at https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions before the first CD run. |
 | No postgres backup | high | Needs a CronJob that runs `pg_dump` to MinIO. Not implemented. |
-| sealed-secrets master key not backed up off-cluster | high | If cluster is destroyed, all secrets are unrecoverable. Backup procedure in §9.3. |
 | selfagentbot argocd is also broken | low | Same `authentication required` error as Phoenix would get. Both apps need a repo PAT added to argocd. |
 | Memory headroom is ~5 GiB | medium | Phoenix limits sum to ~9.5 GiB; selfagentbot uses ~5.6 GiB; node has 15 GiB. Concurrent rolling updates can pin pods Pending. |
 | One-replica services (api, broker-gateway, etc.) | accepted | Several services hold in-memory state and can't be horizontally scaled until the state moves to Redis. |

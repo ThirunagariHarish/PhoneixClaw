@@ -92,3 +92,7 @@ agents/templates/live-trader-v1/tools/decision.json
 agents/templates/live-trader-v1/tools/pipeline_status.json
 agents/templates/live-trader-v1/tools/stream_cursor.json
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Disaster recovery backups (should never be in repo - lives at ~/Phoenix-DR)
+Phoenix-DR/
