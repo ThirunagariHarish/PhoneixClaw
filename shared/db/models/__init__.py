@@ -18,6 +18,7 @@ from shared.db.models.consolidation import ConsolidationRun
 from shared.db.models.context_session import ContextSession
 from shared.db.models.dev_incident import DevIncident
 from shared.db.models.error_log import ErrorLog
+from shared.db.models.feature_store import FeatureStoreFeature, ModelBundle, Prediction
 from shared.db.models.invitation import Invitation
 from shared.db.models.learning_session import LearningSession
 from shared.db.models.notification import Notification
@@ -106,4 +107,7 @@ __all__ = [
     "AnalystProfile",
     "Invitation",
     "WatchlistItem",
+    "FeatureStoreFeature",
+    "ModelBundle",
+    "Prediction",
 ]
