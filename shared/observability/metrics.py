@@ -85,6 +85,53 @@ discord_messages_counter = Counter(
     registry=registry,
 )
 
+# DB connection pool capacity + utilisation (gauges; refreshed on each /metrics scrape)
+db_pool_size_gauge = Gauge(
+    "phoenix_db_pool_size",
+    "SQLAlchemy connection pool: total slots configured (pool_size + max_overflow)",
+    registry=registry,
+)
+db_pool_checked_in_gauge = Gauge(
+    "phoenix_db_pool_checked_in",
+    "Connections currently idle in pool (available for checkout)",
+    registry=registry,
+)
+db_pool_checked_out_gauge = Gauge(
+    "phoenix_db_pool_checked_out",
+    "Connections currently in use by request handlers",
+    registry=registry,
+)
+db_pool_overflow_gauge = Gauge(
+    "phoenix_db_pool_overflow",
+    "Connections beyond pool_size that have been opened (closes when returned)",
+    registry=registry,
+)
+
+
+def refresh_db_pool_gauges() -> None:
+    """Snapshot the SQLAlchemy QueuePool stats into Prometheus gauges.
+
+    Cheap (in-memory accessors). Called from the /metrics handler so the gauges
+    reflect the live pool at scrape time. Safe if pool isn't initialised yet.
+    """
+    try:
+        from shared.db.engine import get_engine
+        eng = get_engine()
+        pool = eng.pool
+        # Size = configured pool_size + observed overflow ceiling
+        size = pool.size() if hasattr(pool, "size") else 0
+        checked_out = pool.checkedout() if hasattr(pool, "checkedout") else 0
+        # checkedin() returns the count of idle conns; overflow() returns extra opened
+        checked_in = pool.checkedin() if hasattr(pool, "checkedin") else 0
+        overflow = pool.overflow() if hasattr(pool, "overflow") else 0
+        db_pool_size_gauge.set(size)
+        db_pool_checked_in_gauge.set(checked_in)
+        db_pool_checked_out_gauge.set(checked_out)
+        db_pool_overflow_gauge.set(max(0, overflow))
+    except Exception:
+        # Never crash /metrics on pool inspection failure
+        pass
+
 
 # --- DLQ gauge background refresher (Phase B wave 3) ----------------------
 # Keeps dlq_size_gauge fresh without a synchronous DB query on every /metrics scrape.

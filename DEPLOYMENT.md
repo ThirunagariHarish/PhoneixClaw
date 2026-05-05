@@ -149,6 +149,24 @@ ssh -i ~/.ssh/coolify_deploy root@69.62.86.166 \
 
 ---
 
+## SLA targets (DR)
+
+| Metric | Target | What it means |
+|---|---|---|
+| **RTO** (Recovery Time Objective) | 30 min | Max acceptable time from incident to restored service. Achievable by `gh run download postgres-pre-<tag>` → `pg_restore` → `helm upgrade --install`. |
+| **RPO** (Recovery Point Objective) | 12 h worst case (1 h typical) | Max acceptable data loss. Pre-upgrade backup runs on every deploy; the in-cluster CronJob runs at 03:00 UTC daily. So RPO is "since the last deploy" or 24h max if no deploys. To hit 1h RPO, push to main hourly OR add an hourly off-cluster `pg_dump` cron. |
+| **MTTR** (Mean Time To Repair) | TBD | Track via Grafana (when those panels exist) and review quarterly. |
+
+**Quarterly DR drill** (do this every 3 months):
+1. Pick a recent `postgres-pre-<tag>` artifact
+2. Provision a scratch namespace `phoenix-drill`
+3. `gh run download` → `pg_restore` into it
+4. Bring up a parallel chart pointing at the scratch namespace
+5. Verify data integrity + log MTTR
+6. Tear down `phoenix-drill`
+
+---
+
 ## What NOT to do
 
 - **Never** `helm uninstall phoenix` unless you mean to lose the SealedSecret resource (it's helm-owned). If you must, re-`kubectl apply -f helm/phoenix/templates/sealedsecret.yaml` first.

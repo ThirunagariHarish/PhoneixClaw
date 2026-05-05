@@ -910,13 +910,16 @@ async def health_lite() -> dict:
 
 @app.get("/metrics")
 async def metrics() -> str:
-    """Prometheus metrics endpoint with DLQ size gauge."""
+    """Prometheus metrics endpoint with DLQ size + DB pool gauges."""
     from prometheus_client import generate_latest
     from sqlalchemy import text
 
     from shared.db.engine import get_session
     from shared.metrics import registry
-    from shared.observability.metrics import dlq_size_gauge
+    from shared.observability.metrics import dlq_size_gauge, refresh_db_pool_gauges
+
+    # Snapshot DB connection pool utilisation into gauges
+    refresh_db_pool_gauges()
 
     # Update DLQ size gauge from DB
     try:
@@ -925,7 +928,6 @@ async def metrics() -> str:
                 text("SELECT connector_id, COUNT(*) FROM dead_letter_messages WHERE resolved = false GROUP BY connector_id")
             )
             rows = result.all()
-            # Reset all gauges first
             for connector_id, count in rows:
                 dlq_size_gauge.labels(connector_id=connector_id).set(count)
     except Exception:
