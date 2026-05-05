@@ -17,8 +17,9 @@ Last verified: 2026-05-04 against commits `a8b4c85` (asyncpg fix), `262eb0e` (db
 | **Phoenix namespace** | `phoenix` |
 | **Helm release** | `phoenix` (chart at `helm/phoenix/`, current revision visible via `helm list -n phoenix`) |
 | **Repo** | `https://github.com/ThirunagariHarish/PhoneixClaw.git` (private; the typo is in the actual repo name) |
-| **Image registry** | `ghcr.io/thirunagariharish/phoneixclaw/phoenix-<svc>:<tag>` (cd.yml pushes here on `v*` tags). Local k3s containerd also has `phoenix/phoenix-<svc>:local` from the bootstrap build. |
+| **Image registry** | `ghcr.io/thirunagariharish/phoneixclaw/phoenix-<svc>:<tag>` (cd.yml pushes here on every push to `main` with tag `main-<sha7>`, and on `v*` tags with tag `v*`). Local k3s containerd also has `phoenix/phoenix-<svc>:local` from the bootstrap build. |
 | **Cluster DNS** | `cashflowus.com` and `www.cashflowus.com` A-record to `69.62.86.166`. cert-manager handles TLS via Let's Encrypt http-01. |
+| **Deployment method** | GitHub Actions CD pipeline (`.github/workflows/cd.yml`) on every push to `main` or `v*` tag. argocd controller runs in the cluster (for selfagentbot), but Phoenix is not an argocd-managed Application. |
 
 ---
 
@@ -118,22 +119,39 @@ kubectl port-forward -n phoenix svc/phoenix-api 8011:8011
 
 ---
 
-## 5. Build + deploy a new image (the routine path)
+## 5. Routine deploy
 
-Two flows: **CI** (tag-based, normal) and **VPS-local** (bootstrap or hotfix).
+Two flows: **CI** (automated on every push to `main` or `v*` tag) and **VPS-local** (bootstrap or hotfix).
 
-### 5.1 CI flow (normal — once GitHub Actions secrets are in place)
+### 5.1 CI flow (normal — automated deploy)
+
+**Every push to `main`** triggers a deploy:
+
+```bash
+git push origin main
+# .github/workflows/cd.yml builds 14 images, tags them `main-<sha7>`,
+# pushes to ghcr.io, SCPs the chart, runs `helm upgrade --install ... --set image.tag=main-<sha7>`
+```
+
+**Explicit version cut** (recommended for prod milestones):
 
 ```bash
 git tag v1.0.1
 git push origin v1.0.1
-# .github/workflows/cd.yml builds 14 images, pushes to ghcr.io,
-# SCPs the chart, runs `helm upgrade --install ... --set image.tag=v1.0.1`
+# Same flow, but image tag is `v1.0.1` instead of `main-<sha>`
+```
+
+**Manual trigger** (via workflow_dispatch):
+
+```bash
+# Go to https://github.com/ThirunagariHarish/PhoneixClaw/actions/workflows/cd.yml
+# Click "Run workflow" → select branch → Run
 ```
 
 Required GitHub secrets at https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions:
 - `K3S_HOST` = `69.62.86.166`
-- `K3S_SSH_KEY` = the contents of `~/.ssh/coolify_deploy`
+- `K3S_SSH_KEY` = the contents of `~/.ssh/coolify_deploy` (can be raw or base64-encoded)
+- `GHCR_PAT` = GitHub Personal Access Token with `repo` + `read:packages` + `write:packages` scopes
 
 ### 5.2 VPS-local flow (bootstrap or when CI is broken)
 
@@ -247,13 +265,51 @@ Earlier the chart had it as `pre-install`, which crashed because postgres wasn't
 
 The codebase uses `sqlalchemy.ext.asyncio.create_async_engine`. With a plain `postgresql://` URL, sqlalchemy falls back to `psycopg2` which isn't installed in the service images (`ModuleNotFoundError: No module named 'psycopg2'`). Every chart template that constructs DATABASE_URL must include the `+asyncpg` driver suffix.
 
-### 6.6 argocd will fight your install
+### 6.6 GHCR_PAT rotation requires updates in three places
 
-The chart at `helm/phoenix/argocd-application.yaml` registers Phoenix as an argocd Application with `selfHeal: true` and `valueFiles: [values.prod.yaml]`. If applied, argocd will try to reconcile Phoenix to use ghcr.io images (per values.prod.yaml). Until those images exist in GHCR, argocd's reconciliation breaks the deploy. **Don't apply `argocd-application.yaml` until images are in GHCR**, or the Application has been pointed at a `values.local.yaml` with local image refs.
+If the `GHCR_PAT` GitHub token is rotated or expires:
+
+1. Update the GitHub Actions secret at https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions
+2. Update the VPS k3s registries config (if the VPS pulls from GHCR via private registry auth — currently it doesn't, but if you add it: `/etc/rancher/k3s/registries.yaml`)
+3. Update both argocd repo Secrets in the `argocd` namespace (selfagentbot still uses argocd and may reference the same PAT for its own repo access)
+
+The token must have `repo` + `read:packages` + `write:packages` scopes. Without `write:packages`, CD pushes fail with `403 Forbidden`.
 
 ---
 
-## 7. Bootstrap admin user (first-time-only)
+## 7. Broker-gateway endpoints reference
+
+The broker-gateway service (`phoenix-broker-gateway:8040`) exposes 15 endpoints (10 original + 5 added after the SelfAgentBot reliability upgrade):
+
+| Method | Endpoint | Request Body | Notes |
+|---|---|---|---|
+| POST | `/orders/market` | `{"ticker": str, "side": "buy"\|"sell", "quantity": int}` | Market order |
+| POST | `/orders/limit` | `{"ticker": str, "side": "buy"\|"sell", "quantity": int, "price": float}` | Limit order |
+| POST | `/orders/option` | `{"symbol": str, "side": "buy"\|"sell", "quantity": int, "option_type": "call"\|"put", "strike": float, "expiration": "YYYY-MM-DD"}` | Option order (finds contract via `find_options_by_expiration_and_strike`) |
+| POST | `/orders/option/contract` | `{"contract_id": str, "side": "buy"\|"sell", "quantity": int, "price": float\|null}` | NEW — order by exact contract ID (limit if price provided, market otherwise) |
+| GET | `/orders` | — | NEW — fetch all orders (calls `robin_stocks.robinhood.orders.get_all_stock_orders()`) |
+| POST | `/orders/cancel` | `{"order_id": str}` | Cancel order |
+| GET | `/positions` | — | All positions |
+| GET | `/positions/{ticker}` | — | Single position |
+| GET | `/account/balance` | — | Buying power |
+| GET | `/quotes` | — | NEW — fetch quotes (URL param: `?symbols=AAPL,MSFT`) |
+| POST | `/watchlist` | `{"ticker": str}` | Add to watchlist |
+| POST | `/watchlist/option` | `{"symbol": str, "option_type": "call"\|"put", "strike": float, "expiration": "YYYY-MM-DD"}` | NEW — add option to watchlist |
+| DELETE | `/watchlist/{ticker}` | — | NEW — remove from watchlist |
+| POST | `/login` | `{"username": str, "password": str, "mfa_code": str\|null}` | Robinhood login (session persists to `/app/data/.tokens` PVC) |
+| GET | `/health` | — | Health check |
+
+**Key improvements from SelfAgentBot upgrade**:
+
+- Singleton client factory with automatic 15-minute token refresh
+- 30-second SIGALRM timeout on login to prevent hang
+- Exponential backoff (1s → 2s → 4s → 8s) on 429/500/503 errors
+- Audit JSONL logging at `/app/data/audit.jsonl` with secrets redacted (PII fields like `username`, `password`, `mfa_code` replaced with `REDACTED`)
+- All blocking `robin_stocks` calls now async-wrapped via `asyncio.to_thread`
+
+---
+
+## 8. Bootstrap admin user (first-time-only)
 
 On a fresh database, no users exist. The `users` and `invitations` tables are empty. Phoenix's `/auth/register` endpoint requires an invitation code; without one, it returns `403 Invalid or already-used invitation code`.
 
@@ -285,7 +341,7 @@ Subsequent users are added via the dashboard's invitation flow (admin → invite
 
 ---
 
-## 8. Connecting Robinhood, Discord, brokers (post-deploy)
+## 9. Connecting Robinhood, Discord, brokers (post-deploy)
 
 Broker credentials and Discord bot tokens are NOT chart-level secrets. They're managed at runtime via the dashboard's **Connectors** panel and stored encrypted (Fernet, using `CREDENTIAL_ENCRYPTION_KEY`) in the `connectors` table.
 
@@ -298,9 +354,33 @@ If the broker-gateway pod is recreated and the PVC is intact, sessions persist. 
 
 ---
 
-## 9. Disaster recovery
+## 10. Disaster recovery
 
-### 9.1 Roll back a bad helm upgrade
+### 10.1 Postgres daily backups (automated)
+
+The chart includes a `postgres-backup` CronJob that runs `pg_dump` daily at 2 AM UTC and uploads to MinIO (`s3://postgres-backups/phoenixtrader-YYYYMMDD.sql.gz`).
+
+**Restore from backup**:
+
+```bash
+ssh -i ~/.ssh/coolify_deploy root@69.62.86.166
+
+# Download the backup from MinIO (replace YYYYMMDD with the target date)
+kubectl exec -n phoenix minio-0 -- \
+  mc cat local/postgres-backups/phoenixtrader-20260504.sql.gz > /tmp/restore.sql.gz
+
+# Drop and recreate the database (DANGEROUS — all data lost)
+kubectl exec -n phoenix postgres-0 -- \
+  psql -U phoenixtrader -c "DROP DATABASE IF EXISTS phoenixtrader;"
+kubectl exec -n phoenix postgres-0 -- \
+  psql -U phoenixtrader -c "CREATE DATABASE phoenixtrader;"
+
+# Restore the dump
+gunzip < /tmp/restore.sql.gz | \
+  kubectl exec -i -n phoenix postgres-0 -- psql -U phoenixtrader -d phoenixtrader
+```
+
+### 10.2 Roll back a bad helm upgrade
 
 ```bash
 ssh -i ~/.ssh/coolify_deploy root@69.62.86.166 "
@@ -309,14 +389,13 @@ ssh -i ~/.ssh/coolify_deploy root@69.62.86.166 "
 "
 ```
 
-### 9.2 Postgres data is gone (PVC deleted, etc.)
+### 10.3 Postgres data is gone (PVC deleted, etc.)
 
 The `pgdata-postgres-0` PVC stores all Phoenix data. If lost:
-- No backup currently configured (TODO).
-- The schema is recreated by `phoenix-db-migrate` on next install.
-- All users, agents, trades, and positions will be empty — re-bootstrap admin per §7.
+- The chart includes a daily `postgres-backup` CronJob (2 AM UTC) that dumps to MinIO (`s3://postgres-backups/phoenixtrader-YYYYMMDD.sql.gz`). Restore per §10.1.
+- If no backup: the schema is recreated by `phoenix-db-migrate` on next install; all users, agents, trades, and positions will be empty — re-bootstrap admin per §8.
 
-### 9.3 SealedSecret can't decrypt (cluster rebuilt)
+### 10.4 SealedSecret can't decrypt (cluster rebuilt)
 
 The Bitnami sealed-secrets controller stores its master key as a Secret in `kube-system`. If k3s is reinstalled, the new controller has a different key and old ciphertexts won't decrypt.
 
@@ -396,31 +475,28 @@ echo -n "<new-plaintext-value>" | kubeseal --raw --namespace phoenix --name phoe
 
 Repeat for all 6 secrets. For `CREDENTIAL_ENCRYPTION_KEY`, you'll also need to re-generate a new Fernet key (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) and **all existing connector credentials in the DB will be lost** (users must re-enter them via the dashboard).
 
-### 9.4 Cluster is gone entirely
+### 10.5 Cluster is gone entirely
 
 1. Re-provision: `infra/scripts/provision-k3s.sh` (k3s + sealed-secrets + cert-manager + Let's Encrypt ClusterIssuer + UFW)
-2. Restore the sealed-secrets controller key (§9.3 backup)
-3. Re-build and import images per §5.2
-4. `helm install phoenix ...` per §5.2
+2. Restore the sealed-secrets controller key (§10.4 backup)
+3. Restore postgres data from MinIO backup (§10.1)
+4. Re-build and import images per §5.2
+5. `helm install phoenix ...` per §5.2
 
 ---
 
-## 10. Known issues / future work
+## 11. Known issues / future work
 
 | Issue | Severity | Notes |
 |---|---|---|
-| Images not in GHCR | medium | `cd.yml` will push on next `v*` tag. Until then, any helm upgrade needs `--set image.repository=phoenix --set image.tag=local --set image.pullPolicy=IfNotPresent`. |
-| argocd Application not registered | low | Deferred until images are in GHCR (would otherwise break the install — see §6.6). |
-| GitHub Actions secrets not set | medium | Add `K3S_HOST` + `K3S_SSH_KEY` at https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions before the first CD run. |
-| No postgres backup | high | Needs a CronJob that runs `pg_dump` to MinIO. Not implemented. |
-| selfagentbot argocd is also broken | low | Same `authentication required` error as Phoenix would get. Both apps need a repo PAT added to argocd. |
+| sealed-secrets master key not backed up off-cluster | high | If cluster is destroyed, all secrets are unrecoverable. Backup procedure in §10.4. |
 | Memory headroom is ~5 GiB | medium | Phoenix limits sum to ~9.5 GiB; selfagentbot uses ~5.6 GiB; node has 15 GiB. Concurrent rolling updates can pin pods Pending. |
 | One-replica services (api, broker-gateway, etc.) | accepted | Several services hold in-memory state and can't be horizontally scaled until the state moves to Redis. |
 | Dependabot alert #36 (moderate) on the repo | low | Unrelated to this work; review at https://github.com/ThirunagariHarish/PhoneixClaw/security/dependabot/36 |
 
 ---
 
-## 11. Useful one-liners
+## 12. Useful one-liners
 
 ```bash
 # What's the public URL doing right now

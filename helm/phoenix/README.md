@@ -99,15 +99,21 @@ Key configuration options:
 
 See `ADR.md` for architecture decision records.
 
-## GitOps via argocd
+## Deployment
 
-`argocd-application.yaml` (at chart root) registers Phoenix as an argocd `Application` pointing at this repo's `main` branch, `helm/phoenix` path, with `values.prod.yaml`. Apply once with:
+Phoenix is deployed via GitHub Actions on every push to `main` (tag `main-<sha7>`) or on `v*` tag push (tag `v*`). The CD pipeline (`.github/workflows/cd.yml`) builds 14 Docker images, pushes them to GHCR, SCPs the chart to the VPS, and runs `helm upgrade --install --set image.tag=<tag>`.
+
+Manual `helm upgrade --install` works for hotfixes:
 
 ```bash
-kubectl apply -f helm/phoenix/argocd-application.yaml
+# After building images locally and importing to k3s containerd
+helm upgrade --install phoenix . -f values.prod.yaml -n phoenix \
+  --set image.repository=phoenix \
+  --set image.tag=local \
+  --set image.pullPolicy=IfNotPresent
 ```
 
-argocd will then sync any changes pushed to `main` automatically (selfHeal=true, prune=false).
+The chart includes an `argocd-application.yaml` manifest, but it is not applied. Phoenix is deployed solely via GitHub Actions to avoid reconciler race conditions on `image.tag`. The argocd controller still runs in the cluster (for selfagentbot), but Phoenix is not an argocd-managed Application.
 
 ## Uninstalling
 

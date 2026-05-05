@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Helm chart** (`helm/phoenix/`) — production-ready chart for k3s
-  - 13 HTTP service Deployments + Services with httpGet liveness/readiness probes (phoenix-api, phoenix-dashboard, phoenix-ws-gateway, phoenix-llm-gateway, phoenix-broker-gateway, phoenix-execution, phoenix-discord-ingestion, phoenix-feature-pipeline, phoenix-inference-service, phoenix-agent-orchestrator, phoenix-prediction-monitor, phoenix-backtesting, edge-nginx)
+  - 14 HTTP service Deployments + Services with httpGet liveness/readiness probes (phoenix-api, phoenix-dashboard, phoenix-ws-gateway, phoenix-llm-gateway, phoenix-broker-gateway, phoenix-execution, phoenix-discord-ingestion, phoenix-feature-pipeline, phoenix-pipeline-worker, phoenix-inference-service, phoenix-agent-orchestrator, phoenix-prediction-monitor, phoenix-backtesting, edge-nginx)
   - phoenix-automation worker Deployment (no probes, no Service)
   - postgres and minio StatefulSets with persistent volume claims; redis Deployment
   - broker-gateway 100Mi PVC at `/app/data/.tokens` to persist Robinhood MFA session tokens across pod restarts
@@ -20,29 +20,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - phoenix-config ConfigMap as `pre-install,pre-upgrade` hook with weight `-10` so it exists before db-migrate runs
   - k8s `Ingress` (class `traefik`) for `cashflowus.com` and `www.cashflowus.com` with `cert-manager.io/cluster-issuer: letsencrypt-prod` annotation
   - Bitnami SealedSecret template with 6 placeholder keys (POSTGRES_PASSWORD, JWT_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY, ANTHROPIC_API_KEY, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD)
-  - argocd `Application` manifest at `helm/phoenix/argocd-application.yaml` for GitOps adoption (apply once images are in GHCR)
+  - postgres-backup CronJob (daily pg_dump to MinIO at 2 AM UTC)
   - Chart.yaml, values.yaml, values.prod.yaml, README.md, ADR.md (7 decisions)
 - **VPS provisioning script** (`infra/scripts/provision-k3s.sh`) — fresh-VPS bootstrap installing k3s, helm, sealed-secrets controller, cert-manager, ClusterIssuer `letsencrypt-prod`, and UFW firewall
 - **Comprehensive deployment runbook** (`docs/operations/deployment-guide.md`) — operational procedures including image build/import, helm install with overrides, bootstrap admin user (PHOENIX_ADMIN_INVITE_CODE flow), traps to know about, disaster recovery
+- **Robinhood broker-gateway upgrade** — adopted SelfAgentBot patterns for reliability:
+  - Singleton client factory with automatic 15-minute token refresh and 30-second SIGALRM login timeout
+  - Exponential backoff (1s → 2s → 4s → 8s) on 429/500/503 errors
+  - Audit JSONL logging with secret redaction (PII fields like `username`, `password`, `mfa_code` replaced with `REDACTED`)
+  - 5 new endpoints: `POST /orders/option/contract`, `GET /orders`, `GET /quotes`, `POST /watchlist/option`, `DELETE /watchlist/{ticker}`
+  - All blocking `robin_stocks` calls now async-wrapped via `asyncio.to_thread`
 
 ### Changed
 
-- **CD pipeline** (`.github/workflows/cd.yml`) — rebuilt for k3s
-  - On `v*` tag push: builds 14 Docker images, pushes to `ghcr.io/thirunagariharish/phoneixclaw/phoenix-<svc>`, SCPs the chart to the VPS, runs `helm upgrade --install --set image.tag=$TAG`
-  - New required GitHub Actions secrets: `K3S_HOST`, `K3S_SSH_KEY`
+- **CD pipeline** (`.github/workflows/cd.yml`) — rebuilt for k3s + push-to-main auto-deploy
+  - On push to `main`: builds 14 Docker images, pushes to `ghcr.io/thirunagariharish/phoneixclaw/phoenix-<svc>` with tag `main-<sha7>`, SCPs the chart to the VPS, runs `helm upgrade --install --set image.tag=main-<sha7>`
+  - On `v*` tag push: same flow but with tag `v*` (explicit version cut)
+  - Added `workflow_dispatch` trigger for manual runs
+  - Docker login now uses `GHCR_PAT` (default `GITHUB_TOKEN` can't write to packages not yet linked to the repo)
+  - Added OCI `org.opencontainers.image.source` label to auto-link new packages to the repo
+  - New required GitHub Actions secrets: `K3S_HOST`, `K3S_SSH_KEY`, `GHCR_PAT`
   - Removed: `COOLIFY_WEBHOOK_URL`, `COOLIFY_TOKEN`, `COOLIFY_SSH_KEY`, `COOLIFY_HOST`
+  - Base64-tolerant `K3S_SSH_KEY` parsing with sanity check (accepts raw or base64-encoded)
 - **Documentation sweep** — Coolify references replaced with Helm/k3s across 16 files (README + 15 docs)
-- **Service requirements.txt** — added `redis>=5.0.0` and `prometheus_client>=0.19.0` to `services/broker-gateway/requirements.txt`; added `prometheus_client>=0.19.0` to `services/discord-ingestion/requirements.txt`. These two services were the "pre-existing unhealthy containers" flagged in the cutover doc — root cause was missing transitive dependencies imported via `shared/utils/__init__.py` and `shared/observability/metrics.py`.
+- **Service requirements.txt** — added `alpaca-py>=0.37.0`, `cryptography>=42.0.0`, `prometheus_client>=0.19.0` to `services/pipeline-worker/requirements.txt`; added `redis>=5.0.0` and `prometheus_client>=0.19.0` to `services/broker-gateway/requirements.txt`; added `prometheus_client>=0.19.0` to `services/discord-ingestion/requirements.txt`. These three services were the "pre-existing unhealthy containers" flagged in the cutover doc — root cause was missing transitive dependencies imported via `shared/utils/__init__.py` and `shared/observability/metrics.py`.
 - **Agent Gateway OOM messaging** (`apps/api/src/services/agent_gateway.py`) — error message points to `helm/phoenix/values.yaml` (`resources.api.memory`) instead of docker-compose
 - **DB migration script docstring** (`scripts/docker_migrate.py`) — references the Helm hook Job execution model
+- **Helm chart ingress** — switched from Traefik IngressRoute (CRD) to standard k8s `Ingress` (class `traefik`)
+- **Helm chart production values** — bumped `enableTrading=true` and `dryRunMode=false` in `values.prod.yaml` (live trading is now enabled)
+
+### Fixed (API bugs caught during post-cutover testing)
+
+- **AgentApprovePayload missing class declaration** (`apps/api/src/routes/agents/approve.py`) — class was referenced but never defined; POST `/api/v2/agents/{id}/approve` returned `500 NameError`
+- **NaN float serialization** (`apps/api/src/routes/agents/get.py`) — backtest GET returned NaN floats in JSON (invalid JSON); now sanitized to `None` via `math.isnan()` check
+- **report_backtest_progress UnboundLocalError** (`apps/api/src/routes/agents/create.py`) — function had a code path that referenced `agent` before assignment; also wrongly flipped agent status to `BACKTEST_COMPLETE` on every progress callback (not just the final one)
+- **Agent pause/resume KeyError on failure path** (`apps/api/src/routes/agents/pause.py`, `resume.py`) — error handling accessed `data["error"]` but `data` was not guaranteed to exist
+- **Feed channel-name filter** (`apps/api/src/routes/channel_messages/feed.py`) — returned all messages regardless of agent's `selected_channel` setting; now scoped to the correct channel
+- **pipeline-worker `/workers/start` 500 on already_running branch** — Pydantic response validation failed because the branch returned `{"status": "already_running"}` without required `worker_id` and `stream_keys` fields
 
 ### Fixed (chart-level bugs caught during first deploy)
 
-- **`DATABASE_URL` driver suffix** — every chart template that constructs DATABASE_URL now uses `postgresql+asyncpg://` (was bare `postgresql://`, which made sqlalchemy fall back to psycopg2 — not installed in service images — and crashed every pod with `ModuleNotFoundError: No module named 'psycopg2'`).
-- **db-migrate hook ordering** — moved from `pre-install,pre-upgrade` (which ran before postgres existed; crashed with `socket.gaierror`) to `post-install,post-upgrade` with a `wait-for-postgres` initContainer that polls `postgres:5432` for up to 240s.
-- **ConfigMap creation timing** — `phoenix-config` is now a `pre-install,pre-upgrade` hook with weight `-10`, so it exists before any pod (including the post-install db-migrate Job) tries to mount it via `envFrom`.
-- **Probe types** — converted `livenessProbe.exec` (python urllib over HTTP) to `httpGet` for broker-gateway, feature-pipeline, inference-service, prediction-monitor (kubelet does HTTP probes natively; no need for python in the container).
-- **edge-nginx DNS resolution** — removed Docker-style `resolver 127.0.0.11` from nginx.conf and switched proxy_pass targets to k8s service-cluster.local FQDNs (works at config-load time against k3s CoreDNS).
+- **`DATABASE_URL` driver suffix** — every chart template that constructs DATABASE_URL now uses `postgresql+asyncpg://` (was bare `postgresql://`, which made sqlalchemy fall back to psycopg2 — not installed in service images — and crashed every pod with `ModuleNotFoundError: No module named 'psycopg2'`)
+- **db-migrate hook ordering** — moved from `pre-install,pre-upgrade` (which ran before postgres existed; crashed with `socket.gaierror`) to `post-install,post-upgrade` with a `wait-for-postgres` initContainer that polls `postgres:5432` for up to 240s
+- **ConfigMap creation timing** — `phoenix-config` is now a `pre-install,pre-upgrade` hook with weight `-10`, so it exists before any pod (including the post-install db-migrate Job) tries to mount it via `envFrom`
+- **phoenix-pipeline-worker service missing** — the Deployment existed but no Service was defined; chart now includes Service + wires `FEATURE_PIPELINE_URL` and `API_BASE_URL` in ConfigMap (enrichment and log persistence were broken before this)
+- **agent_logs.source column missing** — SQLAlchemy model had the column but Alembic migration did not; added migration + UUID default
+- **FeatureStoreFeature, ModelBundle, Prediction tables never created** — SQLAlchemy models existed but were not registered in `shared/db/metadata.py`; caused `relation does not exist` errors on pipeline queries
+- **Probe types** — converted `livenessProbe.exec` (python urllib over HTTP) to `httpGet` for broker-gateway, feature-pipeline, inference-service, prediction-monitor (kubelet does HTTP probes natively; no need for python in the container)
+- **edge-nginx DNS resolution** — removed Docker-style `resolver 127.0.0.11` from nginx.conf and switched proxy_pass targets to k8s service-cluster.local FQDNs (works at config-load time against k3s CoreDNS)
+- **transform.py P&L outlier display** (`agents/backtesting/tools/transform.py`) — now shows median + clipped mean (±3σ) for better outlier visibility in backtest logs
 
 ### Removed
 
@@ -52,16 +78,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `scripts/coolify-deploy-via-ssh.sh`
   - `infra/scripts/provision-coolify.sh`
 - **Legacy `RH_*` secrets in chart** — Robinhood, IB, Alpaca credentials are managed at runtime via the dashboard's Connectors panel and stored encrypted in the `connectors` table; not chart-level secrets. SealedSecret reduced from 9 → 6 keys.
+- **argocd Application for Phoenix** — initially added, then removed after testing. Phoenix is now deployed solely via GitHub Actions CD pipeline to avoid reconciler race conditions on `image.tag`. The argocd controller still runs in the cluster (selfagentbot uses it), but Phoenix is not an argocd-managed Application.
 
 ### Operator action required
 
 1. **Provision k3s** (one-time): run `infra/scripts/provision-k3s.sh` on the VPS for k3s + helm + sealed-secrets + cert-manager + ClusterIssuer + UFW
 2. **GitHub Actions secrets** at https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions:
-   - Add: `K3S_HOST`, `K3S_SSH_KEY`
+   - Add: `K3S_HOST`, `K3S_SSH_KEY` (SSH key for VPS access), `GHCR_PAT` (GitHub personal access token with `repo` + `read:packages` + `write:packages` scopes)
    - Remove: `COOLIFY_WEBHOOK_URL`, `COOLIFY_TOKEN`, `COOLIFY_SSH_KEY`, `COOLIFY_HOST`
 3. **Seal production secrets** (one-time): for each of the 6 keys, run `echo -n "$VALUE" | kubeseal --raw --namespace phoenix --name phoenix-secrets`. Paste ciphertexts into `helm/phoenix/templates/sealedsecret.yaml.template`, save as `sealedsecret.yaml`, commit. (See `helm/phoenix/README.md` for the full workflow.)
-4. **First-time install** (until images are pushed to GHCR): `helm install phoenix helm/phoenix/ -f helm/phoenix/values.prod.yaml -n phoenix --create-namespace --set image.repository=phoenix --set image.tag=local --set image.pullPolicy=IfNotPresent`. The `--set` overrides are required because values.prod.yaml's `ghcr.io/thirunagariharish/phoneixclaw/phoenix-X:latest` images don't exist yet — push them via a `v*` tag to enable CD.
+4. **Deployment workflow change**: Every push to `main` now auto-deploys with tag `main-<sha7>`. To cut an explicit version: `git tag v1.x.y && git push origin v1.x.y` (deploys with tag `v1.x.y`).
 5. **Bootstrap admin user**: see §7 of `docs/operations/deployment-guide.md`.
+6. **Live trading is enabled**: `values.prod.yaml` now sets `enableTrading=true` and `dryRunMode=false`. Be cautious — real orders will execute.
 
 ---
 
