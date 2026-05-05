@@ -590,6 +590,61 @@ async def _seed_system_agents() -> None:
     _log.info("[seed_system_agents] reserved agent rows ensured")
 
 
+async def _seed_admin_user(log) -> None:
+    """Auto-create the admin user if none exist and env vars are set.
+
+    Idempotent: only runs when the users table is empty AND
+    ADMIN_BOOTSTRAP_EMAIL + ADMIN_BOOTSTRAP_PASSWORD are both set
+    (typically sealed in phoenix-secrets). Once any user exists,
+    this is a no-op even on subsequent restarts.
+
+    This makes the dashboard recoverable from a postgres data wipe
+    without re-running the manual PHOENIX_ADMIN_INVITE_CODE bootstrap.
+    """
+    import uuid as _uuid
+
+    email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip()
+    password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+    if not email or not password:
+        log.info("[seed_admin_user] ADMIN_BOOTSTRAP_EMAIL/PASSWORD not set — skipping (manual bootstrap path)")
+        return
+
+    try:
+        import bcrypt as _bcrypt
+    except ImportError:
+        log.warning("[seed_admin_user] bcrypt not available — skipping")
+        return
+
+    from shared.db.engine import async_session as _make_session
+    from shared.db.models.user import User as _User
+    from sqlalchemy import select as _select
+
+    _s = _make_session()
+    try:
+        existing = (await _s.execute(_select(_User).limit(1))).scalars().first()
+        if existing is not None:
+            log.info("[seed_admin_user] users table non-empty — skipping seed")
+            return
+
+        from apps.api.src.routes.auth import ADMIN_PERMISSIONS as _ADMIN_PERMS
+        password_hash = _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        admin = _User(
+            id=_uuid.uuid4(),
+            email=email,
+            password_hash=password_hash,
+            is_admin=True,
+            role="admin",
+            permissions=_ADMIN_PERMS,
+        )
+        _s.add(admin)
+        await _s.commit()
+        log.info("[seed_admin_user] created admin user %s (id=%s) from sealed bootstrap secret", email, admin.id)
+    except Exception as exc:
+        log.exception("[seed_admin_user] insert failed: %s", exc)
+    finally:
+        await _s.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
@@ -676,6 +731,17 @@ async def lifespan(app: FastAPI):
         await _seed_system_agents()
     except Exception as exc:
         _log.exception("[seed_system_agents] top-level crash: %s", exc)
+
+    # Idempotent admin user seed. If the users table is empty AND
+    # ADMIN_BOOTSTRAP_EMAIL/PASSWORD env vars are set (sealed in
+    # phoenix-secrets), create the admin user automatically. This makes
+    # the dashboard recoverable from any DB wipe without a manual
+    # PHOENIX_ADMIN_INVITE_CODE bootstrap dance — the same password
+    # always works because it's stored in SealedSecret.
+    try:
+        await _seed_admin_user(_log)
+    except Exception as exc:
+        _log.exception("[seed_admin_user] top-level crash: %s", exc)
 
     # Heal agents/backtests stuck in RUNNING/BACKTESTING state from a previous
     # API crash or container restart.  Any backtest still RUNNING after the

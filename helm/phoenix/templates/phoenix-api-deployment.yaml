@@ -55,6 +55,18 @@ spec:
             secretKeyRef:
               name: phoenix-secrets
               key: ANTHROPIC_API_KEY
+        - name: ADMIN_BOOTSTRAP_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: ADMIN_BOOTSTRAP_EMAIL
+              optional: true
+        - name: ADMIN_BOOTSTRAP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: ADMIN_BOOTSTRAP_PASSWORD
+              optional: true
         livenessProbe:
           httpGet:
             path: /health
