@@ -40,7 +40,13 @@ class WorkerManager:
     ) -> dict:
         """Create an AgentWorker, wrap in asyncio.Task, record session in DB."""
         if agent_id in self._workers:
-            return {"agent_id": agent_id, "status": "already_running"}
+            existing = self._workers[agent_id]
+            return {
+                "agent_id": agent_id,
+                "worker_id": getattr(existing, "worker_id", agent_id),
+                "status": "already_running",
+                "stream_keys": getattr(existing, "stream_keys", []),
+            }
 
         if len(self._workers) >= settings.MAX_WORKERS:
             raise RuntimeError(f"Max workers ({settings.MAX_WORKERS}) reached")
