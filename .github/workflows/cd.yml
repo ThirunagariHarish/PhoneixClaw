@@ -80,8 +80,16 @@ jobs:
           fi
 
           mkdir -p ~/.ssh
-          echo "$K3S_SSH_KEY" > ~/.ssh/deploy_key
+          # Support either raw key text OR base64-encoded key (more robust against
+          # copy-paste mangling of newlines via the GitHub secrets web form).
+          if echo "$K3S_SSH_KEY" | head -1 | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
+            printf '%s\n' "$K3S_SSH_KEY" > ~/.ssh/deploy_key
+          else
+            echo "$K3S_SSH_KEY" | base64 -d > ~/.ssh/deploy_key
+          fi
           chmod 600 ~/.ssh/deploy_key
+          # Sanity-check the key parses
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded). See https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions"; exit 1; }
 
           echo "Copying Helm chart to k3s host..."
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "mkdir -p /opt/phoenix"
