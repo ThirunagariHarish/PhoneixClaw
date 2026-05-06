@@ -382,7 +382,12 @@ def create_live_agent(config_path: str, models_dir: str, output_dir: str):
     out_models.mkdir(exist_ok=True)
     for artifact in models.glob("*"):
         if artifact.is_file():
-            shutil.copy2(artifact, out_models / artifact.name)
+            dest = out_models / artifact.name
+            # Skip if src and dest resolve to the same path (e.g. when
+            # output == backtest sandbox and models == sandbox/models).
+            if artifact.resolve() == dest.resolve():
+                continue
+            shutil.copy2(artifact, dest)
 
     _render_claude_md(manifest, output)
     _write_config(manifest, config, output)
