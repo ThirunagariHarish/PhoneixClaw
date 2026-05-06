@@ -20,23 +20,35 @@ PKL_FALLBACK = ["lightgbm", "lgbm", "xgboost", "catboost", "rf", "random_forest"
 
 
 def _load_best_model(models_dir: Path) -> tuple:
-    """Load the best model; falls back to sklearn-based if best is PyTorch."""
+    """Load the best model; falls back to sklearn-based if best is PyTorch.
+
+    Each model artifact lives in a per-model subdirectory:
+    models/<name>/<name>_model.pkl. Search both the flat layout and the
+    nested layout so we work with either training-script convention.
+    """
     best_info = json.loads((models_dir / "best_model.json").read_text())
     model_name = best_info.get("best_model", "")
 
-    pkl_path = models_dir / f"{model_name}_model.pkl"
-    if pkl_path.exists():
-        return joblib.load(pkl_path), model_name
+    def _candidate_paths(name: str) -> list[Path]:
+        return [
+            models_dir / f"{name}_model.pkl",
+            models_dir / name / f"{name}_model.pkl",
+            models_dir / name / f"rf_model.pkl",  # train_rf.py uses rf_model.pkl
+        ]
+
+    for path in _candidate_paths(model_name):
+        if path.exists():
+            return joblib.load(path), model_name
 
     for fallback in PKL_FALLBACK:
-        path = models_dir / f"{fallback}_model.pkl"
-        if path.exists():
-            print(f"  Best model '{model_name}' is PyTorch, falling back to '{fallback}'")
-            return joblib.load(path), fallback
+        for path in _candidate_paths(fallback):
+            if path.exists():
+                print(f"  Best model '{model_name}' is PyTorch, falling back to '{fallback}'")
+                return joblib.load(path), fallback
 
-    for path in sorted(models_dir.glob("*_model.pkl")):
+    for path in sorted(models_dir.rglob("*_model.pkl")):
         name = path.stem.replace("_model", "")
-        print(f"  Falling back to '{name}'")
+        print(f"  Falling back to '{name}' from {path}")
         return joblib.load(path), name
 
     raise FileNotFoundError(f"No loadable model found in {models_dir}")
