@@ -350,7 +350,7 @@ class BacktestOrchestrator:
         # ── Post-training pipeline ───────────────────────────────────────────
         steps.append((
             "evaluate_models.py", "Post: evaluate_models", "python",
-            ["--models-dir", "models", "--output", "evaluation"],
+            ["--models-dir", "models", "--output", "models/best_model.json"],
         ))
         steps.append((
             "model_selector.py", "Post: model_selector", "python",
@@ -358,7 +358,7 @@ class BacktestOrchestrator:
         ))
         steps.append((
             "build_explainability.py", "Post: build_explainability", "python",
-            ["--model", "models", "--data", "preprocessed", "--output", "explainability"],
+            ["--model", "models", "--data", "preprocessed", "--output", "models/explainability.json"],
         ))
         steps.append((
             "discover_patterns.py", "Post: discover_patterns", "python",
