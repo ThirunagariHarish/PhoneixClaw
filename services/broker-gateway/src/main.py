@@ -251,7 +251,8 @@ def _do_login(session: RobinhoodSession) -> None:
 
     # Hard 30s login timeout via thread-pool future. Replaces SIGALRM
     # (process-global, not thread-safe — multi-account login can race).
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FuturesTimeout
 
     def _do_login(use_mfa: bool) -> None:
         kwargs = {

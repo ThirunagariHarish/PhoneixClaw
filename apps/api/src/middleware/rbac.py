@@ -6,8 +6,6 @@ Reference: ImplementationPlan.md M1.3 (Security), PRD Section 14 (Admin).
 from __future__ import annotations
 
 from enum import Enum
-from functools import wraps
-from typing import Any
 
 from fastapi import HTTPException, Request, status
 

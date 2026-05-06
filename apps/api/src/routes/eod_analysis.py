@@ -12,11 +12,10 @@ The endpoint is also callable manually via:
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, time, timezone
 
 from fastapi import APIRouter
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from apps.api.src.deps import DbSession
 from shared.db.engine import get_session
@@ -262,8 +261,9 @@ async def trigger_eod_analysis():
 async def get_latest_eod(session: DbSession):
     """Return the latest EOD notification from the notifications table."""
     try:
-        from shared.db.models.notification import Notification
         from sqlalchemy import desc
+
+        from shared.db.models.notification import Notification
         result = await session.execute(
             select(Notification)
             .where(Notification.title.like("%EOD%"))

@@ -1,11 +1,11 @@
 """Unified system logs API routes."""
 from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select, func
+from sqlalchemy import desc, func, select
 
 from apps.api.src.deps import DbSession
 from shared.db.models.system_log import SystemLog

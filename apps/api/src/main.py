@@ -71,7 +71,6 @@ from apps.api.src.routes import narrative_sentiment as narrative_sentiment_route
 from apps.api.src.routes import notifications as notifications_routes
 from apps.api.src.routes import onchain_flow as onchain_flow_routes
 from apps.api.src.routes import performance as performance_routes
-from apps.api.src.routes import portfolio as portfolio_routes
 from apps.api.src.routes import pm_agents as pm_agents_routes
 from apps.api.src.routes import pm_chat as pm_chat_routes
 from apps.api.src.routes import pm_pipeline as pm_pipeline_routes
@@ -79,6 +78,7 @@ from apps.api.src.routes import pm_research as pm_research_routes
 from apps.api.src.routes import pm_top_bets as pm_top_bets_routes
 from apps.api.src.routes import pm_venues as pm_venues_routes
 from apps.api.src.routes import polymarket as polymarket_routes
+from apps.api.src.routes import portfolio as portfolio_routes
 from apps.api.src.routes import positions as positions_routes
 from apps.api.src.routes import risk_compliance as risk_compliance_routes
 from apps.api.src.routes import scheduler_status as scheduler_status_routes
@@ -615,9 +615,10 @@ async def _seed_admin_user(log) -> None:
         log.warning("[seed_admin_user] bcrypt not available — skipping")
         return
 
+    from sqlalchemy import select as _select
+
     from shared.db.engine import async_session as _make_session
     from shared.db.models.user import User as _User
-    from sqlalchemy import select as _select
 
     _s = _make_session()
     try:
@@ -658,10 +659,11 @@ async def lifespan(app: FastAPI):
     else:
         # Try to load from the active anthropic connector in the DB
         try:
+            from sqlalchemy import select as _select
+
+            from shared.crypto.credentials import decrypt_credentials as _decrypt
             from shared.db.engine import async_session as _make_session
             from shared.db.models.connector import Connector as _Connector
-            from shared.crypto.credentials import decrypt_credentials as _decrypt
-            from sqlalchemy import select as _select
             _s = _make_session()
             try:
                 _res = await _s.execute(

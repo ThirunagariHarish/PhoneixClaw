@@ -1057,14 +1057,13 @@ async def get_runtime_info(agent_id: str, session: DbSession):
 
     Returns host, PID, working directory, session_id, memory usage, uptime.
     """
-    import os as _os
     import socket as _socket
-
-    from shared.db.models.agent_session import AgentSession
 
     # Prefer live/analyst sessions over backtester sessions when multiple are running.
     # Order: analyst/live_trader first (CASE 0), then any other type (CASE 1), newest first.
     from sqlalchemy import case as _case
+
+    from shared.db.models.agent_session import AgentSession
     sess_result = await session.execute(
         select(AgentSession)
         .where(AgentSession.agent_id == uuid.UUID(agent_id),

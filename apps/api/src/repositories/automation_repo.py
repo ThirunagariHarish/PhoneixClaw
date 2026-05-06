@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from apps.api.src.repositories.base import BaseRepository
 from shared.db.models.task import Automation

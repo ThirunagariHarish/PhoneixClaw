@@ -13,6 +13,7 @@ Cortex review fixes:
   CASCADE -> RESTRICT.
 """
 from __future__ import annotations
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa

@@ -8,6 +8,7 @@ Phase H7. The dashboard uses these to show:
 from __future__ import annotations
 
 import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -46,8 +47,10 @@ async def agent_budget(agent_id: str):
 @router.put("/agents/{agent_id}")
 async def update_agent_budget(agent_id: str, payload: BudgetUpdate, session: DbSession):
     """Update an agent's daily/monthly token budget."""
-    from sqlalchemy import select
     from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
     from shared.db.models.agent import Agent
 
     result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
@@ -75,8 +78,10 @@ async def reset_auto_pause(agent_id: str, session: DbSession):
 
     Use this after raising the agent's budget or after a budget reset.
     """
-    from sqlalchemy import select
     from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
     from shared.db.models.agent import Agent
 
     result = await session.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))

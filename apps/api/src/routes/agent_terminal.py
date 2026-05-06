@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shlex
 import uuid as _uuid
 from pathlib import Path
 
@@ -31,6 +30,7 @@ async def _resolve_workdir(agent_id: str) -> Path | None:
     """Find the agent's working directory from AgentSession or a fallback."""
     try:
         from sqlalchemy import select
+
         from shared.db.engine import get_session
         from shared.db.models.agent_session import AgentSession
         async for sess in get_session():

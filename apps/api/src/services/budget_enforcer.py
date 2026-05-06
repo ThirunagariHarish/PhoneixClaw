@@ -176,7 +176,7 @@ async def record_usage(agent_id: uuid.UUID, model: str,
 
         # Update Prometheus counters (best-effort)
         try:
-            from shared.metrics import LLM_TOKENS, LLM_COST_USD
+            from shared.metrics import LLM_COST_USD, LLM_TOKENS
             agent_type = "live"  # Caller can override via labels in future
             LLM_TOKENS.labels(agent_type=agent_type, model=model, direction="input").inc(input_tokens)
             LLM_TOKENS.labels(agent_type=agent_type, model=model, direction="output").inc(output_tokens)
@@ -197,8 +197,9 @@ async def record_usage(agent_id: uuid.UUID, model: str,
 
 async def _get_system_usage(db) -> tuple[float, float]:
     """Sum up system-wide daily/monthly token usage across all agents."""
-    from shared.db.models.agent import Agent
     from sqlalchemy import func
+
+    from shared.db.models.agent import Agent
 
     result = await db.execute(
         select(

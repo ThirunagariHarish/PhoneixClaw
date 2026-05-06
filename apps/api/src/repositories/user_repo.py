@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from apps.api.src.repositories.base import BaseRepository
 from shared.db.models.user import User

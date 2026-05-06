@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/component: phoenix-backtesting
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "phoenix.selectorLabels" . | nindent 6 }}

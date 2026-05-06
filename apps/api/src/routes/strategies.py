@@ -7,19 +7,18 @@ Reference: PRD Section 3.5, strategy_wizard_redesign plan.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
-from apps.api.src.deps import DbSession
 from apps.api.src.data.strategy_templates import (
+    STRATEGY_CATEGORIES_WITH_COUNTS,
     STRATEGY_TEMPLATES,
     STRATEGY_TEMPLATES_BY_ID,
-    STRATEGY_CATEGORIES_WITH_COUNTS,
 )
+from apps.api.src.deps import DbSession
 from shared.db.models.agent import Agent
 from shared.db.models.strategy import Strategy
 

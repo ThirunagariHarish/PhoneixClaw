@@ -11,7 +11,7 @@ import os
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 
 from apps.api.src.deps import DbSession
@@ -87,7 +87,7 @@ async def whatsapp_incoming(request: Request, session: DbSession):
 
     # Also publish via the Trigger Bus so trigger-consumer loops wake up too
     try:
-        from shared.triggers import get_bus, Trigger, TriggerType
+        from shared.triggers import Trigger, TriggerType, get_bus
         await get_bus().publish(Trigger(
             agent_id=str(agent.id),
             type=TriggerType.CHAT_MESSAGE,

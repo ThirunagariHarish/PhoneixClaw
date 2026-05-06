@@ -4,6 +4,7 @@ Takes statistically-mined patterns from discover_patterns.py and uses Claude
 to generate real trading strategy narratives, entry/exit rules, and an
 overall analyst profile.
 """
+from __future__ import annotations
 
 import argparse
 import json

@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from apps.api.src.repositories.base import BaseRepository
 from shared.db.models.agent import AgentBacktest

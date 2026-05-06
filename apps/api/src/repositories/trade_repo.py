@@ -4,7 +4,7 @@ Trade intent repository with domain-specific queries.
 
 from uuid import UUID
 
-from sqlalchemy import func, select, desc
+from sqlalchemy import desc, func, select
 
 from apps.api.src.repositories.base import BaseRepository
 from shared.db.models.trade import TradeIntent

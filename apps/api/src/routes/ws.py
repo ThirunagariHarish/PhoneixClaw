@@ -101,7 +101,7 @@ def _decode_jwt_token(token: str) -> dict | None:
     if not token:
         return None
     try:
-        from jose import jwt, JWTError
+        from jose import JWTError, jwt
     except ImportError:
         return None
     secret = os.environ.get("JWT_SECRET_KEY", "change-me-in-production")

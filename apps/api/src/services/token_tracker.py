@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from shared.db.engine import get_session
 from shared.db.models.token_usage import TokenUsage

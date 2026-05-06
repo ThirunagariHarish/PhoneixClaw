@@ -5,9 +5,11 @@ watchlist, paper) here with a feature snapshot. At EOD, the scheduler enriches
 these rows with actual outcome prices and feeds them back into training.
 """
 from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
@@ -108,6 +110,7 @@ async def list_signals(
 async def signal_stats(session: DbSession, agent_id: str | None = None, days: int = 30):
     """Aggregate stats: total decisions, breakdown, missed opportunities."""
     from datetime import timedelta
+
     from sqlalchemy import func
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)

@@ -20,8 +20,9 @@ async def check_db(timeout: float = 3.0) -> tuple[bool, dict[str, Any]]:
     """Run SELECT 1 against the database. Returns (healthy, {latency_ms, ...})."""
     t0 = time.monotonic()
     try:
-        from shared.db.engine import get_engine_singleton
         from sqlalchemy import text
+
+        from shared.db.engine import get_engine_singleton
 
         engine = get_engine_singleton()
         async with asyncio.timeout(timeout):

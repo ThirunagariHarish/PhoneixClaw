@@ -4,6 +4,7 @@ Processes messages in timestamp order, parses trade signals, tracks virtual posi
 and matches SELL signals for exits. Positions without matching SELL close at 0 PnL.
 """
 from __future__ import annotations
+
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass

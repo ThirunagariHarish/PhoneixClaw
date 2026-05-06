@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.engine import get_session
 from shared.db.models.agent import Agent
-from shared.db.models.agent_metric import AgentMetric
 from shared.db.models.agent_trade import AgentTrade
 
 router = APIRouter(prefix="/api/v2/performance", tags=["performance"])

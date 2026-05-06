@@ -132,7 +132,7 @@ class TokenUsageReport(BaseModel):
 @router.get("/model-routing")
 async def get_model_routing():
     """Return recommended model for each task type (for token optimization)."""
-    from apps.api.src.services.token_tracker import TASK_MODEL_ROUTING, MODEL_COSTS_PER_1K
+    from apps.api.src.services.token_tracker import MODEL_COSTS_PER_1K, TASK_MODEL_ROUTING
     return {
         "routing": TASK_MODEL_ROUTING,
         "model_costs_per_1k": MODEL_COSTS_PER_1K,

@@ -120,9 +120,10 @@ class NotificationDispatcher:
             tag_body = final_body
             if agent_id:
                 try:
+                    from sqlalchemy import select
+
                     from shared.db.engine import get_session
                     from shared.db.models.agent import Agent
-                    from sqlalchemy import select
                     async for sess in get_session():
                         a = (await sess.execute(
                             select(Agent).where(Agent.id == uuid.UUID(agent_id))
@@ -149,9 +150,10 @@ class NotificationDispatcher:
             chat_id: str | int | None = None
             if agent_id:
                 try:
+                    from sqlalchemy import select
+
                     from shared.db.engine import get_session
                     from shared.db.models.agent import Agent
-                    from sqlalchemy import select
                     async for sess in get_session():
                         a = (await sess.execute(
                             select(Agent).where(Agent.id == uuid.UUID(agent_id))

@@ -173,8 +173,9 @@ async def send_message(
 
     # Publish to Redis pub/sub for real-time delivery
     try:
-        import os
         import json as _json
+        import os
+
         import redis.asyncio as aioredis
         redis = aioredis.from_url(
             os.getenv("REDIS_URL", "redis://localhost:6379"),

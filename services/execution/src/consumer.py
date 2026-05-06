@@ -5,10 +5,16 @@ M1.12: Execution Service.
 Reference: PRD Section 8, ArchitecturePlan §5.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .executor import BrokerExecutor
+    from .risk_chain import RiskCheckChain
 
 logger = logging.getLogger(__name__)
 

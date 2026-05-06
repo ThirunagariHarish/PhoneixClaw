@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import logging
 
 from shared.agents.protocol import AgentPlugin

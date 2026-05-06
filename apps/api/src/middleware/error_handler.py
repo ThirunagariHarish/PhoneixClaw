@@ -6,7 +6,6 @@ structured JSON error responses instead of raw 500 tracebacks.
 """
 
 import logging
-import traceback
 
 from fastapi import Request
 from fastapi.responses import JSONResponse

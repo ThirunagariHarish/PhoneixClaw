@@ -12,6 +12,8 @@ Usage (CLI, invoked by .claude/settings.json hooks):
     python tools/report_to_phoenix.py --event session_stop
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

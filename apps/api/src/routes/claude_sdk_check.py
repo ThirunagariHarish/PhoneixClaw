@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.src.deps import DbSession
 from apps.api.src.routes.admin import _require_admin
@@ -28,7 +27,7 @@ async def _try_trivial_query(timeout_s: int = 20) -> dict:
     result: dict = {"status": "unknown"}
     start = time.time()
     try:
-        from claude_agent_sdk import query, ClaudeAgentOptions
+        from claude_agent_sdk import ClaudeAgentOptions, query
     except Exception as exc:
         return {"status": "import_failed", "error": str(exc)[:300]}
 

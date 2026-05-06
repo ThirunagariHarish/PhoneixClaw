@@ -2,7 +2,7 @@
 Connector repository with type and active filters.
 """
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 
 from apps.api.src.repositories.base import BaseRepository
 from shared.db.models.connector import Connector
