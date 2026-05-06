@@ -13,13 +13,13 @@ def main():
     models_dir = Path(args.models_dir)
     results = []
 
-    for result_file in models_dir.glob("*_results.json"):
+    for result_file in models_dir.rglob("*_results.json"):
         with open(result_file) as f:
             results.append(json.load(f))
 
     if not results:
-        print("No model results found!")
-        return
+        print(f"No model results found under {models_dir}!")
+        raise SystemExit(1)
 
     # Weighted scoring
     for r in results:
