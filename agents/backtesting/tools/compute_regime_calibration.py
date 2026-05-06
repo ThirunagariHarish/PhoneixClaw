@@ -53,9 +53,20 @@ def main() -> None:
     args = p.parse_args()
 
     enriched = pd.read_parquet(args.enriched)
-    probs = np.load(args.predictions)
+    try:
+        probs = np.load(args.predictions)
+    except (ValueError, OSError, FileNotFoundError) as e:
+        # Predictions file unavailable or wrong format (orchestrator may pass a
+        # JSON path here when no aligned-probabilities artifact exists yet).
+        # Don't crash the pipeline — write empty calibration and exit cleanly.
+        with open(args.output, "w") as f:
+            json.dump({}, f)
+        print(f"compute_regime_calibration: skipping ({type(e).__name__}: {e})")
+        return
     if len(probs) != len(enriched):
         print(f"ERROR: probs len {len(probs)} != enriched len {len(enriched)}")
+        with open(args.output, "w") as f:
+            json.dump({}, f)
         return
 
     regime_col = None
