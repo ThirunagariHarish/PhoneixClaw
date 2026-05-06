@@ -87,7 +87,7 @@ discord_messages_counter = Counter(
 
 # DB connection pool capacity + utilisation (gauges; refreshed on each /metrics scrape)
 db_pool_size_gauge = Gauge(
-    "phoenix_db_pool_size",
+    "phoenix_db_pool_capacity",
     "SQLAlchemy connection pool: total slots configured (pool_size + max_overflow)",
     registry=registry,
 )
