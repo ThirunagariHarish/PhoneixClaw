@@ -211,7 +211,6 @@ jobs:
 
       - name: Cleanup SSH key
         if: always()
-        run: rm -f ~/.ssh/deploy_key
-
+        run: |
           rm -f ~/.ssh/deploy_key
-          echo "Deployment complete (tag: $TAG)"
+          echo "Deployment complete (tag: ${{ steps.tag.outputs.TAG }})"
