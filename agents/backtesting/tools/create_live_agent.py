@@ -12,6 +12,8 @@ Usage:
         --output ~/agents/live/spx-alerts/
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -114,14 +116,22 @@ def _build_analyst_profile(enriched_path: Path) -> dict:
 
 
 def _load_patterns(models_dir: Path) -> list[dict]:
-    patterns_path = models_dir / "patterns.json"
-    if not patterns_path.exists():
-        return []
-    with open(patterns_path) as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        return data
-    return data.get("patterns", data.get("rules", []))
+    # discover_patterns.py writes patterns.json to the work-dir root (cwd), not
+    # inside models/.  Check the canonical location first, then fall back to the
+    # legacy models/ sub-path so both invocation styles work.
+    candidates = [
+        Path("patterns.json"),          # work-dir root (orchestrator default)
+        models_dir / "patterns.json",   # legacy / manual invocation
+        models_dir.parent / "patterns.json",
+    ]
+    for patterns_path in candidates:
+        if patterns_path.exists():
+            with open(patterns_path) as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+            return data.get("patterns", data.get("rules", []))
+    return []
 
 
 def _load_explainability(models_dir: Path) -> dict:
@@ -520,7 +530,9 @@ def _render_claude_md(manifest: dict, output: Path):
             )
             (output / "CLAUDE.md").write_text(rendered)
             return
-        except ImportError:
+        except Exception:
+            # ImportError (jinja2 not installed) or any template render error —
+            # fall through to the legacy string-substitution template below.
             pass
 
     legacy = LEGACY_TEMPLATE_DIR / "CLAUDE.md"
