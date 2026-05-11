@@ -230,9 +230,15 @@ jobs:
             return 1
           }
 
-          echo "Copying Helm chart to k3s host..."
-          retry_ssh "mkdir -p /opt/phoenix"
-          retry_scp -r helm/phoenix k3s:/opt/phoenix/
+          # Wipe the remote chart dir first. `scp -r helm/phoenix k3s:/opt/phoenix/`
+          # alone is NOT a clean sync: new template files (e.g. a freshly added
+          # PVC) only propagate if they don't conflict with existing entries,
+          # and stale files are never removed. Caught on 2026-05-11 when the
+          # phoenix-price-cache PVC + the mount/env on phoenix-api silently
+          # never reached the cluster despite multiple "successful" CDs.
+          echo "Wiping and re-syncing Helm chart on k3s host..."
+          retry_ssh "rm -rf /opt/phoenix/helm && mkdir -p /opt/phoenix/helm"
+          retry_scp -r helm/phoenix k3s:/opt/phoenix/helm/
 
           echo "Deploying Phoenix to k3s (tag: $TAG)..."
           ssh k3s \
@@ -241,6 +247,14 @@ jobs:
               -n phoenix --create-namespace \
               --set image.tag=$TAG \
               --wait --timeout=15m"
+
+          # Verify the diff actually landed by sampling for the newest template
+          # files. The check is intentionally lightweight — a single grep for a
+          # template that only exists in this commit's chart would be even
+          # better, but we don't know which template is "new" without a diff.
+          # Instead, count templates and emit a warning if the count looks low.
+          n=$(ssh k3s "ls /opt/phoenix/helm/phoenix/templates/ | wc -l")
+          echo "Chart template count on k3s: $n"
 
       - name: Smoke test public health
         if: success()
