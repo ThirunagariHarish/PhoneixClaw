@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -53,12 +53,32 @@ def _resolve_ticker(ticker: str) -> str:
     return _TICKER_ALIAS_MAP.get(ticker.upper(), ticker)
 
 
+# yfinance only serves 5-minute bars for the most recent ~60 days. Anything
+# older returns an empty dataframe after a slow network round-trip, so we
+# guard the intraday call instead of paying the cost on every old trade.
+YF_INTRADAY_MAX_AGE_DAYS = 55
+
+# Hard per-call timeout for any single yfinance request. Without this, one
+# slow ticker can block the whole pool for many minutes.
+YF_CALL_TIMEOUT_SECONDS = 30
+
+
 def _safe_download(ticker: str, start: str, end: str) -> pd.DataFrame:
     """Download OHLCV data via yfinance with error handling."""
     resolved = _resolve_ticker(ticker)
     try:
         import yfinance as yf
-        data = yf.download(resolved, start=start, end=end, progress=False)
+        # Run the actual download in a worker thread so we can enforce a
+        # hard per-call timeout. yfinance does not honor a timeout kwarg
+        # at the high-level `download()` API.
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(yf.download, resolved, start=start, end=end, progress=False)
+            try:
+                data = fut.result(timeout=YF_CALL_TIMEOUT_SECONDS)
+            except FuturesTimeout:
+                label = ticker if resolved == ticker else f"{ticker} (resolved={resolved})"
+                print(f"  [yfinance] TIMEOUT {label} ({start} → {end}) after {YF_CALL_TIMEOUT_SECONDS}s")
+                return pd.DataFrame()
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         if data.empty:
@@ -155,12 +175,38 @@ def _parallel_download_intraday(tickers: list[str], start: str, end: str,
     if not to_download:
         return results
 
+    # Fix A: yfinance only serves 5m bars for the last ~60 days. If our trade
+    # window starts older than that, intraday is guaranteed empty — skip the
+    # whole call instead of paying the network round-trip per ticker.
+    try:
+        start_dt = pd.to_datetime(start).date()
+        age_days = (date.today() - start_dt).days
+    except Exception:
+        age_days = 0
+    if age_days > YF_INTRADAY_MAX_AGE_DAYS:
+        print(
+            f"  Skipping 5m intraday download for {len(to_download)} tickers — "
+            f"start={start} is {age_days}d old (>{YF_INTRADAY_MAX_AGE_DAYS}d yfinance cap). "
+            "Intraday-derived features will fall back to daily bars."
+        )
+        for tk in to_download:
+            results[tk] = pd.DataFrame()
+        return results
+
     print(f"  Downloading {len(to_download)} intraday tickers in parallel...")
 
     def _fetch_intra(tk):
+        # Per-call timeout: wrap the actual yfinance call in another worker
+        # thread so a single slow request can't hold the outer pool.
         try:
             import yfinance as yf
-            data = yf.download(tk, start=start, end=end, interval="5m", progress=False)
+            with ThreadPoolExecutor(max_workers=1) as inner:
+                fut = inner.submit(yf.download, tk, start=start, end=end, interval="5m", progress=False)
+                try:
+                    data = fut.result(timeout=YF_CALL_TIMEOUT_SECONDS)
+                except FuturesTimeout:
+                    print(f"  [yfinance/5m] TIMEOUT {tk} after {YF_CALL_TIMEOUT_SECONDS}s")
+                    return tk, pd.DataFrame()
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
             return tk, data
@@ -1474,9 +1520,18 @@ def main():
     )
     all_tickers = sorted(set(trade_tickers + context_tickers))
 
-    # Disk cache dir sits next to the output file
-    output_parent = Path(args.output).parent
-    price_cache_dir = output_parent / "price_cache"
+    # Fix C: prefer a shared price_cache directory (typically a PVC mount)
+    # so daily OHLC bars are reused across backtests. Falls back to a
+    # per-sandbox dir next to the output file when the env var is unset
+    # — which keeps local / unit-test invocations self-contained.
+    shared_cache = os.environ.get("PHOENIX_PRICE_CACHE_DIR")
+    if shared_cache:
+        price_cache_dir = Path(shared_cache)
+        price_cache_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  Using shared price_cache: {price_cache_dir}")
+    else:
+        output_parent = Path(args.output).parent
+        price_cache_dir = output_parent / "price_cache"
 
     cache = {
         "_global_start": global_start,

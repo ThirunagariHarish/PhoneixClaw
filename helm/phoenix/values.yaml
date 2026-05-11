@@ -17,6 +17,12 @@ minio:
   image: minio/minio:latest
   storageSize: 5Gi
 
+# Shared yfinance OHLC cache mounted on phoenix-api so backtest enrich.py
+# reuses downloaded daily/5m bars across runs. ReadWriteOnce is sufficient
+# on single-node k3s; multi-node would need RWX (NFS/Longhorn).
+priceCache:
+  storage: 5Gi
+
 appConfig:
   corsOrigins: "http://localhost:3000"
   enableTrading: "false"

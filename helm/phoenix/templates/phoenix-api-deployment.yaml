@@ -70,6 +70,14 @@ spec:
               name: phoenix-secrets
               key: ADMIN_BOOTSTRAP_PASSWORD
               optional: true
+        # Backtest enrich.py reads this and stores yfinance OHLC parquets here
+        # so subsequent runs skip the (slow) network round-trips. Mount comes
+        # from the phoenix-price-cache PVC.
+        - name: PHOENIX_PRICE_CACHE_DIR
+          value: /var/lib/phoenix/price_cache
+        volumeMounts:
+        - name: price-cache
+          mountPath: /var/lib/phoenix/price_cache
         livenessProbe:
           httpGet:
             path: /health
@@ -85,3 +93,7 @@ spec:
         resources:
           limits:
             memory: {{ .Values.resources.api.memory }}
+      volumes:
+      - name: price-cache
+        persistentVolumeClaim:
+          claimName: phoenix-price-cache

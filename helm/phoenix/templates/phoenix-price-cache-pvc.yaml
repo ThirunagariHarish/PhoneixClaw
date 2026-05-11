@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: phoenix-price-cache
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: price-cache
+spec:
+  # ReadWriteOnce is fine on single-node k3s and matches the existing rh-tokens
+  # pattern. On multi-node clusters this would need RWX (NFS / Longhorn).
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.priceCache.storage | default "5Gi" }}
