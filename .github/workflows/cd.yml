@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Lint (ruff)
-        continue-on-error: true   # 343 pre-existing violations; flip to fail after triage. See enterprise-readiness audit §5.
+        continue-on-error: true   # 343 pre-existing violations; flip to fail after triage.
         run: |
           pip install -q ruff
           ruff check shared/ services/ apps/api/src/ || { echo "::warning::ruff lint failed — fix locally with 'make lint-fix'"; exit 1; }
@@ -35,13 +35,49 @@ jobs:
           format: table
         continue-on-error: true   # SHOULD FAIL once we triage existing CVEs; warn-only for now
 
-  deploy:
+  resolve-tag:
     runs-on: ubuntu-latest
     needs: validate
-    environment: production
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="main-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved image tag: $TAG"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: resolve-tag
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: true
+      max-parallel: 6
+      matrix:
+        include:
+          - { name: phoenix-api,                 dockerfile: apps/api/Dockerfile }
+          - { name: phoenix-dashboard,           dockerfile: apps/dashboard/Dockerfile }
+          - { name: phoenix-ws-gateway,          dockerfile: services/ws-gateway/Dockerfile }
+          - { name: phoenix-llm-gateway,         dockerfile: services/llm-gateway/Dockerfile }
+          - { name: phoenix-broker-gateway,      dockerfile: services/broker-gateway/Dockerfile }
+          - { name: phoenix-execution,           dockerfile: services/execution/Dockerfile }
+          - { name: phoenix-automation,          dockerfile: services/automation/Dockerfile }
+          - { name: phoenix-discord-ingestion,   dockerfile: services/discord-ingestion/Dockerfile }
+          - { name: phoenix-feature-pipeline,    dockerfile: services/feature-pipeline/Dockerfile }
+          - { name: phoenix-inference-service,   dockerfile: services/inference-service/Dockerfile }
+          - { name: phoenix-agent-orchestrator,  dockerfile: services/agent-orchestrator/Dockerfile }
+          - { name: phoenix-prediction-monitor,  dockerfile: services/prediction-monitor/Dockerfile }
+          - { name: phoenix-backtesting,         dockerfile: services/backtesting/Dockerfile }
+          - { name: phoenix-pipeline-worker,     dockerfile: services/pipeline-worker/Dockerfile }
+          - { name: phoenix-nginx,               dockerfile: infra/Dockerfile.nginx }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -51,57 +87,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Resolve image tag
-        id: tag
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            TAG="main-$(echo "$GITHUB_SHA" | cut -c1-7)"
-          fi
-          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Resolved image tag: $TAG"
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/thirunagariharish/phoneixclaw/${{ matrix.name }}:${{ needs.resolve-tag.outputs.tag }}
+            ghcr.io/thirunagariharish/phoneixclaw/${{ matrix.name }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/ThirunagariHarish/PhoneixClaw
+          # GHA cache scoped per-service so one image's layers don't evict another's.
+          # mode=max stores intermediate stages so subsequent builds on the same service
+          # reuse pip / apt layers when only Python source changes.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
-      - name: Build and push all Phoenix services
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.tag.outputs.TAG }}"
-          IMAGE_REPO="ghcr.io/thirunagariharish/phoneixclaw"
-          SOURCE_LABEL="org.opencontainers.image.source=https://github.com/ThirunagariHarish/PhoneixClaw"
-
-          SERVICES=(
-            "phoenix-api:apps/api/Dockerfile"
-            "phoenix-dashboard:apps/dashboard/Dockerfile"
-            "phoenix-ws-gateway:services/ws-gateway/Dockerfile"
-            "phoenix-llm-gateway:services/llm-gateway/Dockerfile"
-            "phoenix-broker-gateway:services/broker-gateway/Dockerfile"
-            "phoenix-execution:services/execution/Dockerfile"
-            "phoenix-automation:services/automation/Dockerfile"
-            "phoenix-discord-ingestion:services/discord-ingestion/Dockerfile"
-            "phoenix-feature-pipeline:services/feature-pipeline/Dockerfile"
-            "phoenix-inference-service:services/inference-service/Dockerfile"
-            "phoenix-agent-orchestrator:services/agent-orchestrator/Dockerfile"
-            "phoenix-prediction-monitor:services/prediction-monitor/Dockerfile"
-            "phoenix-backtesting:services/backtesting/Dockerfile"
-            "phoenix-pipeline-worker:services/pipeline-worker/Dockerfile"
-            "phoenix-nginx:infra/Dockerfile.nginx"
-          )
-
-          for entry in "${SERVICES[@]}"; do
-            IFS=":" read -r svc dockerfile <<< "$entry"
-            if [ -f "$dockerfile" ]; then
-              echo "Building $svc ($TAG)..."
-              docker build \
-                --label "$SOURCE_LABEL" \
-                -t "$IMAGE_REPO/$svc:$TAG" \
-                -t "$IMAGE_REPO/$svc:latest" \
-                -f "$dockerfile" .
-              docker push "$IMAGE_REPO/$svc:$TAG"
-              docker push "$IMAGE_REPO/$svc:latest"
-            else
-              echo "SKIP: $dockerfile not found"
-            fi
-          done
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, build]
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Stage SSH key
         env:
@@ -120,26 +130,36 @@ jobs:
             echo "$K3S_SSH_KEY" | base64 -d > ~/.ssh/deploy_key
           fi
           chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded). See https://github.com/ThirunagariHarish/PhoneixClaw/settings/secrets/actions"; exit 1; }
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "K3S_SSH_KEY did not parse — re-paste it (raw 7-line key OR base64-encoded)"; exit 1; }
+
+          # Reusable SSH options. ServerAliveInterval keeps the client→server
+          # control channel alive during long `helm upgrade --wait` runs, which
+          # previously dropped with "client_loop: send disconnect: Broken pipe"
+          # after ~5 min even though helm completed on the VPS.
+          cat > ~/.ssh/config <<'EOF'
+          Host k3s
+            HostName placeholder
+            User root
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            ConnectTimeout 30
+            ServerAliveInterval 30
+            ServerAliveCountMax 60
+            TCPKeepAlive yes
+          EOF
+          sed -i "s/placeholder/$K3S_HOST/" ~/.ssh/config
 
       - name: Pre-upgrade Postgres backup
         id: backup
         continue-on-error: true
-        env:
-          K3S_HOST: ${{ secrets.K3S_HOST }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.TAG }}"
+          TAG="${{ needs.resolve-tag.outputs.tag }}"
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           REMOTE_DUMP="/tmp/phoenix-${STAMP}-${TAG}.dump"
-          # Use $GITHUB_WORKSPACE (NOT /tmp) so actions/upload-artifact can find it.
           LOCAL_DUMP="$GITHUB_WORKSPACE/postgres-pre-${TAG}.dump"
-          mkdir -p "$GITHUB_WORKSPACE/_backup"
 
-          # Detect postgres state — first install (pod not found) is OK to skip;
-          # CrashLoopBackOff (pod exists but unhealthy) is a real problem and should fail loud.
-          POD_STATE=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i ~/.ssh/deploy_key "root@$K3S_HOST" \
-            "kubectl get pod postgres-0 -n phoenix -o jsonpath='{.status.phase}' 2>/dev/null" || echo "NotFound")
+          POD_STATE=$(ssh k3s "kubectl get pod postgres-0 -n phoenix -o jsonpath='{.status.phase}' 2>/dev/null" || echo "NotFound")
 
           if [ "$POD_STATE" = "NotFound" ] || [ -z "$POD_STATE" ]; then
             echo "postgres-0 not present — first install on this cluster. Skipping backup."
@@ -152,20 +172,19 @@ jobs:
           fi
 
           echo "Dumping postgres-0 → $REMOTE_DUMP"
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" \
-            "kubectl exec -n phoenix postgres-0 -- pg_dump -U phoenixtrader -d phoenixtrader --format=custom --compress=9 > $REMOTE_DUMP && ls -lh $REMOTE_DUMP"
+          ssh k3s "kubectl exec -n phoenix postgres-0 -- pg_dump -U phoenixtrader -d phoenixtrader --format=custom --compress=9 > $REMOTE_DUMP && ls -lh $REMOTE_DUMP"
 
           echo "Copying dump back to runner..."
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST:$REMOTE_DUMP" "$LOCAL_DUMP"
+          scp -F ~/.ssh/config k3s:"$REMOTE_DUMP" "$LOCAL_DUMP"
           ls -lh "$LOCAL_DUMP"
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key "root@$K3S_HOST" "rm -f $REMOTE_DUMP"
+          ssh k3s "rm -f $REMOTE_DUMP"
           echo "BACKED_UP=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload Postgres backup as artifact
         if: steps.backup.outputs.BACKED_UP == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: postgres-pre-${{ steps.tag.outputs.TAG }}
+          name: postgres-pre-${{ needs.resolve-tag.outputs.tag }}
           path: ${{ github.workspace }}/postgres-pre-*.dump
           retention-days: 90
           if-no-files-found: error
@@ -177,18 +196,16 @@ jobs:
           exit 1
 
       - name: Deploy to k3s
-        env:
-          K3S_HOST: ${{ secrets.K3S_HOST }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.TAG }}"
+          TAG="${{ needs.resolve-tag.outputs.tag }}"
 
           echo "Copying Helm chart to k3s host..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key "root@$K3S_HOST" "mkdir -p /opt/phoenix"
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key -r helm/phoenix "root@$K3S_HOST:/opt/phoenix/"
+          ssh k3s "mkdir -p /opt/phoenix"
+          scp -F ~/.ssh/config -r helm/phoenix k3s:/opt/phoenix/
 
           echo "Deploying Phoenix to k3s (tag: $TAG)..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/deploy_key "root@$K3S_HOST" \
+          ssh k3s \
             "helm upgrade --install phoenix /opt/phoenix/helm/phoenix \
               -f /opt/phoenix/helm/phoenix/values.prod.yaml \
               -n phoenix --create-namespace \
@@ -213,5 +230,5 @@ jobs:
       - name: Cleanup SSH key
         if: always()
         run: |
-          rm -f ~/.ssh/deploy_key
-          echo "Deployment complete (tag: ${{ steps.tag.outputs.TAG }})"
+          rm -f ~/.ssh/deploy_key ~/.ssh/config
+          echo "Deployment complete (tag: ${{ needs.resolve-tag.outputs.tag }})"
