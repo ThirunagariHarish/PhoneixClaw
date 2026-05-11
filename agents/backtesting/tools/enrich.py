@@ -26,18 +26,48 @@ warnings.filterwarnings("ignore")
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
+_TICKER_ALIAS_MAP = {
+    # Indices — yfinance needs the ^ prefix
+    "SPX": "^GSPC", "SPXW": "^GSPC", "GSPC": "^GSPC",
+    "NDX": "^NDX", "DJI": "^DJI", "DJIA": "^DJI",
+    "RUT": "^RUT", "VIX": "^VIX", "VVIX": "^VVIX",
+    # Front-month futures — yfinance needs the =F suffix
+    "ES": "ES=F", "NQ": "NQ=F", "YM": "YM=F", "RTY": "RTY=F",
+    "MES": "MES=F", "MNQ": "MNQ=F", "MYM": "MYM=F", "M2K": "M2K=F",
+    "CL": "CL=F", "GC": "GC=F", "SI": "SI=F", "NG": "NG=F", "ZB": "ZB=F",
+    # Crypto front-month / spot
+    "BTC": "BTC-USD", "ETH": "ETH-USD",
+}
+
+
+def _resolve_ticker(ticker: str) -> str:
+    """Map common index/futures aliases to the symbol yfinance accepts.
+
+    Real Discord channels (notably options-trader feeds) post tickers like
+    "SPX" / "ES" / "NQ" which yfinance can't fetch directly — every download
+    returns empty and (worse) eats network round-trips. The mapping below
+    keeps the original symbol when no alias is registered.
+    """
+    if not ticker:
+        return ticker
+    return _TICKER_ALIAS_MAP.get(ticker.upper(), ticker)
+
+
 def _safe_download(ticker: str, start: str, end: str) -> pd.DataFrame:
     """Download OHLCV data via yfinance with error handling."""
+    resolved = _resolve_ticker(ticker)
     try:
         import yfinance as yf
-        data = yf.download(ticker, start=start, end=end, progress=False)
+        data = yf.download(resolved, start=start, end=end, progress=False)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         if data.empty:
-            print(f"  [yfinance] Empty result for {ticker} ({start} → {end})")
+            label = ticker if resolved == ticker else f"{ticker} (resolved={resolved})"
+            print(f"  [yfinance] Empty result for {label} ({start} → {end})")
         return data
     except Exception as e:
-        print(f"  [yfinance] FAILED {ticker} ({start} → {end}): {e}")
+        label = ticker if resolved == ticker else f"{ticker} (resolved={resolved})"
+        print(f"  [yfinance] FAILED {label} ({start} → {end}): {e}")
         return pd.DataFrame()
 
 

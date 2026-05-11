@@ -49,8 +49,20 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BACKTESTING_TOOLS = REPO_ROOT / "agents" / "backtesting" / "tools"
 
-STEP_TIMEOUT = 600  # 10 min per step
+STEP_TIMEOUT = 600  # 10 min default per step
 LLM_STEP_TIMEOUT = 120
+
+# Per-script timeout overrides for steps known to be slow on real-world data.
+# enrich.py has to fetch yfinance OHLC bars for every unique ticker (sometimes
+# 100s of them) and then compute ~200 features per trade across thousands of
+# trades; 10 min is not enough on first run with a cold price_cache.
+PER_SCRIPT_TIMEOUT = {
+    "enrich.py": 1800,                # 30 min
+    "compute_text_embeddings.py": 1200,
+    "preprocess.py": 900,
+    "llm_pattern_discovery.py": 600,
+    "analyze_patterns_llm.py": 600,
+}
 
 # Modular algorithm registry: add/remove models by editing this dict.
 # Each entry maps to a training script in agents/backtesting/tools/.
@@ -400,6 +412,8 @@ class BacktestOrchestrator:
         if not script_path.exists():
             return {"success": False, "script": script, "error": f"Script not found: {script_path}"}
 
+        timeout = PER_SCRIPT_TIMEOUT.get(script, STEP_TIMEOUT)
+        proc = None
         try:
             cmd = [_safe_python_executable(), str(script_path)] + (args or [])
             proc = await asyncio.create_subprocess_exec(
@@ -411,7 +425,7 @@ class BacktestOrchestrator:
                 env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=STEP_TIMEOUT,
+                proc.communicate(), timeout=timeout,
             )
 
             return {
@@ -422,8 +436,29 @@ class BacktestOrchestrator:
                 "returncode": proc.returncode,
             }
         except asyncio.TimeoutError:
-            return {"success": False, "script": script, "error": f"Timeout after {STEP_TIMEOUT}s"}
+            # asyncio.wait_for only abandons the future — the OS subprocess is
+            # still running and will hold its file descriptors, network sockets,
+            # and the price_cache directory open indefinitely. Kill it loud.
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    # Reap so we don't leave a zombie.
+                    await asyncio.wait_for(proc.wait(), timeout=10)
+                except (ProcessLookupError, asyncio.TimeoutError):
+                    pass
+                except Exception as kill_err:
+                    logger.warning("Failed to kill timed-out subprocess for %s: %s", script, kill_err)
+            return {
+                "success": False,
+                "script": script,
+                "error": f"Timeout after {timeout}s (subprocess killed)",
+            }
         except Exception as e:
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             return {"success": False, "script": script, "error": str(e)[:500]}
 
     async def _run_llm_step(self, script: str, description: str, args: list[str] | None = None) -> dict:
