@@ -200,9 +200,39 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.resolve-tag.outputs.tag }}"
 
+          # Hostinger sshd intermittently rejects the initial TCP connection
+          # ("banner exchange timeout" / "Connection timed out"). Retry the
+          # short connect-style commands with exponential-ish backoff before
+          # giving up. The long-running `helm upgrade --wait` doesn't get the
+          # retry (a half-applied helm release is worse than a clean fail).
+          retry_ssh () {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if ssh -o ConnectTimeout=15 k3s "$@"; then
+                return 0
+              fi
+              echo "SSH attempt $attempt failed; sleeping $((attempt * 10))s..."
+              sleep $((attempt * 10))
+            done
+            echo "::error::SSH retries exhausted for: $*"
+            return 1
+          }
+          retry_scp () {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if scp -o ConnectTimeout=15 -F ~/.ssh/config "$@"; then
+                return 0
+              fi
+              echo "SCP attempt $attempt failed; sleeping $((attempt * 10))s..."
+              sleep $((attempt * 10))
+            done
+            echo "::error::SCP retries exhausted for: $*"
+            return 1
+          }
+
           echo "Copying Helm chart to k3s host..."
-          ssh k3s "mkdir -p /opt/phoenix"
-          scp -F ~/.ssh/config -r helm/phoenix k3s:/opt/phoenix/
+          retry_ssh "mkdir -p /opt/phoenix"
+          retry_scp -r helm/phoenix k3s:/opt/phoenix/
 
           echo "Deploying Phoenix to k3s (tag: $TAG)..."
           ssh k3s \
