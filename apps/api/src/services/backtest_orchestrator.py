@@ -157,7 +157,10 @@ class BacktestOrchestrator:
 
                 # After preprocess completes, check if there is enough data to train.
                 # ML models need a minimum number of samples to learn anything
-                # meaningful. With too few rows, skip training gracefully.
+                # meaningful. With too few rows, fail loud — silently completing
+                # a 0-trade backtest renders as a green checkmark with all-N/A
+                # metrics on the dashboard, hiding the actual problem (usually
+                # an unlinked connector or an empty channel_messages table).
                 MIN_TRAIN_ROWS = 10
                 if "preprocess" in script:
                     meta_path = self.work_dir / "preprocessed" / "meta.json"
@@ -165,12 +168,16 @@ class BacktestOrchestrator:
                         meta = json.loads(meta_path.read_text())
                         n_train = meta.get("n_train", 0)
                         if n_train < MIN_TRAIN_ROWS:
-                            logger.warning(
-                                "Preprocess produced %d training rows for agent %s "
-                                "(minimum %d required) — skipping training/post-training.",
-                                n_train, self.agent_id, MIN_TRAIN_ROWS,
+                            err = (
+                                f"Preprocess produced {n_train} training rows (<{MIN_TRAIN_ROWS} required). "
+                                f"Pipeline cannot proceed. Likely cause: the agent's connector has no "
+                                f"messages for the configured channel — verify channel_messages has rows "
+                                f"for the linked connector_id."
                             )
-                            break  # failed_step is None → status = "completed"
+                            logger.error("%s (agent=%s)", err, self.agent_id)
+                            failed_step = step_num
+                            await self._report_failure(step_num, err)
+                            break
                     except Exception as e:
                         logger.debug("Could not read preprocessed/meta.json: %s", e)
             else:
@@ -582,6 +589,37 @@ Return a JSON object with your findings.""",
                 await db.commit()
         except Exception as e:
             logger.debug("Status update failed (non-fatal): %s", e)
+
+    async def _report_failure(self, step: int, error_message: str) -> None:
+        """Report a terminal failure to the dashboard so the run goes RED, not GREEN.
+
+        The progress endpoint (apps/api/src/routes/agents.py:report_backtest_progress)
+        recognizes status="FAILED" and writes agent_backtests.error_message; without
+        this call, an early-break from the pipeline loop leaves agent_backtests stuck
+        at status="RUNNING" or worse, the report_to_phoenix.py final step never runs
+        and the dashboard misreads completion.
+        """
+        try:
+            import httpx
+            api_url = self.config.get("phoenix_api_url", "")
+            api_key = self.config.get("phoenix_api_key", "")
+            if not api_url:
+                return
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{api_url}/api/v2/agents/{self.agent_id}/backtest-progress",
+                    json={
+                        "step": "preprocess_insufficient_data",
+                        "message": error_message[:500],
+                        "level": "ERROR",
+                        "progress_pct": round(step / len(self._build_pipeline()) * 100),
+                        "status": "FAILED",
+                    },
+                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+                    timeout=10,
+                )
+        except Exception as e:
+            logger.warning("Failed to report terminal failure to dashboard: %s", e)
 
     async def _report_progress(self, step: int, total: int, description: str) -> None:
         """Report progress to the dashboard via API."""
