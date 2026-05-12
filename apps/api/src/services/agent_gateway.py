@@ -27,6 +27,8 @@ from shared.db.engine import get_session as _get_session
 from shared.db.models.agent import Agent, AgentBacktest, AgentLog
 from shared.db.models.agent_session import AgentSession
 from shared.db.models.system_log import SystemLog
+from shared.messaging.backtest_requests import BacktestRequest
+from shared.messaging.backtest_requests import publish as publish_backtest_request
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +381,24 @@ async def _ensure_system_agent(db, agent_id: uuid.UUID, name: str) -> None:
 class AgentGateway:
     """Singleton gateway for all Claude Code agent operations."""
 
+    _redis_client = None  # Lazy-initialized shared Redis client
+
+    # ------------------------------------------------------------------
+    # Shared utilities
+    # ------------------------------------------------------------------
+
+    async def _get_redis_client(self):
+        """Get or create a shared Redis client for publishing."""
+        if self._redis_client is None:
+            try:
+                import redis.asyncio as aioredis
+                redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+                self._redis_client = aioredis.from_url(redis_url, decode_responses=True)
+            except Exception as exc:
+                logger.error("Failed to initialize Redis client: %s", exc)
+                raise
+        return self._redis_client
+
     # ------------------------------------------------------------------
     # Backtesting agent
     # ------------------------------------------------------------------
@@ -495,12 +515,53 @@ class AgentGateway:
             ))
             await db.commit()
 
-        task = asyncio.create_task(
-            self._run_backtester(agent_id, backtest_id, config, version_dir, session_row_id)
-        )
-        _running_tasks[task_key] = task
+        # Phase: backtest-worker migration — publish to Redis instead of running inline.
+        # Escape hatch: PHOENIX_BACKTEST_INLINE=1 forces the old asyncio.create_task path.
+        use_inline = os.getenv("PHOENIX_BACKTEST_INLINE", "0") == "1"
+
+        if use_inline:
+            # Legacy path: run backtest in-process (dies on API restart)
+            task = asyncio.create_task(
+                self._run_backtester(agent_id, backtest_id, config, version_dir, session_row_id)
+            )
+            _running_tasks[task_key] = task
+            logger.info("Backtest %s enqueued inline (PHOENIX_BACKTEST_INLINE=1)", backtest_id)
+        else:
+            # Default path: publish to Redis for phoenix-backtest-worker to consume
+            try:
+                # Get or create Redis client (reuse pattern from message_ingestion.py)
+                redis_client = await self._get_redis_client()
+
+                # Mark backtest as QUEUED until worker picks it up
+                async for db in _get_session():
+                    bt = (await db.execute(
+                        select(AgentBacktest).where(AgentBacktest.id == backtest_id)
+                    )).scalar_one_or_none()
+                    if bt:
+                        bt.status = "QUEUED"
+                        await db.commit()
+
+                request = BacktestRequest(
+                    agent_id=str(agent_id),
+                    backtest_id=str(backtest_id),
+                    session_id=str(session_row_id),
+                    config=config,
+                    enabled_algorithms=config.get("enabled_algorithms"),
+                )
+                entry_id = await publish_backtest_request(redis_client, request)
+                logger.info("Backtest %s published to Redis stream (entry_id=%s)", backtest_id, entry_id)
+            except Exception as exc:
+                # Redis publish failed — log warning but still return success.
+                # The AgentBacktest row is in DB as QUEUED; ops can manually re-enqueue.
+                logger.warning(
+                    "Failed to publish backtest %s to Redis (agent_id=%s): %s. "
+                    "Row is QUEUED in DB — manually re-enqueue or set PHOENIX_BACKTEST_INLINE=1",
+                    backtest_id, agent_id, exc
+                )
+
         return str(session_row_id)
 
+    # DEPRECATED: kept for the in-process fallback path; production runs via phoenix-backtest-worker
     async def _run_backtester(
         self,
         agent_id: uuid.UUID,
@@ -513,6 +574,10 @@ class AgentGateway:
 
         Phase H5: bounded by `_backtest_sem` (default 4 concurrent). Excess
         callers wait in the semaphore queue until a slot frees.
+
+        DEPRECATED: This method is kept for backward compatibility (PHOENIX_BACKTEST_INLINE=1).
+        Production deployments should use the phoenix-backtest-worker pod that consumes
+        from Redis instead of running backtests inline in the API process.
         """
         async with _backtest_sem:
             await self._run_backtester_inner(

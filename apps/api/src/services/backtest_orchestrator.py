@@ -119,6 +119,12 @@ class BacktestOrchestrator:
         # Pre-seed: export channel_messages from DB so transform.py has data
         await self._export_db_messages()
 
+        # Try feature-store shortcut: if enriched_trades covers all trades,
+        # write enriched.parquet directly from DB and skip enrich.py
+        shortcut_taken = await self._try_feature_store_shortcut()
+        if shortcut_taken:
+            logger.info("Feature-store shortcut successful, enrich.py will be skipped")
+
         start_time = datetime.now(timezone.utc)
         all_steps = self._build_pipeline()
         total_steps = len(all_steps)
@@ -185,7 +191,10 @@ class BacktestOrchestrator:
                 logger.warning("Step %d (%s) failed, retrying once.", step_num, script)
                 logger.warning("Step %d stdout: %s", step_num, result.get("output", "")[:500])
                 logger.warning("Step %d stderr: %s", step_num, result.get("error", "")[:500])
-                retry = await self._run_python_step(script, step_args) if step_type != "llm" else await self._run_llm_step(script, description, step_args)
+                if step_type != "llm":
+                    retry = await self._run_python_step(script, step_args)
+                else:
+                    retry = await self._run_llm_step(script, description, step_args)
                 if retry.get("success"):
                     self._write_checkpoint(step_num, script)
                     retry["step"] = step_num
@@ -228,6 +237,133 @@ class BacktestOrchestrator:
             status, summary["completed_steps"], total_steps, elapsed,
         )
         return summary
+
+    async def _try_feature_store_shortcut(self) -> bool:
+        """If enriched_trades covers all trades in this backtest, write the
+        synthesized enriched.parquet directly from DB and skip enrich.py.
+
+        Returns True iff the shortcut was taken (caller should skip enrich step).
+        """
+        # Feature flag escape: only attempt when explicitly enabled
+        feature_flag = os.environ.get("PHOENIX_FEATURE_STORE_SHORTCUT", "1")
+        if feature_flag.lower() in ("0", "false", "off"):
+            logger.info("Feature-store shortcut disabled by PHOENIX_FEATURE_STORE_SHORTCUT=%s", feature_flag)
+            return False
+
+        transformed_path = self.work_dir / "transformed.parquet"
+        if not transformed_path.exists():
+            return False
+
+        try:
+            # Lazy imports — only needed for feature-store shortcut
+            import pandas as pd
+            from sqlalchemy import Column, DateTime, String
+            from sqlalchemy import select as sa_select
+            from sqlalchemy.dialects.postgresql import JSONB
+            from sqlalchemy.dialects.postgresql import UUID as PGUUID
+
+            from shared.db.engine import get_session
+            from shared.db.models.base import Base
+
+            # Lightweight SQLAlchemy model for enriched_trades table (feature store)
+            class EnrichedTrade(Base):
+                __tablename__ = "enriched_trades"
+                id = Column(PGUUID(as_uuid=True), primary_key=True)
+                parsed_trade_id = Column(PGUUID(as_uuid=True), nullable=False, index=True)
+                ticker = Column(String(20), nullable=False)
+                entry_time = Column(DateTime(timezone=True), nullable=False)
+                features = Column(JSONB, nullable=False)
+                computed_at = Column(DateTime(timezone=True), nullable=False)
+                computed_version = Column(String(32), nullable=False, server_default="v1")
+
+            # Read transformed.parquet to get the set of trades
+            df_transformed = pd.read_parquet(transformed_path)
+            if df_transformed.empty:
+                logger.info("Feature-store shortcut: transformed.parquet is empty, skipping")
+                return False
+
+            # Extract ticker and entry_time pairs (enriched_trades is keyed by ticker+entry_time)
+            # The parsed_trade_id mapping is not available yet, so we'll join on ticker+entry_time
+            trade_keys = df_transformed[["ticker", "entry_time"]].copy()
+            trade_keys["entry_time"] = pd.to_datetime(trade_keys["entry_time"])
+
+            # Query enriched_trades for matching rows
+            matching_features = []
+            async for db in get_session():
+                # Query for all matching (ticker, entry_time) pairs with computed_version='v1'
+                for _, row in trade_keys.iterrows():
+                    result = await db.execute(
+                        sa_select(EnrichedTrade)
+                        .where(
+                            EnrichedTrade.ticker == row["ticker"],
+                            EnrichedTrade.entry_time == row["entry_time"],
+                            EnrichedTrade.computed_version == "v1",
+                        )
+                    )
+                    feature_row = result.scalars().first()
+                    if feature_row:
+                        matching_features.append({
+                            "ticker": feature_row.ticker,
+                            "entry_time": feature_row.entry_time,
+                            "features": feature_row.features,
+                        })
+
+                break  # Only need one session iteration
+
+            # Check for full coverage
+            coverage_pct = len(matching_features) / len(trade_keys) if len(trade_keys) > 0 else 0
+            if coverage_pct < 1.0:
+                logger.info(
+                    "Feature-store shortcut: only %.1f%% coverage (%d/%d trades), falling back to enrich.py",
+                    coverage_pct * 100, len(matching_features), len(trade_keys),
+                )
+                return False
+
+            # Build enriched.parquet from feature store
+            n_features = len(matching_features)
+            logger.info("Feature-store shortcut: 100%% coverage (%d trades), building enriched.parquet", n_features)
+
+            # Merge features back into df_transformed
+            df_features = pd.DataFrame(matching_features)
+            # Expand features JSONB into columns
+            features_expanded = pd.json_normalize(df_features["features"])
+            df_features = pd.concat([df_features[["ticker", "entry_time"]], features_expanded], axis=1)
+
+            # Merge with original transformed data
+            df_enriched = df_transformed.merge(
+                df_features,
+                on=["ticker", "entry_time"],
+                how="left",
+            )
+
+            # Write to enriched.parquet
+            enriched_path = self.work_dir / "enriched.parquet"
+            df_enriched.to_parquet(enriched_path, index=False)
+            logger.info("Feature-store shortcut: wrote %d rows to %s", len(df_enriched), enriched_path)
+
+            # Write checkpoint for enrich step so orchestrator skips it
+            # Step 2 is enrich.py (see _build_pipeline)
+            checkpoint_path = self._checkpoint_dir / f"step_002_enrich_{self._config_hash}.json"
+            checkpoint_path.write_text(json.dumps({
+                "step": 2,
+                "script": "enrich.py",
+                "success": True,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "source": "feature_store_shortcut",
+            }, indent=2))
+
+            # Report progress
+            await self._report_progress(
+                step=2,
+                total=len(self._build_pipeline()),
+                description="Feature: enrich (feature-store cache hit)",
+            )
+
+            return True
+
+        except Exception as e:
+            logger.warning("Feature-store shortcut failed (non-fatal), falling back to enrich.py: %s", e, exc_info=True)
+            return False
 
     async def _export_db_messages(self) -> None:
         """Export channel_messages from the DB into a JSON file for transform.py.

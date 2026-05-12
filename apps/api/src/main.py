@@ -754,6 +754,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         _log.exception("[backtest_heal] failed: %s", exc)
 
+    # Initialize Redis consumer group for backtest requests (phoenix-backtest-worker)
+    try:
+        import redis.asyncio as aioredis
+        from shared.messaging.backtest_requests import ensure_consumer_group
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        redis_client = aioredis.from_url(redis_url, decode_responses=True)
+        await ensure_consumer_group(redis_client)
+        _log.info("[startup] backtest:requests consumer group initialized")
+        await redis_client.close()
+    except Exception as exc:
+        _log.warning("[startup] Failed to initialize backtest consumer group (non-fatal): %s", exc)
+
     # Start scheduler (morning briefing, supervisor, EOD analysis, heartbeat)
     stop_scheduler_fn = None
     try:

@@ -144,6 +144,18 @@ def _parallel_download(tickers: list[str], start: str, end: str,
                     pass
             if done_count % 10 == 0:
                 print(f"    Downloaded {done_count}/{len(to_download)} tickers")
+                # Report daily download progress
+                try:
+                    from report_to_phoenix import report_progress
+                    pct = round(7 + (done_count / len(to_download)) * 3)
+                    report_progress(
+                        "enrich_download_daily",
+                        f"Downloaded {done_count}/{len(to_download)} daily-bar tickers",
+                        pct,
+                        blocking=False
+                    )
+                except Exception:
+                    pass
 
     print(f"  Download complete: {len(results)} tickers ready")
     return results
@@ -215,13 +227,28 @@ def _parallel_download_intraday(tickers: list[str], start: str, end: str,
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_intra, tk): tk for tk in to_download}
+        done_count = 0
         for future in as_completed(futures):
             tk, data = future.result()
             results[tk] = data
+            done_count += 1
             if cache_dir and not data.empty:
                 safe_name = tk.replace("^", "_").replace("/", "_")
                 try:
                     data.to_parquet(cache_dir / f"{safe_name}_5m.parquet")
+                except Exception:
+                    pass
+            # Report intraday download progress every 5 tickers
+            if done_count % 5 == 0:
+                try:
+                    from report_to_phoenix import report_progress
+                    pct = round(10 + (done_count / len(to_download)) * 2)
+                    report_progress(
+                        "enrich_download_intraday",
+                        f"Downloaded {done_count}/{len(to_download)} intraday tickers",
+                        pct,
+                        blocking=False
+                    )
                 except Exception:
                     pass
 
@@ -1494,6 +1521,19 @@ def main():
 
     print(f"Enriching {len(df)} trades...")
 
+    # Report start of enrichment
+    try:
+        from report_to_phoenix import report_progress
+        unique_tickers = df["ticker"].nunique() if "ticker" in df.columns and len(df) > 0 else 0
+        report_progress(
+            "enrich_start",
+            f"Starting enrich for {len(df)} trades, {unique_tickers} unique tickers",
+            7,
+            blocking=False
+        )
+    except Exception:
+        pass
+
     # Guard: if no trades, write an empty enriched parquet and exit
     if len(df) == 0:
         print("WARNING: No trades to enrich — writing empty enriched.parquet and exiting.")
@@ -1570,6 +1610,20 @@ def main():
 
         if (idx + 1) % 50 == 0:
             print(f"  Enriched {idx + 1}/{len(df)} trades (success={n_success}, skipped={n_empty})...")
+
+        # Report per-trade computation progress every 100 trades
+        if (idx + 1) % 100 == 0:
+            try:
+                from report_to_phoenix import report_progress
+                pct = min(round(12 + ((idx + 1) / len(df)) * 8), 20)
+                report_progress(
+                    "enrich_compute",
+                    f"Computed features for {idx + 1}/{len(df)} trades",
+                    pct,
+                    blocking=False
+                )
+            except Exception:
+                pass
 
     # Cleanup UW client
     if "_uw_client" in cache and "_uw_loop" in cache:
@@ -1697,14 +1751,21 @@ def main():
     result.to_parquet(output_path, index=False)
     print(f"Saved enriched data to {output_path}")
 
+    # Report enrichment completion
     try:
         from report_to_phoenix import report_progress
-        report_progress("enrich", f"Enriched {len(result)} trades with {n_new_cols} attributes", 30, {
-            "trades": len(result),
-            "attributes_added": n_new_cols,
-            "trades_enriched": n_success,
-            "trades_skipped": n_empty,
-        })
+        unique_tickers = int(result["ticker"].nunique()) if "ticker" in result.columns else 0
+        report_progress(
+            "enrich_complete",
+            f"Enriched {n_success} trades ({n_empty} empty)",
+            22,
+            metrics={
+                "enriched_trades_count": n_success,
+                "empty_trades_count": n_empty,
+                "unique_tickers": unique_tickers
+            },
+            blocking=False
+        )
     except Exception:
         pass
 

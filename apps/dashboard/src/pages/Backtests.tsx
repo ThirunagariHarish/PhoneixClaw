@@ -5,6 +5,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '@/lib/api'
 import { useRealtimeQuery } from '@/hooks/use-websocket'
+import { useBacktestProgress } from '@/hooks/useBacktestProgress'
+import SubProgressBar from '@/components/backtests/SubProgressBar'
 import {
   FlaskConical, Play, CheckCircle2, XCircle, Clock, Loader2,
   ArrowRight,
@@ -94,9 +96,30 @@ export default function Backtests() {
   const failed = backtests.filter(b => b.status === 'FAILED').length
   const selected = backtests.find(b => b.id === selectedId)
 
-  const currentStep = logs.length > 0
-    ? logs.filter(l => l.step).at(-1)?.step || null
-    : null
+  const currentStep = (() => {
+    if (logs.length === 0) return null
+    const filtered = logs.filter(l => l.step)
+    return filtered[filtered.length - 1]?.step || null
+  })()
+
+  // Poll substep progress for the selected backtest
+  const { data: stepLogs = [] } = useBacktestProgress({
+    agentId: selected?.agent_id || null,
+    backtestId: selectedId,
+    isRunning: selected?.status === 'RUNNING',
+  })
+
+  // Filter substep events for long-running steps
+  const substepEvents = stepLogs.filter(log =>
+    log.step.startsWith('enrich_') ||
+    log.step.startsWith('preprocess_') ||
+    log.step.startsWith('train_') ||
+    log.step.startsWith('evaluate_') ||
+    log.step.startsWith('patterns_')
+  )
+
+  const latestSubstep = substepEvents.length > 0 ? substepEvents[substepEvents.length - 1] : null
+  const recentSubsteps = substepEvents.slice(-10).reverse() // Last 10, newest first
 
   return (
     <div className="space-y-4">
@@ -208,6 +231,41 @@ export default function Backtests() {
                   })}
                 </div>
               </div>
+
+              {/* Current Step Detail (substep progress) */}
+              {latestSubstep && (
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  <h3 className="text-sm font-medium">Current Step Detail</h3>
+                  <SubProgressBar
+                    step={latestSubstep.step}
+                    message={latestSubstep.message}
+                    percent={latestSubstep.sub_progress_pct}
+                  />
+                  {recentSubsteps.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider">Recent Substeps</div>
+                      <div className="max-h-[120px] overflow-y-auto space-y-1 text-xs font-mono">
+                        {recentSubsteps.map((log, idx) => {
+                          const time = log.ts ? (() => {
+                            const d = new Date(log.ts)
+                            return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour12: false })
+                          })() : ''
+                          return (
+                            <div
+                              key={`${log.id}-${idx}`}
+                              className="flex items-center gap-2 px-2 py-1 bg-slate-800/50 rounded border border-slate-700"
+                            >
+                              <span className="text-slate-400 shrink-0 w-[65px]">{time}</span>
+                              <span className="text-cyan-400 shrink-0">{log.sub_progress_pct}%</span>
+                              <span className="text-slate-300 truncate">{log.message}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Metrics */}
               {selected.status === 'COMPLETED' && (
