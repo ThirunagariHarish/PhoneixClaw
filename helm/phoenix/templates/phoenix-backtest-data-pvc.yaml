@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: phoenix-backtest-data
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backtest-data
+spec:
+  # ReadWriteOnce: single backtest-worker pod only. On multi-node this would
+  # need RWX (NFS/Longhorn) if we scale replicas > 1, but for now backtests
+  # are serialized through a single worker.
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backtestData.storage | default "20Gi" }}

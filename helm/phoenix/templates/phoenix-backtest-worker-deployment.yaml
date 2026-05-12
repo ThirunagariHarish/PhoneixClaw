@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-backtest-worker
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-backtest-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-backtest-worker
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-backtest-worker
+    spec:
+      containers:
+      - name: backtest-worker
+        image: {{ .Values.image.repository }}/phoenix-backtest-worker:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        envFrom:
+        - configMapRef:
+            name: phoenix-config
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+        - name: REDIS_URL
+          value: "redis://redis:6379"
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: JWT_SECRET_KEY
+        - name: CREDENTIAL_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: CREDENTIAL_ENCRYPTION_KEY
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-secrets
+              key: ANTHROPIC_API_KEY
+        - name: PHOENIX_PRICE_CACHE_DIR
+          value: /var/lib/phoenix/price_cache
+        - name: PHOENIX_BACKTEST_DATA_DIR
+          value: /var/lib/phoenix/backtests
+        volumeMounts:
+        - name: price-cache
+          mountPath: /var/lib/phoenix/price_cache
+        - name: backtest-data
+          mountPath: /var/lib/phoenix/backtests
+        resources:
+          limits:
+            memory: 4Gi
+      volumes:
+      - name: price-cache
+        persistentVolumeClaim:
+          claimName: phoenix-price-cache
+      - name: backtest-data
+        persistentVolumeClaim:
+          claimName: phoenix-backtest-data

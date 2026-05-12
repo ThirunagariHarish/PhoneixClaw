@@ -23,6 +23,11 @@ minio:
 priceCache:
   storage: 5Gi
 
+# Backtest work directories — stores intermediate pipeline files and models
+# for backtesting agent sessions. Mounted on phoenix-backtest-worker.
+backtestData:
+  storage: 20Gi
+
 appConfig:
   corsOrigins: "http://localhost:3000"
   enableTrading: "false"
@@ -69,6 +74,8 @@ resources:
     memory: 256Mi
   backtesting:
     memory: 1Gi
+  backtestWorker:
+    memory: 4Gi
   postgres:
     memory: 1Gi
   redis:

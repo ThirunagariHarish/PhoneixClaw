@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: feature-extraction
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: feature-extraction
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 1800
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "phoenix.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: feature-extraction
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: feature-extraction
+            image: "{{ .Values.image.repository }}/phoenix-feature-extraction:{{ .Values.image.tag }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phoenix-config
+                  key: DATABASE_URL
+            - name: PHOENIX_PRICE_CACHE_DIR
+              value: /var/lib/phoenix/price_cache
+            volumeMounts:
+            - name: price-cache
+              mountPath: /var/lib/phoenix/price_cache
+            resources:
+              limits:
+                memory: 2Gi
+              requests:
+                memory: 1Gi
+          volumes:
+          - name: price-cache
+            persistentVolumeClaim:
+              claimName: phoenix-price-cache
