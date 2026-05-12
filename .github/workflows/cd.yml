@@ -76,6 +76,7 @@ jobs:
           - { name: phoenix-agent-orchestrator,  dockerfile: services/agent-orchestrator/Dockerfile }
           - { name: phoenix-prediction-monitor,  dockerfile: services/prediction-monitor/Dockerfile }
           - { name: phoenix-backtesting,         dockerfile: services/backtesting/Dockerfile }
+          - { name: phoenix-backtest-worker,     dockerfile: services/backtest-worker/Dockerfile }
           - { name: phoenix-pipeline-worker,     dockerfile: services/pipeline-worker/Dockerfile }
           - { name: phoenix-nginx,               dockerfile: infra/Dockerfile.nginx }
     steps:

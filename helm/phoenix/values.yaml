@@ -75,7 +75,7 @@ resources:
   backtesting:
     memory: 1Gi
   backtestWorker:
-    memory: 4Gi
+    memory: 1Gi
   postgres:
     memory: 1Gi
   redis:
