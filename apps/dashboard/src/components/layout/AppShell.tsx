@@ -26,7 +26,7 @@ import {
   LineChart, Settings, Shield, ListTodo, Moon, Sun, LogOut, Zap,
   Activity, Fish, MessageCircle, ShieldCheck, Bell, PanelLeftClose, PanelLeft,
   Bug, GripVertical, RotateCcw, Menu, Terminal, FlaskConical, Network, Mail, Brain, CalendarDays,
-  Eye, HeartPulse, Server,
+  Eye, HeartPulse, Server, KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -94,6 +94,7 @@ const DEFAULT_NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/notifications', icon: Bell, label: 'Notifications' },
       { to: '/connectors', icon: Plug, label: 'Connectors' },
+      { to: '/integrations', icon: KeyRound, label: 'Integrations' },
       { to: '/tasks', icon: ListTodo, label: 'Tasks' },
       { to: '/logs', icon: Terminal, label: 'Logs' },
       { to: '/admin', icon: Shield, label: 'Admin', adminOnly: true },

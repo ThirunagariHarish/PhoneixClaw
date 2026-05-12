@@ -60,24 +60,55 @@ class TiingoProvider(MarketDataProvider):
         """Initialize Tiingo provider.
 
         Args:
-            api_key: Tiingo API key. Defaults to TIINGO_API_KEY env var.
+            api_key: Tiingo API key. If None, resolved lazily at first request
+                via env var TIINGO_API_KEY first, then api_keys table
+                (provider="tiingo", name="tiingo_api_key"). This means the
+                operator can rotate the key from the admin UI without
+                restarting any pod.
         """
-        self.api_key = api_key or os.getenv("TIINGO_API_KEY", "")
-        if not self.api_key:
-            logger.warning("TIINGO_API_KEY not set - requests will fail")
+        self._explicit_api_key = api_key
+        self._cached_api_key: str | None = None
 
         self._base_url = "https://api.tiingo.com"
         self._timeout = 30.0
         self._max_retries = 3
         self._client: httpx.AsyncClient | None = None
+        self._client_key: str | None = None  # which key the current client was built with
 
-    def _get_client(self) -> httpx.AsyncClient:
-        """Lazy-initialize the httpx client."""
-        if self._client is None:
+    @property
+    def api_key(self) -> str:
+        """Synchronous read for tests / callers that already know the key was injected."""
+        return self._explicit_api_key or self._cached_api_key or os.getenv("TIINGO_API_KEY", "")
+
+    async def _resolve_api_key(self) -> str:
+        if self._explicit_api_key:
+            return self._explicit_api_key
+        env_val = os.getenv("TIINGO_API_KEY")
+        if env_val:
+            return env_val
+        try:
+            from shared.integration_keys import get_integration_key
+            db_val = await get_integration_key("tiingo")
+            if db_val:
+                self._cached_api_key = db_val
+                return db_val
+        except Exception as e:
+            logger.debug("Integration-keys DB lookup failed: %s", e)
+        return ""
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-initialize the httpx client. Rebuilds when the API key rotates."""
+        key = await self._resolve_api_key()
+        if not key:
+            logger.warning("TIINGO_API_KEY not configured (env var, factory, or admin UI) — requests will 401")
+        if self._client is None or self._client_key != key:
+            if self._client is not None:
+                await self._client.aclose()
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
-                headers={"Authorization": f"Token {self.api_key}"},
+                headers={"Authorization": f"Token {key}"} if key else {},
             )
+            self._client_key = key
         return self._client
 
     async def _close_client(self) -> None:
@@ -111,7 +142,7 @@ class TiingoProvider(MarketDataProvider):
         Raises:
             httpx.HTTPError: If all retries fail
         """
-        client = self._get_client()
+        client = await self._get_client()
         last_error = None
 
         for attempt in range(self._max_retries):

@@ -115,6 +115,9 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(..., min_length=1)
     key_type: str = "api"
     provider: str = "phoenix"
+    # When set, store this exact value (e.g. user-supplied TIINGO_API_KEY).
+    # When omitted, Phoenix generates a sk_… token (legacy behavior).
+    secret: str | None = Field(default=None, min_length=1)
 
 
 class ApiKeyUpdate(BaseModel):
@@ -202,7 +205,7 @@ async def list_api_keys(session: DbSession, request: Request):
     await _require_admin(request, session)
     result = await session.execute(select(ApiKeyEntry).order_by(ApiKeyEntry.created_at.desc()))
     keys = result.scalars().all()
-    return [{"id": str(k.id), "name": k.name, "key_type": k.key_type, "masked_value": k.masked_value, "is_active": k.is_active} for k in keys]
+    return [{"id": str(k.id), "name": k.name, "key_type": k.key_type, "provider": k.provider, "masked_value": k.masked_value, "is_active": k.is_active, "last_tested_at": k.last_tested_at.isoformat() if k.last_tested_at else None} for k in keys]
 
 
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED)
@@ -216,7 +219,32 @@ async def create_api_key(payload: ApiKeyCreate, session: DbSession, request: Req
         if not first_user:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No users exist; create a user first")
         uid = first_user.id
-    plaintext = f"sk_{secrets.token_urlsafe(32)}"
+    # If admin provided a secret (e.g. a Tiingo / Polygon API key) we store
+    # it verbatim. Otherwise generate a Phoenix-issued sk_ token.
+    user_provided = bool(payload.secret)
+    plaintext = payload.secret if user_provided else f"sk_{secrets.token_urlsafe(32)}"
+    # Upsert: if a key with the same (provider, name) already exists, rotate it
+    # in place rather than creating a duplicate row.
+    existing_q = await session.execute(
+        select(ApiKeyEntry).where(
+            ApiKeyEntry.provider == payload.provider,
+            ApiKeyEntry.name == payload.name,
+        )
+    )
+    existing = existing_q.scalar_one_or_none()
+    if existing:
+        existing.encrypted_value = encrypt_value(plaintext)
+        existing.masked_value = _mask_api_key(plaintext)
+        existing.key_type = payload.key_type
+        existing.is_active = True
+        await session.commit()
+        return {
+            "id": str(existing.id),
+            "name": existing.name,
+            "masked_value": existing.masked_value,
+            "rotated": True,
+            **({"secret": plaintext} if not user_provided else {}),
+        }
     key = ApiKeyEntry(
         id=uuid.uuid4(),
         name=payload.name,
@@ -232,7 +260,9 @@ async def create_api_key(payload: ApiKeyCreate, session: DbSession, request: Req
         "id": str(key.id),
         "name": key.name,
         "masked_value": key.masked_value,
-        "secret": plaintext,
+        # Only return the generated secret on the create path; never echo
+        # back a user-provided one (don't risk it ending up in browser logs).
+        **({"secret": plaintext} if not user_provided else {}),
     }
 
 

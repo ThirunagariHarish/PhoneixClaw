@@ -22,6 +22,7 @@ import AgentsPage from '@/pages/Agents'
 import PerformancePage from '@/pages/Performance'
 import StrategiesPage from '@/pages/Strategies'
 import ConnectorsPage from '@/pages/Connectors'
+import IntegrationsPage from '@/pages/Integrations'
 import SkillsPage from '@/pages/Skills'
 import AdminPage from '@/pages/Admin'
 import TasksPage from '@/pages/Tasks'
@@ -113,6 +114,7 @@ function AppRoutes() {
         <Route path="agents/:id" element={<AgentDashboardPage />} />
         <Route path="strategies" element={<StrategiesPage />} />
         <Route path="connectors" element={<ConnectorsPage />} />
+        <Route path="integrations" element={<IntegrationsPage />} />
         <Route path="skills" element={<SkillsPage />} />
         <Route path="market" element={<MarketPage />} />
         <Route path="daily-signals" element={<DailySignalsPage />} />
